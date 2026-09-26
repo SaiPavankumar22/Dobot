@@ -1,0 +1,35 @@
+# secrets
+.env
+.env.*
+!.env.example
+
+# runtime state
+.dobot/
+*.log
+logs/
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.egg-info/
+dist/
+build/
+
+# node / desktop
+node_modules/
+desktop/dist/
+desktop/src-tauri/target/
+desktop/src-tauri/gen/
+*.tsbuildinfo
+vite.config.d.ts
+*.local
+
+# os
+.DS_Store
+Thumbs.db
+desktop.ini

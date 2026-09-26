@@ -1,0 +1,92 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Dobot",
+  "version": "0.1.0",
+  "identifier": "com.dobot.desktop",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://127.0.0.1:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "withGlobalTauri": false,
+    "windows": [
+      {
+        "label": "chat",
+        "title": "Dobot",
+        "url": "index.html#/chat",
+        "width": 1080,
+        "height": 740,
+        "minWidth": 760,
+        "minHeight": 520,
+        "resizable": true,
+        "decorations": true,
+        "transparent": false,
+        "center": true,
+        "visible": true
+      },
+      {
+        "label": "dot",
+        "title": "Dobot",
+        "url": "index.html#/dot",
+        "width": 72,
+        "height": 72,
+        "resizable": false,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "shadow": false,
+        "focus": false,
+        "visible": false
+      },
+      {
+        "label": "panel",
+        "title": "Dobot",
+        "url": "index.html#/panel",
+        "width": 430,
+        "height": 620,
+        "minWidth": 360,
+        "minHeight": 320,
+        "resizable": true,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "shadow": true,
+        "visible": false
+      },
+      {
+        "label": "dashboard",
+        "title": "Dobot",
+        "url": "index.html#/dashboard",
+        "width": 1180,
+        "height": 780,
+        "minWidth": 900,
+        "minHeight": 600,
+        "resizable": true,
+        "decorations": true,
+        "transparent": false,
+        "visible": false
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; connect-src 'self' http://127.0.0.1:8756 http://localhost:8756 ws://127.0.0.1:8756 ws://localhost:8756; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "category": "Productivity",
+    "shortDescription": "An AI that doesn't just answer you. It works for you.",
+    "longDescription": "Dobot is an always-on personal AI operating layer: it sees what you're working on, understands your intent, researches the web, remembers what matters, safely operates your computer and verifies its work.",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.png",
+      "icons/icon.ico"
+    ]
+  }
+}

@@ -1,0 +1,36 @@
+{
+  "steps": [
+    {
+      "tool": "fs_list",
+      "params": { "path": "~/Downloads" },
+      "description": "Inspect the Downloads folder and group the files by kind"
+    },
+    {
+      "tool": "fs_move",
+      "params": {
+        "sources": ["~/Downloads/*.png", "~/Downloads/*.jpg", "~/Downloads/*.jpeg", "~/Downloads/*.webp"],
+        "destination": "~/Downloads/Archive/Screenshots",
+        "on_conflict": "rename"
+      },
+      "description": "Move screenshots into Archive/Screenshots"
+    },
+    {
+      "tool": "fs_move",
+      "params": {
+        "sources": ["~/Downloads/*.pdf", "~/Downloads/*.docx", "~/Downloads/*.txt", "~/Downloads/*.md"],
+        "destination": "~/Downloads/Archive/Documents",
+        "on_conflict": "rename"
+      },
+      "description": "Move documents into Archive/Documents"
+    },
+    {
+      "tool": "fs_move",
+      "params": {
+        "sources": ["~/Downloads/*.exe", "~/Downloads/*.msi", "~/Downloads/*.dmg"],
+        "destination": "~/Downloads/Archive/Installers",
+        "on_conflict": "rename"
+      },
+      "description": "Move installers into Archive/Installers"
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Capabilities for the Dobot chat window, dot, panel, dashboard and selection overlay.",
+  "windows": ["chat", "dot", "panel", "dashboard", "overlay"],
+  "permissions": [
+    "core:default",
+    "core:window:allow-start-dragging",
+    "core:window:allow-show",
+    "core:window:allow-hide",
+    "core:window:allow-close",
+    "core:window:allow-set-focus",
+    "core:window:allow-set-always-on-top",
+    "core:window:allow-inner-size",
+    "core:window:allow-outer-position",
+    "core:webview:allow-create-webview-window",
+    "core:event:default",
+    "core:app:default"
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "steps": [
+    {
+      "tool": "terminal_run",
+      "params": { "command": "git log --since=\"7 days ago\" --pretty=format:\"%h %s\"", "cwd": "~" },
+      "description": "Collect the week's commits"
+    },
+    {
+      "tool": "terminal_run",
+      "params": { "command": "git status --short", "cwd": "~" },
+      "description": "Collect uncommitted changes"
+    },
+    {
+      "tool": "fs_write",
+      "params": { "path": "~/weekly-report.md", "content": "", "overwrite": true },
+      "description": "Write the report file"
+    }
+  ]
+}
