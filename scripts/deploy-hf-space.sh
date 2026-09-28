@@ -4,25 +4,33 @@
 #   HF_TOKEN=hf_xxx bash scripts/deploy-hf-space.sh        # or: bash scripts/deploy-hf-space.sh hf_xxx
 #
 # One command from the repo root: creates the Space if it does not exist (private, Docker SDK),
-# assembles the Space repo in a temp dir (Dockerfile + Space README + backend/ + skills/) and
-# pushes it — a push is what triggers the image build. Secrets are NEVER pushed: set them in the
-# Space's Settings -> Variables and secrets afterwards.
+# assembles the Space repo in a temp dir (Dockerfile + Space README + backend/ + skills/ + the
+# docs) and pushes it — a push is what triggers the image build. Secrets are NEVER pushed: set them
+# in the Space's Settings -> Variables and secrets afterwards.
 set -euo pipefail
 
-SPACE="${HF_SPACE:-SaiPavankumar22/Dobot}"
-TOKEN="${HF_TOKEN:-${1:-}}"
+fail() { echo "error: $*" >&2; exit 1; }
+
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+TOKEN="${HF_TOKEN:-${1:-}}"
+# The Space's name is personal to whoever runs the deploy, so the repo never carries it: pass it as
+# HF_SPACE=owner/name, or keep it once in a git-ignored `.hf-space` file at the repo root.
+SPACE="${HF_SPACE:-}"
+if [ -z "$SPACE" ] && [ -f "$REPO_ROOT/.hf-space" ]; then
+  SPACE="$(tr -d '[:space:]' < "$REPO_ROOT/.hf-space")"
+fi
 API="https://huggingface.co/api"
 REMOTE="https://huggingface.co/spaces/${SPACE}"
+# owner/name -> owner-name.hf.space (lowercase, separators become dashes)
+DIRECT="https://$(printf '%s' "$SPACE" | tr '[:upper:]' '[:lower:]' | tr '/_' '--').hf.space"
 # Git over HTTPS needs the credentials *in the URL*: Hugging Face's git endpoint accepts
 # `http.extraheader=AUTHORIZATION: bearer …` for a clone but rejects the push, which is the kind of
 # thing you only discover after waiting for an upload. The temp directory this lands in is deleted on
 # exit, so the token never reaches a file we keep.
 REMOTE_AUTH="https://${SPACE%%/*}:${TOKEN}@huggingface.co/spaces/${SPACE}"
 
-fail() { echo "error: $*" >&2; exit 1; }
-
 [ -n "$TOKEN" ] || fail "pass an HF token (write scope): https://huggingface.co/settings/tokens"
+[ -n "$SPACE" ] || fail "pass the Space as HF_SPACE=owner/name (or keep it in a git-ignored .hf-space file at the repo root)"
 command -v git >/dev/null 2>&1 || fail "git is required"
 command -v curl >/dev/null 2>&1 || fail "curl is required"
 
@@ -51,10 +59,17 @@ git clone --depth 1 "$REMOTE_AUTH" "$WORK/space" ||
 
 SPACE_DIR="$WORK/space"
 
-# 3. Assemble the Space repo: Dockerfile + Space card + backend sources + skills.
+# 3. Assemble the Space repo: Dockerfile + Space card + backend sources + skills + docs.
+#    The card and the docs are written against a placeholder (`https://YOUR_SPACE.hf.space`), so
+#    the checked-in copies never name a personal deployment while the Space's copies do.
+substitute() {
+  sed -e "s|https://YOUR_SPACE.hf.space|$DIRECT|g" -e "s|YOUR_SPACE|$SPACE|g" "$1" > "$2"
+}
 cp "$REPO_ROOT/deploy/huggingface/Dockerfile" "$SPACE_DIR/Dockerfile"
 cp "$REPO_ROOT/deploy/huggingface/.dockerignore" "$SPACE_DIR/.dockerignore"
-cp "$REPO_ROOT/deploy/huggingface/README.md" "$SPACE_DIR/README.md"
+substitute "$REPO_ROOT/deploy/huggingface/README.md" "$SPACE_DIR/README.md"
+substitute "$REPO_ROOT/docs/install.md" "$SPACE_DIR/install.md"
+substitute "$REPO_ROOT/deployment.md" "$SPACE_DIR/deployment.md"
 # Replace the source trees wholesale, never overlay them. `cp -r src dest` copies INTO dest when dest
 # already exists, so a second deploy would leave the previous code at backend/app and put the new code
 # at backend/app/app — where the Dockerfile never looks. The Space would quietly keep serving the old
@@ -90,8 +105,7 @@ git -c user.name="Dobot deploy" -c user.email="deploy@localhost" \
   commit -m "Deploy Dobot backend"
 git push "$REMOTE_AUTH" HEAD:main
 
-# saiPavankumar22/Dobot -> sai-pavankumar22-dobot.hf.space (lowercase, separators become dashes)
-DIRECT="https://$(printf '%s' "$SPACE" | tr '[:upper:]' '[:lower:]' | tr '/_' '--').hf.space"
+# The Space's public URL (computed near the top, after the name is resolved).
 cat <<EOF
 
 ✓ Pushed. The Space builds the image now — watch it at:

@@ -13,6 +13,22 @@ operate your computer, verify that it worked, and remember the result for next t
 SEE → UNDERSTAND → DECIDE → ACT → VERIFY → REMEMBER
 ```
 
+**What makes it different**
+
+- **It acts, it does not just answer.** Plan → approve → execute → verify, and the answer carries
+  the evidence that the work happened.
+- **Safety is code, not prompt.** A deterministic decision engine sits between the model and your
+  machine: the model states intent, policy decides what may run.
+- **Local by default.** Screen capture only inside an explicit gesture, speech transcribed on-device,
+  credentials held by the backend and never shipped to the UI.
+- **Two surfaces.** An ordinary chat window, or an always-on dot you can turn on when you want Dobot
+  within reach from every application.
+
+**Contents:** [Two ways to live](#two-ways-to-live-with-it) ·
+[What it can do](#what-it-can-actually-do) · [Architecture](#architecture) ·
+[Quickstart](#quickstart) · [Hotkeys](#global-hotkeys) · [API](#backend-api-surface) ·
+[Security](#security-posture) · [Status](#status)
+
 Built for the NVIDIA × Nebius **Personal AI** track: **NVIDIA Nemotron** reasoning served through
 **Nebius Token Factory**, with **Hermes** as the agent runtime, **NVIDIA NemoClaw / OpenShell** as the
 controlled execution boundary, and **Tavily** for source-aware web research — behind a deterministic
@@ -77,46 +93,46 @@ the tray menu. The choice is remembered across restarts.
 ## Architecture
 
 ```
-                            USER
-                              │
-                              ▼
+                                  USER
+                                   │
+                                   ▼
    ┌───────────────────────────────────────────────────────────────┐
-   │ DOBOT DESKTOP  (Tauri 2 + React + TypeScript)                │
+   │ DOBOT DESKTOP  (Tauri 2 + React + TypeScript)                 │
    │   chat window · always-on dot · quick panel · dashboard       │
-   │   regional screen select · tray · hotkeys · notifications      │
-│   (release builds talk to the backend on a Hugging Face Space   │
-│    (Settings → Backend points anywhere — localhost or your own) │
-   └──────────────────────────────┬────────────────────────────────┘
-                    HTTP (commands) │ WebSocket (events)
-                                  ▼
+   │   regional screen select · tray · hotkeys · notifications     │
+   │   Settings → Backend points at any backend URL                │
+   │   (127.0.0.1 by default; point it at your own)                │
+   └───────────────────────────────┬───────────────────────────────┘
+                   HTTP (commands) │ WebSocket (events)
+                                   ▼
    ┌───────────────────────────────────────────────────────────────┐
    │ DOBOT GATEWAY  (FastAPI + asyncio)                            │
-   └──────────────────────────────┬────────────────────────────────┘
-                                  ▼
+   └───────────────────────────────┬───────────────────────────────┘
+                                   ▼
    ┌───────────────────────────────────────────────────────────────┐
    │ CONTEXT ENGINE                                                │
-   │   screen + OCR · memory recall · open tasks · environment      │
-   └──────────────────────────────┬────────────────────────────────┘
-                                  ▼
+   │   screen + OCR · memory recall · open tasks · environment     │
+   └───────────────────────────────┬───────────────────────────────┘
+                                   ▼
    ┌───────────────────────────────────────────────────────────────┐
-   │ NEMOTRON 3 (Nebius Token Factory)   ← reasoning, planning      │
-   │   ultra / super / light tiers chosen by the model router       │
-   └──────────────────────────────┬────────────────────────────────┘
-                                  ▼
+   │ NEMOTRON 3 (Nebius Token Factory)   ← reasoning, planning     │
+   │   ultra / super / light tiers chosen by the model router      │
+   └───────────────────────────────┬───────────────────────────────┘
+                                   ▼
    ┌───────────────────────────────────────────────────────────────┐
    │ DECISION ENGINE  (authoritative, deterministic)               │
-   │   risk classification · policy rules · JEV signals             │
-   │   → ALLOW  |  APPROVAL  |  BLOCK                               │
-   └──────────────────────────────┬────────────────────────────────┘
-                                  ▼
+   │   risk classification · policy rules · JEV signals            │
+   │   → ALLOW  |  APPROVAL  |  BLOCK                              │
+   └───────────────────────────────┬───────────────────────────────┘
+                                   ▼
    ┌───────────────────────────────────────────────────────────────┐
    │ EXECUTION                                                     │
-   │   Hermes agent runtime (local · CLI · HTTP)                    │
-   │   NemoClaw / OpenShell boundary (sandbox · network · secrets)   │
-   └──────────────────────────────┬────────────────────────────────┘
-                                  ▼
+   │   Hermes agent runtime (local · CLI · HTTP)                   │
+   │   NemoClaw / OpenShell boundary (sandbox · network · secrets) │
+   └───────────────────────────────┬───────────────────────────────┘
+                                   ▼
    ┌───────────────────────────────────────────────────────────────┐
-   │ VERIFICATION → PERSISTENT MEMORY → ACTIVITY LOG                │
+   │ VERIFICATION → PERSISTENT MEMORY → ACTIVITY LOG               │
    └───────────────────────────────────────────────────────────────┘
 ```
 
@@ -240,6 +256,16 @@ at `GET /chat/attachments` so the composer pre-checks against the same numbers t
 
 ## Quickstart
 
+The fastest way to *see* Dobot: start the backend and the app (steps 2 and 3 below), turn on
+**Always on** in the header, then try these three in order — each exercises a different half of the
+loop.
+
+1. **“Plan my day”** — planning and a direct answer, no tools touched.
+2. **“Explain what's on my screen”** after `Ctrl+Shift+S` — screen context joined to the same
+   request.
+3. **“Tidy my Downloads folder”** in **Assist** mode — the approval card with a concrete preview,
+   and nothing moving until you say so.
+
 ### 1. Configure
 
 ```bash
@@ -294,13 +320,14 @@ configured: `uv run python -m app.selftest`.
 
 ### Installing it as a real application on your laptop
 
-See **[`docs/install.md`](docs/install.md)** for building an installer, installing it, autostart,
-where your data lives, and uninstalling. The installer ships **without** a backend inside: release
-builds talk to the backend deployed as a private Hugging Face Space — push it with
-`HF_TOKEN=… bash scripts/deploy-hf-space.sh` — and **Settings → Backend** points the app anywhere
-else (your own server, §5.5 there, or `127.0.0.1:8756`). A PyInstaller sidecar inside the installer
-still exists but is opt-in (`DOBOT_BUNDLE_SIDECAR=1`): the bundled one crashed the laptop it was
-first tried on. Remember that a deployed backend is where local-execution tools act.
+See **[`docs/install.md`](docs/install.md)** — it opens with the three ways to run Dobot (from
+source, the `.exe` with a local backend, the `.exe` with a hosted backend), then covers building
+the installer, autostart, where your data lives and uninstalling. Every build defaults to
+`http://127.0.0.1:8756`; **Settings → Backend** points the app at any other backend you run — your
+own server or container (§5.5 there) or your own Hugging Face Space (§5.6). The installer ships
+**without** a backend inside it; a PyInstaller sidecar exists but is opt-in
+(`DOBOT_BUNDLE_SIDECAR=1`), because the bundled one crashed the laptop it was first tried on.
+Remember that a backend on another machine is where local-execution tools act.
 
 ---
 
@@ -338,7 +365,7 @@ Local, loopback-bound, and designed for the desktop app.
 | Observability | `GET /health`, `/dashboard`, `/activity`, `/activity/{task_id}`, `/debug/trace` |
 | Settings | `GET,PATCH /settings`, `GET /settings/providers`, `/settings/onboarding`, `GET /settings/keys`, `PUT,DELETE /settings/keys/{name}` (user keys only — operator values answer 403) |
 | Auth | `GET /auth/status` |
-| Live events | `ws://127.0.0.1:8756/ws` (recent events replayed on connect), plus `GET /events?after=<seq>` — the same stream over HTTP, which is what a private Hugging Face Space needs because its proxy refuses the WebSocket upgrade |
+| Live events | `ws://127.0.0.1:8756/ws` (recent events replayed on connect), plus `GET /events?after=<seq>` — the same stream over HTTP, for hosted backends whose proxy refuses the WebSocket upgrade |
 
 ---
 
@@ -388,7 +415,7 @@ backend/                 FastAPI gateway, orchestrator, decision engine, memory,
   app/tools/             filesystem · terminal · browser · screen · computer · apps · productivity
   app/api/               chat · screen · research · tasks · automations · approvals · memory
                          skills · settings · security · activity · websocket
-  tests/                 243 tests, no network required
+  tests/                 275 tests, no network required
 desktop/                 Tauri 2 + React 18 + TypeScript + zustand
   src/pages/             Chat (default) · Overview · Tasks · Automations · Approvals · Memory
                          Skills · Activity · Security · Settings
@@ -431,12 +458,12 @@ missing one:
 | OS-level sandbox | On Windows the default is `SANDBOX_PROVIDER=local`, so `isolation: none`. The action firewall is enforced in-process; NemoClaw/OpenShell must be running for kernel-level isolation. |
 | Desktop (GUI) control | The `computer_*` tools need the Hermes runtime. Without it they refuse rather than pretend to click. |
 | Outbound messaging / email | `message_send` composes a draft and reports `sent: false`. Dobot does not send anything. |
-| Voice | Both halves work but need local pieces: speaking uses the OS engine (PowerShell SAPI) and listening downloads a ~484 MB Whisper-small checkpoint (`uv sync --extra voice`, plus ffmpeg). Not in the Docker image, so a Space-hosted backend reports both as declined. |
-| API authentication | Loopback runs open by default (single-user laptop). A deployed backend must set `DOBOT_API_TOKEN`; on the private Space, both that gate and HF's proxy token check sit in front of every request. |
+| Voice | Both halves work but need local pieces: speaking uses the OS engine (PowerShell SAPI) and listening downloads a ~484 MB Whisper-small checkpoint (`uv sync --extra voice`, plus ffmpeg). Neither is in the container image, so a backend running in Docker reports both as declined. |
+| API authentication | Loopback runs open by default (single-user laptop). A deployed backend must set `DOBOT_API_TOKEN`; on a private Hugging Face Space, that gate and the Space proxy's token check both sit in front of every request. |
 | Long-term memory backends | Defaults to a local file store with a local cosine index; MongoDB and Zilliz are optional extras. |
 | Automatic skill learning | Skills are authored in `skills/` or saved explicitly. Dobot does not invent workflows on its own. |
 | Mobile, email-ecosystem and financial automation | Explicitly future work. |
-| Backend autostart | The desktop app spawns no backend by default — a release build expects the Hugging Face Space (or whatever **Settings → Backend** points at). `docs/install.md` §5 covers the local options. |
+| Backend autostart | The desktop app spawns no backend by default — it uses whatever **Settings → Backend** points at (`127.0.0.1:8756` unless you change it). Start it yourself, or build the opt-in sidecar installer; `docs/install.md` §5 covers the options. |
 
 One specification conflict is resolved deliberately: §58 mentions Postgres + pgvector, while the
 product header specifies MongoDB + Zilliz. The header wins, and it is recorded in

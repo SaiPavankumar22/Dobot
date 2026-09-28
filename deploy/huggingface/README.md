@@ -21,8 +21,11 @@ The Space is **private**: Hugging Face's proxy rejects every request that arrive
 `Authorization: Bearer <HF_READ_TOKEN>`, and so does the backend itself.
 
 1. Create a **read** token at <https://huggingface.co/settings/tokens>.
-2. In the app: **Settings → Backend** → URL `https://sai-pavankumar22-dobot.hf.space` (already the
-   default in release builds) → paste the token in the API-token field → **Save and reconnect**.
+2. In the app: **Settings → Backend** → URL `https://YOUR_SPACE.hf.space` → paste the token in the
+   API-token field → **Save and reconnect**.
+
+The full install guide — the three ways to run Dobot, the keys, the troubleshooting table — is
+`install.md` in this repository.
 
 Every HTTP call carries that token. A browser WebSocket cannot attach headers, and a private
 Space's proxy refuses the upgrade without one — so when the WebSocket cannot connect, the app
@@ -60,7 +63,7 @@ curl http://127.0.0.1:8756/health
 
 ## Notes
 
-- Free CPU hardware; inference runs on Nebius, so no GPU is needed.
+- Inference runs on Nebius, so no GPU is needed here.
 - A sleeping Space wakes on the first request (the first call can take ~30 s).
 - Voice transcription and local OCR are not in this image — the app degrades those features
   honestly and explains why on the Doctor page.

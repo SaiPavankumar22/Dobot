@@ -9,15 +9,145 @@ Dobot is **two processes**:
 | **Backend** | FastAPI app (Python) on `127.0.0.1:8756` | All reasoning, memory, tools and safety decisions |
 | **Desktop app** | Tauri shell + web UI (`Dobot.exe`) | The chat window, the floating dot, hotkeys, screen capture |
 
-The desktop app is the part you install. The backend has to be running for Dobot to think, and there
-are three ways to arrange that:
+The desktop app is the part you install. The backend has to be running for Dobot to think, so
+there are exactly three ways to run the pair — choose yours in
+[§0](#0-the-three-ways-to-run-dobot):
 
-1. **Bundled (the default for installers).** The installer ships the backend as
-   `dobot-backend.exe` next to `Dobot.exe`; the shell starts it on launch and stops it on exit. The
-   person installing never sees a terminal.
-2. **Run from source** — for development (Option A below).
-3. **A deployed backend** — one server that any number of devices point at
-   ([§5.5](#55-deploy-one-backend-point-every-device-at-it)).
+1. **From source, both local** — desktop and backend, each in its own terminal, from the checkout
+   (development and for reading the code).
+2. **The `.exe`, backend local** — the installed app, with the backend still in a terminal on the
+   same machine.
+3. **The `.exe`, backend hosted** — the installed app pointed at a backend you host somewhere
+   else. No terminal at all after it is set up.
+
+The installer never ships a backend *inside* the exe (that experiment crashed the laptop it was
+first tried on); bundling one is an opt-in flag, see [§4](#4-ways-2-and-3--build-a-real-installer). A
+single backend that several devices share is a server-shaped variant of way 3:
+[§5.5](#55-deploy-one-backend-point-every-device-at-it).
+
+---
+
+## 0. The three ways to run Dobot
+
+Same two processes, three arrangements. Everything after this section is detail for one of them —
+the numbered sections work the same either way.
+
+| | **1 · From source, both local** | **2 · The `.exe`, backend local** | **3 · The `.exe`, backend hosted** |
+| --- | --- | --- | --- |
+| Desktop | `npm run tauri dev` in the checkout | installed `Dobot.exe` | installed `Dobot.exe` |
+| Backend | `uvicorn` in a terminal, same machine | `uvicorn` in a terminal, same machine | a backend you host — your own server, container, or Space |
+| Backend URL | `http://127.0.0.1:8756` (the dev default) | `http://127.0.0.1:8756` (the default) | whatever URL you host it at (you set it in Settings) |
+| Terminal needed | two, while Dobot runs | one, while Dobot runs | none |
+| Source checkout needed | yes | only to build | only to build |
+| What `fs_*` / `computer_*` act on | this laptop | this laptop | that backend's machine |
+| Voice input (mic) | local Whisper | local Whisper | only if that backend has the model — the Doctor page says so |
+| Good for | development, reading the code | daily use on one machine | weak hardware, a second laptop, demos |
+
+The **Settings → Backend** URL is the single switch between ways 2 and 3: it is stored per machine,
+so changing it never touches the other one.
+
+### Way 1 — desktop and backend, both from source
+
+Do [§1](#1-check-the-prerequisites) (prerequisites) and [§2](#2-configure-the-backend-once)
+(`.env` + dependencies) once, then keep **two terminals** open:
+
+```bash
+# terminal 1 — the backend
+cd backend
+uv run uvicorn app.main:app --host 127.0.0.1 --port 8756
+
+# terminal 2 — the desktop app
+cd desktop
+npm install
+npm run tauri dev
+```
+
+Nothing to configure: a dev build already points at `http://127.0.0.1:8756`. Check the brain is up
+before blaming the app:
+
+```bash
+curl http://127.0.0.1:8756/health
+```
+
+Stop either one with `Ctrl+C` — Dobot only thinks while terminal 1 is alive. For a UI-only loop with
+no native shell (no tray, no global hotkeys, screen selection falls back to display-share) use
+`npm run dev` and open <http://127.0.0.1:1420>. [§3](#3-way-1--run-it-from-source-fastest-no-installer)
+is this same setup as its own section.
+
+### Way 2 — the installed `.exe`, backend still on this machine
+
+**Build once** ([§4](#4-ways-2-and-3--build-a-real-installer)) and install what it produces:
+
+```bash
+cd desktop
+npm install
+npm run tauri build
+# then double-click:
+#   desktop/src-tauri/target/release/bundle/nsis/Dobot_0.1.0_x64-setup.exe
+```
+
+**Then every day** — one terminal for the brain:
+
+```bash
+cd path/to/Dobot/backend
+uv run uvicorn app.main:app --host 127.0.0.1 --port 8756
+```
+
+Launch **Dobot** from the Start menu — every build starts pointed at `http://127.0.0.1:8756`, so
+usually nothing needs changing. This is the short checklist anyway:
+
+1. **Settings → Backend** should read `http://127.0.0.1:8756`. Only if you moved the backend to
+   another port, paste that URL and **Save and reconnect**.
+2. Leave the token field empty and press **Save token** — that clears a token saved earlier for
+   way 3. A local backend with no `DOBOT_API_TOKEN` does not ask for one (the note under the field
+   says *the connected backend is not asking for a token right now*), and **Test connection**
+   answers ✓. If you do gate it, generate one with
+   `uv run python -m app.selftest --new-token` and paste it here.
+3. **Settings → Your API keys** → paste `nebius` (required) and `tavily` → **Save**. They are
+   written to *that* backend's `.env` and take effect immediately.
+4. The sidebar footer chip reads **backend connected**; the Doctor page lists what is live.
+
+You do not need the checkout on this machine once the installer is built — only the backend's
+folder (or its `.env`) and the installed app.
+
+### Way 3 — the installed `.exe`, backend hosted somewhere else
+
+The backend runs where you do not run a terminal: your own server ([§5.5](#55-deploy-one-backend-point-every-device-at-it)),
+your own container, or your own Hugging Face Space ([§5.6](#56-deploy-the-backend-to-a-hugging-face-space)).
+Get that backend up first — one command from the repo root pushes a Space:
+
+```bash
+HF_TOKEN=hf_xxx HF_SPACE=YOUR_SPACE bash scripts/deploy-hf-space.sh
+```
+
+Then, on the device:
+
+1. **Install and launch** the `.exe`. It starts pointed at this machine
+   (`http://127.0.0.1:8756`).
+2. **Settings → Backend** → the URL of your hosted backend (for a Space:
+   `https://YOUR_SPACE.hf.space`) → **Save and reconnect**.
+3. If that backend guards itself (`DOBOT_API_TOKEN`) — and a hosted one should — paste the token in
+   the token field on the same page → **Save token** → **Test connection**; the note turns into
+   `✓ Connected — backend ok`. For a private Space the token is a **read** token from
+   <https://huggingface.co/settings/tokens>: without it the Space's proxy answers **404** to
+   everything, which is the private Space behaving correctly, not a broken app (the field's own
+   note will read *this backend requires a token*).
+4. **Settings → Your API keys** → paste `nebius` (required) and `tavily` → **Save**. They land in
+   *that* backend's `.env`; `mongodb_uri` and the LangSmith values show read-only under *Managed for
+   you*.
+5. Wait out the first wake (a sleeping free backend can take ~30 s) until the sidebar chip reads
+   **backend connected**, then confirm on the Doctor page.
+
+What you are accepting, honestly: `fs_*` and `computer_*` act on **that backend's machine**, not
+your laptop; screen selections and mic audio travel to it; a container's filesystem is usually
+wiped on rebuild (set `MONGODB_URI` as a secret if memory must survive); and everyone pointed at
+one backend shares one `.env` — the last save wins.
+
+### Which way am I in?
+
+**Settings → Backend** says it outright: `http://127.0.0.1:8756` is way 1 or 2 (way 1 is the one
+running from a checkout, `npm run tauri dev`), any other URL is way 3. The sidebar footer chip and
+the Doctor page then tell you whether that backend actually answered.
 
 ---
 
@@ -105,7 +235,7 @@ the Doctor page in the app or `curl http://127.0.0.1:8756/doctor`.
 
 ---
 
-## 3. Option A — run it from source (fastest, no installer)
+## 3. Way 1 — run it from source (fastest, no installer)
 
 Good for trying it or developing. Open **two** terminals.
 
@@ -131,7 +261,7 @@ browser's display-share permission) use `npm run dev` and open <http://127.0.0.1
 
 ---
 
-## 4. Option B — build a real installer
+## 4. Ways 2 and 3 — build a real installer
 
 This produces an actual Windows installer you can install, pin and uninstall like any other app.
 
@@ -161,13 +291,14 @@ Pick either: the **NSIS `.exe`** is the friendlier one (per-user install, no adm
 
 Since the shell and the brain are two processes, the installed app needs a brain somewhere — and it
 never ships *inside* the installer: a PyInstaller backend bundled into the exe crashed the laptop it
-was first tried on. A release build instead connects to, in this order:
+was first tried on. The installed app connects to a backend in this order:
 
 1. **The backend you point it at** — **Settings → Backend** stores a URL (plus the token every call
-   carries) per machine. Release builds default to the Hugging Face Space
-   `https://sai-pavankumar22-dobot.hf.space` (§5.6); dev builds to `http://127.0.0.1:8756`.
-2. **A backend already running locally** — if something serves `127.0.0.1:8756`, the app simply
-   uses it.
+   carries) per machine. Every build defaults to `http://127.0.0.1:8756`; a backend hosted anywhere
+   else — §5.5 or §5.6 — is a URL pasted there.
+2. **A backend running on this machine** — the app never searches for one: set **Settings →
+   Backend** to `http://127.0.0.1:8756` and it uses that instead ([way 2](#way-2--the-installed-exe-backend-still-on-this-machine);
+   you start the backend yourself, §5.1–5.4).
 
 On an installed machine, `%LOCALAPPDATA%\Dobot\` contains the shell and the writable `skills/`
 folder the Skills page manages.
@@ -356,7 +487,7 @@ reports both as live/declined with their fixes.
 
 ## 5. Keep the backend running (source runs and custom setups)
 
-These matter when you run from source (Option A), keep a backend on your own machine, or customise
+These matter when you run from source (way 1), keep a backend on your own machine, or customise
 ports. An install pointing at the Hugging Face Space (§5.6) needs none of this.
 
 Pick whichever suits you. All four work; they differ in how much you have to think about them.
@@ -442,14 +573,15 @@ also travel to the server. For shared reasoning, research and memory across devi
 setup; for an assistant that operates each device locally, run the backend on that device (§5.1–5.4)
 or opt into the bundled installer (§4).
 
-### 5.6 Deploy the backend to a Hugging Face Space (what installers expect)
+### 5.6 Deploy the backend to a Hugging Face Space
 
-Release installers point at `https://sai-pavankumar22-dobot.hf.space` out of the box: the backend
-runs as a **private Docker Space**, secrets live in the Space's environment, and the laptop holds
-nothing but a token. One command from the repo root pushes it:
+A hosted backend with no server of your own: the backend runs as a **private Docker Space**,
+secrets live in the Space's environment, and the laptop holds nothing but a token. One command from
+the repo root pushes it — the Space's name comes from `HF_SPACE` (or the git-ignored `.hf-space`
+file at the repo root, so the command stays short on repeat runs):
 
 ```bash
-HF_TOKEN=hf_xxx bash scripts/deploy-hf-space.sh
+HF_TOKEN=hf_xxx HF_SPACE=YOUR_SPACE bash scripts/deploy-hf-space.sh
 ```
 
 The script creates the Space if it does not exist yet (private, Docker SDK), assembles the Space
@@ -476,8 +608,8 @@ Once the build is green:
 2. Nothing secret is pushed to the repo or baked into the image — the backend reads every one of
    these as a plain environment variable.
 3. Create a **read** token at <https://huggingface.co/settings/tokens>.
-4. In the app: **Settings → Backend** → the Space URL (already the default in release builds) →
-   paste that token in the API-token field → **Save and reconnect**.
+4. In the app: **Settings → Backend** → the Space URL the deploy script prints at the end → paste
+   that token in the API-token field → **Save and reconnect**.
 5. In the app: **Settings → Your API keys** → paste your own `nebius` (required) and `tavily`,
    `zilliz_token`, `zilliz_uri`. They land in the Space's `.env` and take effect immediately.
    `mongodb_uri` and the LangSmith values appear read-only under **Managed for you** — they are the

@@ -24,25 +24,24 @@ import type {
   VoiceSummary,
 } from "../types";
 
-/** The deployed backend (Hugging Face Space). Private, so every call carries the API token. */
-export const HF_SPACE_URL = "https://sai-pavankumar22-dobot.hf.space";
-
 /** A backend you run yourself (`cd backend && uv run uvicorn app.main:app`). */
 export const LOCAL_BACKEND_URL = "http://127.0.0.1:8756";
 
 /**
- * Where a build points before Settings overrides it: the deployed Space in release builds (so an
- * installed app works with no local backend), the local backend in dev (`npm run tauri dev`).
- * Settings → Backend stores an override in localStorage (`dobot.baseUrl`).
+ * Where the app points before Settings overrides it: this machine's own backend, in every build —
+ * so a fresh install is useful the moment it opens, and no repo or binary names a deployment.
+ * A backend hosted anywhere else (your own server, container, or Space) is a URL pasted into
+ * Settings → Backend, stored per machine in localStorage (`dobot.baseUrl`) along with the token
+ * every call carries (`dobot.apiToken`).
  */
-export const DEFAULT_BASE_URL = import.meta.env.DEV ? LOCAL_BACKEND_URL : HF_SPACE_URL;
+export const DEFAULT_BASE_URL = LOCAL_BACKEND_URL;
 
 let baseUrl = localStorage.getItem("dobot.baseUrl") || DEFAULT_BASE_URL;
 
 /**
- * The bearer token sent with every call: a backend's DOBOT_API_TOKEN gate, or — for the private
- * Hugging Face Space a release build points at — your HF read token (the Space's proxy demands it
- * on every request, WS handshake included).
+ * The bearer token sent with every call: the connected backend's `DOBOT_API_TOKEN`, or — for a
+ * private Hugging Face Space — your HF read token (its proxy demands the token on every request,
+ * WS handshake included).
  *
  * Held in localStorage rather than baked into the build: it is a per-machine secret, and the whole
  * point of both gates is that it is not shipped in the app.

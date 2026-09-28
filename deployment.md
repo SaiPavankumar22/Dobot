@@ -4,12 +4,16 @@ Dobot ships to two places, from one repo:
 
 | Target | What it is | How it updates |
 | --- | --- | --- |
-| **GitHub** (`SaiPavankumar22/Dobot`) | The source of truth: backend, desktop app, skills, docs. | `git push origin main` |
-| **Hugging Face Space** (`SaiPavankumar22/Dobot` → `https://saipavankumar22-dobot.hf.space`) | The hosted backend the desktop app talks to. A Docker image built by HF from `backend/` + `skills/` + `deploy/huggingface/`. | `bash scripts/deploy-hf-space.sh` (a git push that triggers an image build) |
+| **GitHub** (`<your-user>/Dobot`) | The source of truth: backend, desktop app, skills, docs. | `git push origin main` |
+| **Hugging Face Space** (`$HF_SPACE` → `https://YOUR_SPACE.hf.space`) | The hosted backend the desktop app can talk to. A Docker image built by HF from `backend/` + `skills/` + `deploy/huggingface/`. | `bash scripts/deploy-hf-space.sh` (a git push that triggers an image build) |
 
-The Space is **private** and runs on grandfathered **free cpu-basic** hardware. **Never delete or
-recreate it** — Hugging Face no longer creates free Docker Spaces, and a new Space would land on
-paid hardware.
+The Space is **private**: Hugging Face's proxy rejects every request that arrives without your
+token, which is half of why a hosted Dobot is not an open endpoint. Never delete and recreate a
+Space casually — HF no longer creates free Docker Spaces, and a replacement would land on paid
+hardware.
+
+The Space's name is deliberately **not** written in this repo. Pass it once as `HF_SPACE=owner/name`,
+or keep it in a git-ignored `.hf-space` file at the repo root and the command stays short.
 
 ---
 
@@ -25,12 +29,13 @@ git commit -m "<what and why>"
 git push origin main
 
 # 2. Push the backend to the Hugging Face Space (triggers the Docker build).
-HF_TOKEN=hf_xxx bash scripts/deploy-hf-space.sh
+HF_TOKEN=hf_xxx HF_SPACE=YOUR_SPACE bash scripts/deploy-hf-space.sh
 ```
 
 If `git status` shows nothing to commit but backend code changed earlier, step 2 alone is enough.
-If only `desktop/`, `docs/`, or `scripts/` changed, step 2 is unnecessary — the Space image
-contains only `backend/`, `skills/`, `deploy/huggingface/`, and the Space README card.
+If only `desktop/` or `scripts/` changed, step 2 is unnecessary — the Space image contains only
+`backend/`, `skills/`, `deploy/huggingface/`, the Space README card, and the docs the script
+substitutes (`install.md`, `deployment.md`).
 
 ## What the deploy script does
 
@@ -63,7 +68,7 @@ writes them to the container's `.env` at runtime.
 python - <<'EOF'
 import json, os, urllib.request
 req = urllib.request.Request(
-    "https://huggingface.co/api/spaces/SaiPavankumar22/Dobot/tree/main?recursive=true",
+    "https://huggingface.co/api/spaces/YOUR_SPACE/tree/main?recursive=true",
     headers={"Authorization": "Bearer " + os.environ["HF_TOKEN"]})
 paths = [f["path"] for f in json.load(urllib.request.urlopen(req))]
 print("nested:", sum(1 for p in paths if "/app/app/" in p))
@@ -71,7 +76,7 @@ print("main.py:", "backend/app/main.py" in paths)
 EOF
 ```
 
-Then check the Space went green (`https://huggingface.co/spaces/SaiPavankumar22/Dobot`, stage
+Then check the Space went green (`https://huggingface.co/spaces/YOUR_SPACE`, stage
 `RUNNING`) and that `GET /health` answers `200` with the read token. Without a token the private
 proxy answers **404** — that is expected, not an outage.
 
