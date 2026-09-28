@@ -8,6 +8,7 @@ import { socket } from "../services/websocket";
 import { captureSelection, type Selection } from "../services/screen";
 import type {
   ApprovalRecord,
+  ChatAttachment,
   ChatMessage,
   DashboardSummary,
   DobotEvent,
@@ -76,7 +77,10 @@ interface DobotStore {
   connect: () => void;
   disconnect: () => void;
   handleEvent: (event: DobotEvent) => void;
-  send: (text: string, options?: { shadow?: boolean; useSelection?: boolean }) => Promise<void>;
+  send: (
+    text: string,
+    options?: { shadow?: boolean; useSelection?: boolean; attachments?: ChatAttachment[] },
+  ) => Promise<void>;
   captureScreen: () => Promise<void>;
   setCapturing: (capturing: boolean) => void;
   finishBrowserSelection: (selection: Selection) => void;
@@ -224,13 +228,17 @@ export const useDobot = create<DobotStore>((set, get) => ({
 
   send: async (text, options) => {
     const trimmed = text.trim();
-    if (!trimmed) return;
+    const attachments = options?.attachments ?? [];
+    // An attachment on its own is a legitimate request ("what does this say?"); the backend fills in
+    // the implied words. Nothing at all is not.
+    if (!trimmed && attachments.length === 0) return;
     const selection = options?.useSelection ? get().selection : null;
     const userMessage: ChatMessage = {
       id: makeId(),
       role: "user",
       text: selection ? `${trimmed}\n\n[selected ${selection.region?.width}×${selection.region?.height} region from ${selection.application || "screen"}]` : trimmed,
       createdAt: Date.now(),
+      attachments: attachments.length ? attachments : undefined,
     };
     const placeholder: ChatMessage = {
       id: makeId(),
@@ -249,6 +257,7 @@ export const useDobot = create<DobotStore>((set, get) => ({
         mode: get().mode,
         region: selection?.region ?? null,
         image: selection?.image ?? null,
+        attachments: attachments.map(({ name, mime, data }) => ({ name, mime, data })),
       });
       // The immediate response carries the answer for anything that finished synchronously (a direct
       // answer, a shadow plan, an approval gate). Background completions arrive later as events.

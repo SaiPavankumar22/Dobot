@@ -21,6 +21,16 @@ mongo = ["motor>=3.5"]
 vectors = ["pymilvus>=2.4"]
 ocr = ["pytesseract>=0.3.10", "Pillow>=10.3"]
 voice = ["faster-whisper>=1.0"]
+# CUDA runtime for the voice extra: ctranslate2 loads cublas64_12/cudnn64_9 by bare name, and these
+# wheels are the only way to get them without a full CUDA toolkit. Windows-only because that is
+# where the DLL search path has to be nudged (app/agents/transcriber.py does it); Linux finds them
+# from the wheel layout itself. With them, a 4 GB card transcribes faster than realtime instead of
+# leaning on the CPU at ~7x realtime.
+voice-gpu = [
+    "faster-whisper>=1.0",
+    "nvidia-cublas-cu12; sys_platform == 'win32'",
+    "nvidia-cudnn-cu12; sys_platform == 'win32'",
+]
 deepresearch = ["deepagents>=0.7", "langchain-openai>=0.2"]
 dev = ["pytest>=8.2", "pytest-asyncio>=0.23", "ruff>=0.6"]
 

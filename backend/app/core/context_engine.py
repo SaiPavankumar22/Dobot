@@ -10,17 +10,19 @@ from __future__ import annotations
 import base64
 import platform
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
 from app.agents.sandbox import FallbackSandbox
 from app.config import Settings, get_settings
+from app.core.attachments import AttachmentError, decode_text, prepare
 from app.events import EventBus, EventType, get_event_bus
 from app.logging_setup import get_logger
 from app.memory.manager import MemoryManager
 from app.memory.store import RecordStore
 from app.schemas import (
+    AttachmentBlock,
     ContextBundle,
     EnvironmentSnapshot,
     MemoryHit,
@@ -28,7 +30,7 @@ from app.schemas import (
     ScreenContext,
     TaskStatus,
 )
-from app.tools.screen import extract_screen_text, save_ephemeral
+from app.tools.screen import extract_screen_text, save_ephemeral, sniff_image_mime, vision_transcribe
 
 logger = get_logger(__name__)
 
@@ -43,6 +45,8 @@ class ContextRequestData:
     application: str = ""
     window_title: str = ""
     question: str = ""
+    #: Files and images the user attached to this message (validated by the API, decoded here).
+    attachments: list[Any] = field(default_factory=list)
 
 
 class ContextEngine:
@@ -114,6 +118,61 @@ class ContextEngine:
             ocr_engine=engine,
             captured_at=datetime.now(UTC),
         )
+
+    # ------------------------------------------------------------------ attachments
+
+    async def build_attachment_context(self, attachments: list[Any] | None) -> list[AttachmentBlock]:
+        """Turn attachments into what the reasoner can actually use.
+
+        Images go to the vision model and come back as text plus an ephemeral file reference; text
+        files are decoded, capped and inlined. A rejected attachment never fails the request — the
+        API already validated, and a context stage that throws is worse than a missing description.
+        """
+        if not attachments:
+            return []
+        try:
+            prepared = prepare(attachments)
+        except AttachmentError as exc:
+            logger.info("attachment rejected while building context (%s): %s", exc.code, exc.message)
+            return []
+        blocks: list[AttachmentBlock] = []
+        for item in prepared:
+            if item.kind == "image":
+                mime = item.mime or sniff_image_mime(item.data)
+                text, engine = await vision_transcribe(
+                    item.data,
+                    self.settings,
+                    "Describe this image in detail. If it contains text, transcribe it verbatim first.",
+                )
+                try:
+                    ref = save_ephemeral(item.data, self.settings)
+                except Exception as exc:  # noqa: BLE001 - a failed save must not lose the description
+                    logger.info("could not save attachment ephemerally (%s)", exc)
+                    ref = None
+                blocks.append(
+                    AttachmentBlock(
+                        name=item.name,
+                        kind="image",
+                        mime=mime,
+                        bytes=item.size,
+                        text=text,
+                        image_ref=str(ref) if ref else None,
+                        engine=engine,
+                    )
+                )
+            else:
+                text, truncated = decode_text(item)
+                blocks.append(
+                    AttachmentBlock(
+                        name=item.name,
+                        kind="text",
+                        mime=item.mime or "text/plain",
+                        bytes=item.size,
+                        text=text,
+                        truncated=truncated,
+                    )
+                )
+        return blocks
 
     # ------------------------------------------------------------------ environment
 
@@ -206,10 +265,13 @@ class ContextEngine:
         except Exception:  # noqa: BLE001
             recent = []
 
+        attachments = await self.build_attachment_context(request.attachments)
+
         bundle = ContextBundle(
             task_id=task_id,
             user_message=request.message,
             screen=screen,
+            attachments=attachments,
             memories=memories,
             open_tasks=open_tasks,
             skills=skills,
@@ -222,6 +284,7 @@ class ContextEngine:
             EventType.CONTEXT_BUILT,
             message=(
                 f"context: {len(memories)} memories"
+                + (f", {len(attachments)} attachment(s)" if attachments else "")
                 + (", screen text" if screen and screen.ocr_text else "")
                 + (f", {len(open_tasks)} open tasks" if open_tasks else "")
                 + (f", {len(standing_rules)} standing rules" if standing_rules else "")

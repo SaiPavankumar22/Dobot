@@ -21,6 +21,8 @@ class DobotGraphState(TypedDict, total=False):
     automation_id: str | None
     region: Any
     image_base64: str | None
+    #: Attachments for this message (plain dicts, so the whole state stays serialisable).
+    attachments: Any
     source: str
 
     # stage outputs
@@ -47,6 +49,7 @@ def new_state(
     region: Any = None,
     image_base64: str | None = None,
     source: str = "chat",
+    attachments: list[Any] | None = None,
 ) -> DobotGraphState:
     return DobotGraphState(
         task_id=task_id,
@@ -56,6 +59,7 @@ def new_state(
         automation_id=automation_id,
         region=region,
         image_base64=image_base64,
+        attachments=attachments or [],
         source=source,
         terminal="",
     )

@@ -233,10 +233,28 @@ class EnvironmentSnapshot(BaseModel):
     shadow_mode: bool = False
 
 
+class AttachmentBlock(BaseModel):
+    """One accepted attachment, as the reasoning model will see it.
+
+    An image is represented by what the vision model read out of it (plus the ephemeral file it was
+    saved to); a text file is represented by its own content, capped and marked when cut.
+    """
+
+    name: str = ""
+    kind: str = "text"  # image | text
+    mime: str = ""
+    bytes: int = 0
+    text: str = ""
+    image_ref: str | None = None
+    engine: str = ""
+    truncated: bool = False
+
+
 class ContextBundle(BaseModel):
     task_id: str = ""
     user_message: str = ""
     screen: ScreenContext | None = None
+    attachments: list[AttachmentBlock] = Field(default_factory=list)
     memories: list[MemoryHit] = Field(default_factory=list)
     open_tasks: list[dict[str, Any]] = Field(default_factory=list)
     skills: list[str] = Field(default_factory=list)
@@ -257,6 +275,19 @@ class ContextBundle(BaseModel):
         if self.canonical_facts:
             lines.append("[LONG-STANDING FACTS - treat as known, do not search for these]")
             lines.extend(f"- {fact}" for fact in self.canonical_facts)
+        if self.attachments:
+            # Placed before everything else the user did not write: an explicit attachment is the
+            # most deliberate thing in the message, and it must never be the thing that got cut.
+            lines.append("[ATTACHMENTS - supplied by the user with this message]")
+            for block in self.attachments:
+                size = f"{block.bytes / 1024:.1f} KB" if block.bytes >= 1024 else f"{block.bytes} B"
+                if block.kind == "image":
+                    described = block.text or "the vision model returned no description"
+                    lines.append(f"- IMAGE {block.name} ({block.mime or 'image'}, {size}): {described}")
+                else:
+                    cut = " - TRUNCATED, the rest was not sent" if block.truncated else ""
+                    lines.append(f"--- FILE {block.name} ({block.mime or 'text'}, {size}{cut}) ---")
+                    lines.append(block.text)
         if self.screen and (self.screen.ocr_text or self.screen.application):
             lines.append("[SCREEN]")
             if self.screen.application or self.screen.window_title:
@@ -390,11 +421,20 @@ class SkillRecord(BaseModel):
 # ------------------------------------------------------------------------- requests
 
 
+class ContextAttachment(BaseModel):
+    """A file or image the user attached to a message (base64; limits enforced by the API)."""
+
+    name: str = "attachment"
+    mime: str = ""
+    data: str = ""  # base64, optionally a full data: URL
+
+
 class ContextRequest(BaseModel):
     screen: bool = False
     region: Region | None = None
     image: str | None = None
     task_id: str | None = None
+    attachments: list[ContextAttachment] = Field(default_factory=list)
 
 
 class ChatRequest(BaseModel):

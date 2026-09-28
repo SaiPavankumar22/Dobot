@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 from fastapi.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
 
 from app.main import create_app
 
@@ -210,3 +211,47 @@ def test_skills_endpoint(client: TestClient) -> None:
     assert created["name"] == "test_skill"
     assert any(skill["name"] == "test_skill" for skill in client.get("/skills").json())
     assert client.delete("/skills/test_skill").json()["deleted"] is True
+
+
+def test_events_polling_uses_a_restart_safe_cursor(client: TestClient) -> None:
+    client.post("/chat", json={"message": "hello there"})
+    first = client.get("/events").json()
+    assert first["events"] and first["after"] > 0
+    assert first["dot_status"]
+    # Nothing new since the cursor → empty batch, cursor unchanged.
+    again = client.get("/events", params={"after": first["after"]}).json()
+    assert again["events"] == []
+    assert again["after"] == first["after"]
+    # A cursor from the future (server restarted, counter reset) replays instead of stalling.
+    reset = client.get("/events", params={"after": 10_000}).json()
+    assert reset["events"]
+    assert reset["after"] > 0
+
+
+def test_websocket_stream_is_open_when_no_token_is_set(client: TestClient) -> None:
+    with client.websocket_connect("/ws") as stream:
+        assert stream.receive_json()["type"] == "hello"
+
+
+def test_websocket_stream_enforces_the_token(settings) -> None:
+    """The HTTP bearer middleware never sees a WS upgrade, so /ws gates itself."""
+    settings.dobot_api_token = "sekrit"
+    with TestClient(create_app(settings)) as guarded:
+        # No token: refused with 4401 before it ever joins the event bus.
+        with pytest.raises(WebSocketDisconnect) as refused:
+            with guarded.websocket_connect("/ws") as stream:
+                stream.receive_json()
+        assert refused.value.code == 4401
+
+        # The form the desktop shell sends (browser WebSockets cannot carry headers)…
+        with guarded.websocket_connect("/ws?access_token=sekrit") as stream:
+            assert stream.receive_json()["type"] == "hello"
+
+        # …and an Authorization header for non-browser clients.
+        with guarded.websocket_connect("/ws", headers={"authorization": "Bearer sekrit"}) as stream:
+            assert stream.receive_json()["type"] == "hello"
+
+        # A wrong token is still a refusal.
+        with pytest.raises(WebSocketDisconnect):
+            with guarded.websocket_connect("/ws?access_token=wrong") as stream:
+                stream.receive_json()

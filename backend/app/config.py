@@ -8,13 +8,34 @@ secret handling in one place.
 from __future__ import annotations
 
 import os
+import sys
 from functools import lru_cache
 from pathlib import Path
 
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+
+def _resolve_root() -> Path:
+    """Where Dobot keeps ``.env``, ``skills/`` and ``.dobot/``.
+
+    Three worlds, in priority order:
+
+    - ``DOBOT_HOME`` is set: that directory (tests, portable installs).
+    - Frozen (the PyInstaller sidecar the desktop installer bundles): the directory holding the
+      executable — Tauri installs it next to ``Dobot.exe``, so ``.env`` sits beside it and stays
+      editable from the app's Settings page.
+    - Otherwise: the source checkout (two levels above this file).
+    """
+    override = os.environ.get("DOBOT_HOME", "").strip()
+    if override:
+        return Path(override).expanduser().resolve()
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parents[2]
+
+
+REPO_ROOT = _resolve_root()
 
 
 def _split_csv(value: str | list[str]) -> list[str]:
@@ -207,14 +228,26 @@ class Settings(BaseSettings):
     voice_max_chars: int = 1200
 
     # --- speech-to-text (CrisperWhisper) ---------------------------------------
-    # Local transcription of microphone audio (nyralabs/CrisperWhisper2.0_small, ~500 MB, runs in
-    # this process). Off until enabled AND the whisper package is installed; the Doctor shows the
-    # exact install command. Audio never leaves the machine.
+    # Local transcription of microphone audio, running in this process. Audio never leaves the
+    # machine; nothing is transcribed until the checkpoint is downloaded once from Hugging Face.
+    #
+    # The default is Whisper *small* (244M params, MIT, native CTranslate2 build): the same size
+    # class as CrisperWhisper 2.0's small checkpoint but loadable by faster-whisper as-is, and a
+    # fraction of the 3 GB CrisperWhisper 1.0 build this used to default to. Voice commands are
+    # short utterances; small keeps the download, RAM (~250 MB at int8) and latency low.
+    # CrisperWhisper (verbatim, [UM]/[UH]) stays available — its checkpoints must be CT2 builds
+    # (`nyralabs/faster_CrisperWhisper`, or convert `CrisperWhisper2.0_*` yourself with
+    # `pip install "crisperwhisper[convert]"`); the transformers safetensors will not load.
     transcriber_enabled: bool = True
-    #: "auto" picks CUDA when present, CPU otherwise. Override with "cuda" or "cpu".
+    #: CTranslate2 model repo id (or a local directory) loadable by faster-whisper.
+    transcriber_model: str = "Systran/faster-whisper-small"
+    #: "auto" prefers CUDA, then falls back to CPU if the card cannot load *or* run the checkpoint.
+    #: Override with "cuda" or "cpu" to be literal (an explicit device is never silently ignored).
     transcriber_device: str = "auto"
     #: ctranslate2 compute type; "auto" is sensible. e.g. "int8_float16" on GPU, "int8" on CPU.
     transcriber_compute_type: str = "auto"
+    #: Threads for CPU inference. 0 = every logical core (faster-whisper would use 4).
+    transcriber_cpu_threads: int = 0
 
     # --- local API auth -------------------------------------------------------
     # Empty means the loopback API is open (the default, for a single-user laptop). Set a token to
@@ -241,7 +274,17 @@ class Settings(BaseSettings):
     def skills_dir(self) -> Path:
         configured = (self.dobot_skills_dir or "").strip()
         if not configured:
-            return REPO_ROOT / "skills"
+            # Installed app: the bundler copies skills/ next to the executable (writable, so the
+            # Skills page can manage them). Standalone frozen run: skills live inside the exe
+            # (PyInstaller --add-data). Source checkout: the repo folder.
+            local = REPO_ROOT / "skills"
+            if local.is_dir():
+                return local
+            if getattr(sys, "frozen", False):
+                bundled = Path(getattr(sys, "_MEIPASS", "")) / "skills"
+                if bundled.is_dir():
+                    return bundled
+            return local
         path = Path(configured)
         return path if path.is_absolute() else REPO_ROOT / path
 

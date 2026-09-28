@@ -258,7 +258,7 @@ async def voice_speak(services: ServicesDep, request: SpeakRequest) -> dict:
 
 @router.post("/voice/transcribe")
 async def voice_transcribe(services: ServicesDep, file: Annotated[UploadFile, File()]) -> dict:
-    """Transcribe a microphone recording locally with CrisperWhisper 2.0 small.
+    """Transcribe a microphone recording locally with Whisper (faster-whisper, CPU/GPU).
 
     The audio is written to a temp file, transcribed in-process, and deleted. It never leaves the
     machine. Accepts webm/ogg/mp3/m4a/wav; non-native formats need ffmpeg on PATH.

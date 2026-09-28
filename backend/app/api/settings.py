@@ -21,24 +21,51 @@ router = APIRouter(prefix="/settings", tags=["settings"])
 
 MUTABLE = {"shadow_mode", "screen_capture", "jev_enabled", "ocr_enabled"}
 
+# ------------------------------------------------------------------ who sets what
+#
+# Two kinds of credential, and the separation is deliberate:
+#
+# * **User keys** (below) are the ones a person brings for themselves. The app's Settings page
+#   writes them to the backend's `.env` and applies them live.
+# * **Operator values** are infrastructure: the tracing account, the plaintext-schema memory
+#   database, the local API gate, the optional Laya server. They belong to whoever runs the backend
+#   — on a deployed Hugging Face Space that means Space **secrets**, i.e. environment variables —
+#   and the app must not solicit them from an end user.
+
 # Credential names the API may manage, mapped to the Settings field they populate.
 KEY_FIELDS = {
     "nebius": "nebius_api_key",
     "tavily": "tavily_api_key",
     "zilliz_token": "zilliz_token",
-    "langsmith": "langsmith_api_key",
-    "dobot_api_token": "dobot_api_token",
-    "laya": "laya_api_key",
 }
 
-# Fields that hold connection strings rather than secrets (masked differently, still writable).
+# Connection strings rather than secrets (masked differently, still writable by the user).
 URI_FIELDS = {
-    "mongodb_uri": "mongodb_uri",
     "zilliz_uri": "zilliz_uri",
-    "langsmith_api_url": "langsmith_api_url",
-    "laya_server_url": "laya_server_url",
-    "langsmith_project": "langsmith_project",
 }
+
+# Environment-only values. Present in the request payload as a name so the UI can explain why they
+# are absent, never as a value, and never writable through this API. Wording stays neutral about
+# *where* that environment is: `.env` for a backend you run yourself, a Space secret when the
+# backend is hosted for you. Either way the app does not ask an end user for these.
+OPERATOR_FIELDS = {
+    "mongodb_uri": "durable memory database — belongs to whoever runs the backend (its .env, or a Space secret)",
+    "langsmith_api_key": "usage tracing — belongs to whoever runs the backend (its .env, or a Space secret)",
+    "langsmith_api_url": "usage tracing host — backend environment only",
+    "langsmith_project": "usage tracing project — backend environment only",
+    "dobot_api_token": "backend access gate — backend environment only",
+    "laya_api_key": "optional Laya judgement server — backend environment only",
+    "laya_server_url": "optional Laya judgement server — backend environment only",
+}
+
+#: Ids that used to be manageable in the app and now belong to the operator, so an older client (or a
+#: curious curl) gets an explanation instead of a bare "unknown key".
+_OPERATOR_ALIASES = {"langsmith": "langsmith_api_key", "laya": "laya_api_key"}
+
+
+def _operator_reason(name: str) -> str | None:
+    """Why this name is not writable from the app, or None when it is not operator-managed."""
+    return OPERATOR_FIELDS.get(_OPERATOR_ALIASES.get(name, name))
 
 _KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
@@ -199,7 +226,11 @@ def _apply_key(services: ServicesDep, field: str, value: str) -> None:
 
 @router.get("/keys")
 async def list_keys(services: ServicesDep) -> dict:
-    """Masked presence of every manageable credential. Raw values never leave the process."""
+    """Masked presence of every user credential, plus the names that live in the environment.
+
+    Raw values never leave the process. ``operator`` carries names and reasons only, so the UI can
+    say *where* those values come from instead of showing an empty field nobody can fill.
+    """
     settings = services.settings
     keys = []
     for name, field in {**KEY_FIELDS, **URI_FIELDS}.items():
@@ -213,7 +244,15 @@ async def list_keys(services: ServicesDep) -> dict:
                 "masked": _mask(value) if value.strip() else "",
             }
         )
-    return {"keys": keys}
+    operator = [
+        {
+            "id": field,
+            "set": bool(str(getattr(settings, field, "") or "").strip()),
+            "why": why,
+        }
+        for field, why in OPERATOR_FIELDS.items()
+    ]
+    return {"keys": keys, "operator": operator}
 
 
 @router.put("/keys/{name}")
@@ -225,6 +264,16 @@ async def set_key(name: str, payload: KeyValue, services: ServicesDep) -> dict:
     if field is None:
         field = URI_FIELDS.get(name)
         kind = "uri"
+    reason = _operator_reason(name)
+    if field is None and reason:
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "OPERATOR_MANAGED",
+                "message": f"{name} is set on the backend itself ({reason}), not from the app",
+                "recoverable": False,
+            },
+        )
     if field is None or not _KEY_RE.match(name):
         raise HTTPException(
             status_code=404,
@@ -253,6 +302,15 @@ async def clear_key(name: str, services: ServicesDep) -> dict:
     """Remove a credential from the live process (the .env line is blanked, not deleted)."""
     name = name.strip().lower()
     field = KEY_FIELDS.get(name) or URI_FIELDS.get(name)
+    if field is None and _operator_reason(name):
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "OPERATOR_MANAGED",
+                "message": f"{name} is set on the backend itself, not from the app",
+                "recoverable": False,
+            },
+        )
     if field is None:
         raise HTTPException(status_code=404, detail={"code": "UNKNOWN_KEY", "message": name, "recoverable": True})
     path = _env_path(services)

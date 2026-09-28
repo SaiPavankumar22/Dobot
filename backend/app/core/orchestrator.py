@@ -265,6 +265,7 @@ class Orchestrator:
             message=state["message"],
             region=state.get("region"),
             image_base64=state.get("image_base64"),
+            attachments=state.get("attachments") or [],
             question=state["message"],
         )
         bundle: ContextBundle = await s.context.build(context_request, task_id=state["task_id"])
@@ -424,6 +425,7 @@ class Orchestrator:
             automation_id=automation_id,
             region=request.context.region,
             image_base64=request.context.image,
+            attachments=[item.model_dump() for item in request.context.attachments],
             source=request.source,
         )
         await self.run_lifecycle(state)

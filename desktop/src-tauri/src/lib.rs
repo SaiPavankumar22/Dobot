@@ -4,6 +4,7 @@
 //! the system tray, autostart, native notifications and screen capture. It holds no credentials and no
 //! reasoning — every decision still belongs to the backend.
 
+mod backend;
 mod capture;
 mod hotkeys;
 mod state;
@@ -178,12 +179,16 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
+        // Powers the bundled backend sidecar (start on launch, stop on exit) — Rust-side only, so no
+        // capability entries are needed for it.
+        .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, None))
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, shortcut, event| hotkeys::handle(app, shortcut, event))
                 .build(),
         )
+        .manage(backend::BackendProcess::default())
         .invoke_handler(tauri::generate_handler![
             list_monitors,
             capture_region,
@@ -208,6 +213,20 @@ pub fn run() {
         ])
         .setup(|app| {
             let handle = app.handle().clone();
+
+            // If this install bundles the backend (dobot-backend.exe next to Dobot.exe), start it and
+            // wait for its port off the main thread so first paint is never blocked. The UI connects
+            // lazily and reports "backend starting…" meanwhile; with no sidecar nothing is spawned
+            // and the app expects an external backend exactly as before.
+            if backend::spawn_if_bundled(&handle) {
+                std::thread::spawn(move || {
+                    if backend::wait_for_backend(std::time::Duration::from_secs(45)) {
+                        println!("dobot: bundled backend is accepting connections");
+                    } else {
+                        eprintln!("dobot: bundled backend did not open its port in time");
+                    }
+                });
+            }
 
             // Opens the chat window and reveals the dot only if the user turned always-on back on.
             windows::apply_startup_state(&handle);
@@ -268,6 +287,10 @@ pub fn run() {
             println!("dobot: desktop shell ready");
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running the Dobot desktop shell");
+        .build(tauri::generate_context!())
+        .expect("error while running the Dobot desktop shell")
+        .run(|app, event| {
+            // Stop the bundled backend on every exit path (window close, tray quit, app.exit).
+            backend::handle_exit_event(app, &event);
+        });
 }

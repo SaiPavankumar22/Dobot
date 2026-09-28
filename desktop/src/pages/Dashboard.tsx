@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Activity } from "./Activity";
 import { Approvals } from "./Approvals";
+import { Guide } from "./Guide";
 import { Automations } from "./Automations";
 import { Doctor } from "./Doctor";
 import { Identity } from "./Identity";
@@ -14,6 +15,7 @@ import { native } from "../services/native";
 import { useDobot } from "../store/dobotStore";
 
 const SECTIONS = [
+  { id: "guide", label: "Guide" },
   { id: "overview", label: "Overview" },
   { id: "tasks", label: "Tasks" },
   { id: "automations", label: "Automations" },
@@ -79,6 +81,7 @@ export function Dashboard() {
         </div>
       </aside>
       <main className="main">
+        {section === "guide" && <Guide />}
         {section === "overview" && <Overview />}
         {section === "tasks" && <Tasks />}
         {section === "automations" && <Automations />}

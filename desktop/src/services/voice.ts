@@ -1,11 +1,11 @@
 // Voice input: capture the microphone, transcribe locally via the backend.
 //
-// The audio goes to Dobot's own /voice/transcribe endpoint (CrisperWhisper 2.0 small running in the
-// backend process) — nothing leaves the machine. The hook is shared by the chat composer and the dot
-// panel so both surfaces behave identically.
+// The audio goes to Dobot's own /voice/transcribe endpoint (Whisper small via faster-whisper,
+// running in the backend process) — nothing leaves the machine. The hook is shared by the chat
+// composer and the dot panel so both surfaces behave identically.
 
 import { useCallback, useRef, useState } from "react";
-import { getBaseUrl } from "./api";
+import { authHeader, getBaseUrl } from "./api";
 
 export type TranscribeStatus = {
   ready: boolean;
@@ -18,14 +18,14 @@ export type TranscribeStatus = {
 
 export async function transcribeStatus(): Promise<TranscribeStatus> {
   try {
-    const response = await fetch(`${getBaseUrl()}/voice/transcribe/status`);
+    const response = await fetch(`${getBaseUrl()}/voice/transcribe/status`, { headers: authHeader() });
     if (!response.ok) throw new Error("status unavailable");
     return (await response.json()) as TranscribeStatus;
   } catch {
     return {
       ready: false,
       state: "unreachable",
-      model: "nyralabs/CrisperWhisper2.0_small",
+      model: "Systran/faster-whisper-small",
       ffmpeg: false,
       detail: "Backend unreachable",
       fix: "Start the Dobot backend to enable voice input.",
@@ -45,7 +45,11 @@ export async function transcribeAudio(blob: Blob): Promise<{ text: string; error
   form.append("file", blob, `recording.${extension}`);
   let response: Response;
   try {
-    response = await fetch(`${getBaseUrl()}/voice/transcribe`, { method: "POST", body: form });
+    response = await fetch(`${getBaseUrl()}/voice/transcribe`, {
+      method: "POST",
+      body: form,
+      headers: authHeader(),
+    });
   } catch {
     return { text: "", error: "The Dobot backend is not reachable, so the recording could not be transcribed." };
   }

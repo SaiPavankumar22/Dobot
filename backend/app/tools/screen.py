@@ -78,6 +78,27 @@ def ocr_png(png: bytes, settings: Settings) -> tuple[str, str]:
         return "", "unavailable"
 
 
+_IMAGE_MAGIC: tuple[tuple[bytes, str], ...] = (
+    (b"\x89PNG\r\n\x1a\n", "image/png"),
+    (b"\xff\xd8\xff", "image/jpeg"),
+    (b"GIF8", "image/gif"),
+)
+
+
+def sniff_image_mime(data: bytes) -> str:
+    """The image's real type from its magic bytes.
+
+    A mislabelled data URL makes a vision model fail in ways that look like a model problem; a
+    screenshot is PNG, a photo is usually JPEG, and both arrive through the same code path.
+    """
+    for magic, mime in _IMAGE_MAGIC:
+        if data.startswith(magic):
+            return mime
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    return "image/png"
+
+
 async def vision_transcribe(png: bytes, settings: Settings, question: str = "") -> tuple[str, str]:
     """Ask the configured vision model to read (or answer about) an image."""
     if not settings.has_nebius or not settings.nemotron_vision_model:
@@ -95,7 +116,9 @@ async def vision_transcribe(png: bytes, settings: Settings, question: str = "") 
                     {"type": "text", "text": prompt},
                     {
                         "type": "image_url",
-                        "image_url": {"url": f"data:image/png;base64,{base64.b64encode(png).decode()}"},
+                        "image_url": {
+                            "url": f"data:{sniff_image_mime(png)};base64,{base64.b64encode(png).decode()}"
+                        },
                     },
                 ],
             }

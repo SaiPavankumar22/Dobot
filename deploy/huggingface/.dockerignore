@@ -1,0 +1,12 @@
+# Keep the Space's build context tight: only backend/ and skills/ are needed to build the image.
+.git
+.env
+.dobot
+**/__pycache__
+**/*.pyc
+.pytest_cache
+.ruff_cache
+backend/.venv
+backend/dist
+backend/build
+backend/tests

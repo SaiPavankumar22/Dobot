@@ -8,7 +8,8 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
-    "tauri": "tauri",
+    "tauri": "node scripts/tauri.mjs",
+    "sidecar": "cd ../backend && uv pip install pyinstaller && uv run pyinstaller --noconfirm --clean dobot-backend.spec",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

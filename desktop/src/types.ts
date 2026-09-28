@@ -47,6 +47,29 @@ export interface Region {
   monitor?: number;
 }
 
+/**
+ * A file or image attached to a message. `data` is the base64 payload the backend accepts; images
+ * also keep their data URL so the composer and the thread can render a thumbnail without a round
+ * trip. Limits are the backend's (GET /chat/attachments).
+ */
+export interface ChatAttachment {
+  id: string;
+  name: string;
+  mime: string;
+  kind: "image" | "text";
+  size: number;
+  data: string;
+  previewUrl?: string;
+}
+
+/** The published attachment contract the composer pre-checks against. */
+export interface AttachmentLimits {
+  images: { max_count: number; max_bytes: number; types: string[] };
+  files: { max_count: number; max_bytes: number; extensions: string[] };
+  max_chars_in_prompt: number;
+  accepted: { image_types: string[]; text_extensions: string[] };
+}
+
 export interface PlanStep {
   id: string;
   index: number;
@@ -273,6 +296,8 @@ export interface ChatMessage {
   degraded?: boolean;
   /** Tokens and estimated cost for the task, when the backend reported them. */
   usage?: { total_tokens: number; cost_usd: number } | null;
+  /** Files and images this message carried, so the thread can show what was sent. */
+  attachments?: ChatAttachment[];
 }
 
 // ---------------------------------------------------------------------- system

@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from app.config import REPO_ROOT, Settings
+from app.config import Settings
 from app.main import create_app
 
 
@@ -28,10 +28,23 @@ def test_keys_are_listed_masked(client) -> None:
     test_client, _env = client
     body = test_client.get("/settings/keys").json()
     ids = {key["id"] for key in body["keys"]}
-    assert {"nebius", "tavily", "langsmith"} <= ids
+    # Exactly the keys a person brings for themselves — nothing infrastructure-shaped.
+    assert ids == {"nebius", "tavily", "zilliz_token", "zilliz_uri"}
     for key in body["keys"]:
         assert "value" not in key  # raw secrets never cross the boundary
         assert isinstance(key["set"], bool)
+
+
+def test_operator_managed_values_are_reported_but_not_writable(client) -> None:
+    test_client, _env = client
+    reasons = {item["id"]: item["why"] for item in test_client.get("/settings/keys").json()["operator"]}
+    assert "mongodb_uri" in reasons and "langsmith_api_key" in reasons
+    assert all("value" not in item for item in test_client.get("/settings/keys").json()["operator"])
+    for name in ("mongodb_uri", "langsmith", "dobot_api_token", "laya"):
+        response = test_client.put(f"/settings/keys/{name}", json={"value": "x"})
+        assert response.status_code == 403, name
+        assert response.json()["error"]["code"] == "OPERATOR_MANAGED"
+    assert test_client.delete("/settings/keys/mongodb_uri").status_code == 403
 
 
 def test_setting_a_key_persists_and_applies(client) -> None:
@@ -88,8 +101,8 @@ def test_empty_value_is_rejected(client) -> None:
 
 def test_uri_fields_can_be_set(client) -> None:
     test_client, env_path = client
-    response = test_client.put("/settings/keys/laya", json={"value": "http://127.0.0.1:8000"})
+    uri = "https://in03-abc.serverless.gcp-us-west1.cloud.zilliz.com"
+    response = test_client.put("/settings/keys/zilliz_uri", json={"value": uri})
     assert response.status_code == 200
-    assert response.json()["kind"] == "secret"
-    text = Path(env_path).read_text(encoding="utf-8")
-    assert "LAYA_SERVER_URL=http://127.0.0.1:8000" not in text  # 'laya' maps to laya_api_key
+    assert response.json()["kind"] == "uri"
+    assert f"ZILLIZ_URI={uri}" in Path(env_path).read_text(encoding="utf-8")

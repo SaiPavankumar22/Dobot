@@ -179,7 +179,7 @@ export function ChatPanel() {
             title={
               voice.phase === "recording"
                 ? "Stop recording and transcribe"
-                : "Speak — audio is transcribed locally by CrisperWhisper"
+                : "Speak — audio is transcribed locally by Whisper"
             }
             aria-pressed={voice.phase === "recording"}
           >

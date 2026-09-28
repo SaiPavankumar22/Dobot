@@ -9,6 +9,18 @@ import { Activity } from "../pages/Activity";
 import { Approvals } from "../pages/Approvals";
 import { Automations } from "../pages/Automations";
 import { ApprovalCard } from "../components/ApprovalCard";
+import {
+  IconClose,
+  IconFile,
+  IconImage,
+  IconMic,
+  IconMoon,
+  IconPaperclip,
+  IconScreen,
+  IconSend,
+  IconStopCircle,
+} from "../components/Icons";
+import { Guide } from "../pages/Guide";
 import { Memory } from "../pages/Memory";
 import { Overview } from "../pages/Overview";
 import { PlanView } from "../components/PlanView";
@@ -18,12 +30,19 @@ import { Skills } from "../pages/Skills";
 import { Tasks } from "../pages/Tasks";
 import { Switch } from "../components/Switch";
 import { statusLabel } from "../components/DobotDot";
-import { getBaseUrl } from "../services/api";
+import { api, getBaseUrl } from "../services/api";
+import {
+  DEFAULT_LIMITS,
+  acceptAttribute,
+  formatBytes,
+  readAttachments,
+  type Rejection,
+} from "../services/attachments";
 import { native } from "../services/native";
 import { previewDataUrl } from "../services/screen";
 import { useVoiceInput } from "../services/voice";
 import { useDobot } from "../store/dobotStore";
-import type { ChatMessage, ExecutionMode } from "../types";
+import type { AttachmentLimits, ChatAttachment, ChatMessage, ExecutionMode } from "../types";
 
 /** The execution ladder. Each mode is a real approval threshold, not a label — see MODES below. */
 const MODES: { id: ExecutionMode; label: string; hint: string }[] = [
@@ -37,20 +56,22 @@ const MODES: { id: ExecutionMode; label: string; hint: string }[] = [
 ];
 
 const NAV = [
-  { id: "overview", label: "Overview" },
-  { id: "tasks", label: "Tasks" },
-  { id: "automations", label: "Automations" },
-  { id: "approvals", label: "Approvals" },
-  { id: "memory", label: "Memory" },
-  { id: "skills", label: "Skills" },
-  { id: "activity", label: "Activity" },
-  { id: "security", label: "Security" },
-  { id: "settings", label: "Settings" },
+  { id: "guide", label: "Guide", hint: "What every feature does, and where it lives" },
+  { id: "overview", label: "Overview", hint: "Tasks, approvals and providers at a glance" },
+  { id: "tasks", label: "Tasks", hint: "Everything Dobot has been asked to do" },
+  { id: "automations", label: "Automations", hint: "Saved tasks on a schedule" },
+  { id: "approvals", label: "Approvals", hint: "Risky steps waiting for your decision" },
+  { id: "memory", label: "Memory", hint: "What Dobot remembers about you and your work" },
+  { id: "skills", label: "Skills", hint: "Reusable workflows it can run again" },
+  { id: "activity", label: "Activity", hint: "The honest log of every step" },
+  { id: "security", label: "Security", hint: "Permissions, guards and the kill switch" },
+  { id: "settings", label: "Settings", hint: "Keys, connection, appearance" },
 ] as const;
 
 /** Workspace sections render inside the chat window — the sidebar must not spawn a second window. */
 function Section({ id, onBack }: { id: string; onBack: () => void }) {
   const body =
+    id === "guide" ? <Guide /> :
     id === "overview" ? <Overview /> :
     id === "tasks" ? <Tasks /> :
     id === "automations" ? <Automations /> :
@@ -144,13 +165,40 @@ export function Chat() {
   const [draft, setDraft] = useState("");
   const [includeSelection, setIncludeSelection] = useState(true);
   const [section, setSection] = useState<string | null>(null);
+  const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
+  const [rejections, setRejections] = useState<Rejection[]>([]);
+  const [limits, setLimits] = useState<AttachmentLimits>(DEFAULT_LIMITS);
+  const [dragging, setDragging] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
 
   const voice = useVoiceInput((text) => {
     setDraft((current) => (current ? `${current} ${text}` : text));
     composerRef.current?.focus();
   });
+
+  // The attachment limits come from the backend, so the two can never drift apart. A backend that
+  // predates the endpoint simply leaves the defaults in place.
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .attachmentLimits()
+      .then((published) => {
+        if (!cancelled && published?.images && published?.files) setLimits(published);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  async function addFiles(files: File[]): Promise<void> {
+    if (!files.length) return;
+    const { attachments: accepted, rejected } = await readAttachments(files, limits, attachments);
+    setRejections(rejected);
+    if (accepted.length) setAttachments((current) => [...current, ...accepted]);
+  }
 
   const threads = useMemo(() => deriveThreads(messages), [messages]);
   const pending = approvals.length > 0;
@@ -161,9 +209,16 @@ export function Chat() {
 
   async function submit() {
     const text = draft.trim();
-    if (!text) return;
+    if (!text && attachments.length === 0) return;
+    const sending = attachments;
     setDraft("");
-    await send(text, { shadow: shadowMode, useSelection: includeSelection && Boolean(selection) });
+    setAttachments([]);
+    setRejections([]);
+    await send(text, {
+      shadow: shadowMode,
+      useSelection: includeSelection && Boolean(selection),
+      attachments: sending,
+    });
   }
 
   async function startScreenCapture() {
@@ -319,12 +374,102 @@ export function Chat() {
           )}
         </div>
 
-        <footer className="chat__composer">
+        <footer
+          className={`chat__composer ${dragging ? "chat__composer--drop" : ""}`}
+          onDragOver={(event) => {
+            if (Array.from(event.dataTransfer?.types ?? []).includes("Files")) {
+              event.preventDefault();
+              setDragging(true);
+            }
+          }}
+          onDragLeave={() => setDragging(false)}
+          onDrop={(event) => {
+            const files = Array.from(event.dataTransfer?.files ?? []);
+            if (!files.length) return;
+            event.preventDefault();
+            setDragging(false);
+            void addFiles(files);
+          }}
+        >
+          <input
+            ref={fileRef}
+            className="hidden-file"
+            type="file"
+            multiple
+            accept={acceptAttribute(limits)}
+            onChange={(event) => {
+              void addFiles(Array.from(event.target.files ?? []));
+              event.target.value = "";
+            }}
+          />
+
+          {attachments.length > 0 && (
+            <div className="attach-strip">
+              {attachments.map((item) => (
+                <div
+                  className={`attach-chip attach-chip--${item.kind}`}
+                  key={item.id}
+                  title={`${item.name} · ${formatBytes(item.size)}`}
+                >
+                  {item.kind === "image" && item.previewUrl ? (
+                    <img className="attach-chip__thumb" src={item.previewUrl} alt={item.name} />
+                  ) : (
+                    <span className="attach-chip__icon">
+                      {item.kind === "image" ? <IconImage size={14} /> : <IconFile size={14} />}
+                    </span>
+                  )}
+                  <span className="attach-chip__name">{item.name}</span>
+                  <span className="attach-chip__size">{formatBytes(item.size)}</span>
+                  <button
+                    className="attach-chip__remove"
+                    onClick={() => setAttachments((current) => current.filter((entry) => entry.id !== item.id))}
+                    title="Remove"
+                    aria-label={`Remove ${item.name}`}
+                  >
+                    <IconClose size={12} />
+                  </button>
+                </div>
+              ))}
+              <span className="attach-strip__limit">
+                images ≤ {formatBytes(limits.images.max_bytes)} each · files ≤ {formatBytes(limits.files.max_bytes)} each
+              </span>
+            </div>
+          )}
+
+          {rejections.length > 0 && (
+            <div className="attach-rejects" role="alert">
+              <strong>Not attached</strong>
+              {rejections.map((item) => (
+                <span key={item.name}>
+                  {item.name} — {item.reason}
+                </span>
+              ))}
+              <button className="ghost" onClick={() => setRejections([])}>
+                dismiss
+              </button>
+            </div>
+          )}
+
+          {dragging && <div className="chat__drop-hint">Drop to attach — images and text files</div>}
+
           {!connected && (
             <div className="notice notice--warn">
-              The Dobot backend is not reachable at <span className="mono">{getBaseUrl()}</span>. Start it
-              with <span className="mono">cd backend &amp;&amp; uv run uvicorn app.main:app --port 8756</span>
-              , or change the address in Settings.
+              The Dobot backend is not reachable at <span className="mono">{getBaseUrl()}</span>.
+              {getBaseUrl().includes("hf.space") ? (
+                <>
+                  {" "}
+                  The Space may be asleep, still building (first wake takes ~30 s), or missing its
+                  token — check its logs on huggingface.co, then re-paste your HF read token in
+                  Settings.
+                </>
+              ) : (
+                <>
+                  {" "}
+                  Start it with{" "}
+                  <span className="mono">cd backend &amp;&amp; uv run uvicorn app.main:app --port 8756</span>
+                  , or change the address in Settings.
+                </>
+              )}
             </div>
           )}
 
@@ -340,7 +485,7 @@ export function Chat() {
             </div>
           )}
 
-          <div className="chat__composer-row">
+          <div className="composer__toolbar">
             <div className="segmented" role="group" aria-label="Execution mode">
               {MODES.map((item) => (
                 <button
@@ -354,36 +499,38 @@ export function Chat() {
                 </button>
               ))}
             </div>
-            <span className="chat__mode-hint">
-              {MODES.find((item) => item.id === mode)?.hint}
-            </span>
+            <span className="composer__mode-hint">{MODES.find((item) => item.id === mode)?.hint}</span>
             <span className="chat__composer-spacer" />
-          </div>
-
-          <div className="chat__composer-row">
             <button
-              className={`chip ${shadowMode ? "chip--warn" : ""}`}
+              className={`tool-chip ${shadowMode ? "tool-chip--on" : ""}`}
               onClick={() => void setShadowMode(!shadowMode)}
               title="Plan and preview actions without executing anything"
             >
-              {shadowMode ? "Shadow mode: on" : "Shadow mode: off"}
+              <IconMoon size={14} />
+              Shadow {shadowMode ? "on" : "off"}
             </button>
             <button
-              className={`chip ${selection ? "chip--ok" : ""}`}
+              className={`tool-chip ${selection ? "tool-chip--on" : ""}`}
               onClick={() => void startScreenCapture()}
               disabled={capturing}
               title="Capture a region of your screen for the next message"
             >
-              {selection ? "Screen selected" : "Select screen"}
+              <IconScreen size={14} />
+              {selection ? "Screen attached" : "Select screen"}
             </button>
             {selection && (
-              <button className="chip" onClick={clearSelection}>
+              <button className="tool-chip" onClick={clearSelection} title="Remove the selected region">
+                <IconClose size={12} />
                 clear
               </button>
             )}
-            <span className="chat__composer-spacer" />
-            <button className="chip chip--danger" onClick={() => void kill()} title="Stop the active task">
-              STOP
+            <button
+              className="tool-chip tool-chip--danger"
+              onClick={() => void kill()}
+              title="Stop the active task"
+            >
+              <IconStopCircle size={13} />
+              Stop
             </button>
           </div>
 
@@ -392,6 +539,14 @@ export function Chat() {
           )}
 
           <div className="composer">
+            <button
+              className="icon-btn"
+              onClick={() => fileRef.current?.click()}
+              title="Attach images or text files — or drag them onto the chat, or paste an image"
+              aria-label="Attach files"
+            >
+              <IconPaperclip />
+            </button>
             <textarea
               ref={composerRef}
               value={draft}
@@ -404,9 +559,18 @@ export function Chat() {
                       ? "Ask about the selected region…"
                       : mode === "ask"
                         ? "Ask a question — Ask mode runs nothing…"
-                        : "Message Dobot…"
+                        : attachments.length
+                          ? "Tell Dobot what to do with what you attached…"
+                          : "Message Dobot…"
               }
               onChange={(event) => setDraft(event.target.value)}
+              onPaste={(event) => {
+                const files = Array.from(event.clipboardData?.files ?? []);
+                if (files.length) {
+                  event.preventDefault();
+                  void addFiles(files);
+                }
+              }}
               onKeyDown={(event) => {
                 if (event.key === "Enter" && !event.shiftKey) {
                   event.preventDefault();
@@ -421,20 +585,33 @@ export function Chat() {
               </span>
             )}
             <button
-              className={`chip chat__mic ${voice.phase === "recording" ? "chat__mic--live" : ""}`}
+              className={`icon-btn composer__mic ${voice.phase === "recording" ? "icon-btn--recording" : ""}`}
               onClick={() => (voice.phase === "recording" ? voice.stop() : void voice.start())}
               disabled={voice.phase === "processing"}
               title={
                 voice.phase === "recording"
                   ? "Stop recording and transcribe"
-                  : "Speak to Dobot — recorded audio is transcribed locally"
+                  : "Speak to Dobot — the audio is transcribed by your own backend"
               }
               aria-pressed={voice.phase === "recording"}
+              aria-label="Voice input"
             >
-              {voice.phase === "recording" ? "■ Stop" : voice.phase === "processing" ? "…" : "🎤 Speak"}
+              {voice.phase === "recording" ? (
+                <IconStopCircle />
+              ) : voice.phase === "processing" ? (
+                <span className="spinner" />
+              ) : (
+                <IconMic />
+              )}
             </button>
-            <button className="primary" onClick={() => void submit()} disabled={!draft.trim()}>
-              Send
+            <button
+              className="composer__send"
+              onClick={() => void submit()}
+              disabled={!draft.trim() && attachments.length === 0}
+              title="Send (Enter)"
+              aria-label="Send"
+            >
+              <IconSend />
             </button>
           </div>
           <div className="chat__composer-note">
@@ -480,6 +657,20 @@ function Message({ message, onOpenDashboard }: { message: ChatMessage; onOpenDas
                 </span>
               )}
               <span>{new Date(message.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
+            </div>
+          )}
+          {message.attachments && message.attachments.length > 0 && (
+            <div className="chat__bubble-attachments">
+              {message.attachments.map((item) =>
+                item.kind === "image" && item.previewUrl ? (
+                  <img key={item.id} className="chat__bubble-image" src={item.previewUrl} alt={item.name} />
+                ) : (
+                  <span key={item.id} className="chat__bubble-file" title={`${item.name} · ${formatBytes(item.size)}`}>
+                    <IconFile size={13} />
+                    {item.name}
+                  </span>
+                ),
+              )}
             </div>
           )}
           <div className="chat__bubble-text">{message.text}</div>

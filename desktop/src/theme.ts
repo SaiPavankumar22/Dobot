@@ -36,23 +36,23 @@ export interface ThemeDefinition {
   tokens: ThemeTokens;
 }
 
-/** The shipped default. Deliberately byte-identical to the original stylesheet. */
+/** The shipped default. Kept in step with the `:root` block in styles.css (pre-paint value). */
 export const MIDNIGHT: ThemeTokens = {
-  "--bg": "#0d1117",
-  "--bg-elevated": "#161b22",
-  "--bg-glass": "rgba(13, 17, 23, 0.86)",
-  "--border": "#262d38",
-  "--text": "#e6edf3",
-  "--text-dim": "#8b949e",
-  "--accent": "#4c9aff",
-  "--accent-dim": "#1f6feb",
-  "--ok": "#3fb950",
-  "--warn": "#d29922",
-  "--danger": "#f85149",
-  "--high": "#db6d28",
-  "--critical": "#f85149",
-  "--radius": "12px",
-  "--shadow": "0 12px 40px rgba(0, 0, 0, 0.55)",
+  "--bg": "#0b0f17",
+  "--bg-elevated": "#131a26",
+  "--bg-glass": "rgba(11, 15, 23, 0.78)",
+  "--border": "#243043",
+  "--text": "#e8eefc",
+  "--text-dim": "#94a3b8",
+  "--accent": "#5b9dff",
+  "--accent-dim": "#2f6fe4",
+  "--ok": "#3ddc97",
+  "--warn": "#f0b429",
+  "--danger": "#ff6b6b",
+  "--high": "#ff9f43",
+  "--critical": "#ff5c5c",
+  "--radius": "14px",
+  "--shadow": "0 18px 48px rgba(2, 6, 18, 0.55)",
 };
 
 export const THEMES: ThemeDefinition[] = [

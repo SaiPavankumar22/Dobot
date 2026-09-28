@@ -9,9 +9,11 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import secrets
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
+from app.config import get_settings
 from app.logging_setup import get_logger
 
 logger = get_logger(__name__)
@@ -20,6 +22,25 @@ router = APIRouter()
 
 @router.websocket("/ws")
 async def event_stream(websocket: WebSocket) -> None:
+    # The HTTP bearer middleware never sees a WebSocket upgrade, so an enabled DOBOT_API_TOKEN gate
+    # is enforced here explicitly — a gated backend must not stream its event bus (or accept kill and
+    # approval messages) from anyone who asks. The token arrives as `?access_token=` because a browser
+    # WebSocket cannot carry an Authorization header; non-browser clients may send either form.
+    settings = getattr(websocket.app.state, "settings", None) or get_settings()
+    token = (settings.dobot_api_token or "").strip()
+    if token:
+        supplied = websocket.query_params.get("access_token", "").strip()
+        if not supplied:
+            header = websocket.headers.get("authorization", "")
+            supplied = header[7:].strip() if header.lower().startswith("bearer ") else ""
+        if not supplied:
+            supplied = websocket.headers.get("x-dobot-token", "").strip()
+        if not secrets.compare_digest(supplied, token):
+            # 4401 = application-level unauthorized: refused before it joins the bus.
+            await websocket.accept()
+            await websocket.close(code=4401)
+            return
+
     services = getattr(websocket.app.state, "services", None)
     if services is None:  # pragma: no cover
         await websocket.close(code=1013)

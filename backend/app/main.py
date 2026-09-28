@@ -77,6 +77,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         description="Always-on personal AI operating layer — gateway, orchestrator, decision engine.",
         lifespan=lifespan,
     )
+    # The exact settings instance this app runs with (tests mutate it; ws.py needs the same gate).
+    app.state.settings = settings
 
     app.add_middleware(
         CORSMiddleware,
@@ -230,6 +232,34 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "required": bool((settings.dobot_api_token or "").strip()),
             "header": "Authorization: Bearer <token>",
             "exempt": sorted(AUTH_EXEMPT_PATHS),
+        }
+
+    @app.get("/events", tags=["meta"])
+    async def events_after(after: int = -1) -> dict:
+        """Cursor-based event poll — the desktop shell's fallback when the WebSocket is blocked.
+
+        On a private Hugging Face Space the proxy refuses the WebSocket upgrade unless an
+        Authorization header is present, and a browser WebSocket cannot send one. This endpoint
+        carries the same events over plain HTTP, where the bearer token rides along.
+
+        ``after`` is the last sequence the client saw: ``-1`` means "give me the recent replay"
+        (mirroring the WebSocket hello), otherwise only newer events come back. A cursor from the
+        future — the server restarted and its counter started over — is treated as ``-1`` instead of
+        swallowing every event until the counter catches up.
+        """
+        services = getattr(app.state, "services", None)
+        if services is None:  # pragma: no cover - startup window
+            return {"events": [], "dot_status": "UNKNOWN", "after": -1}
+        bus = services.bus
+        recent = bus.history(limit=400)
+        latest = recent[-1].sequence if recent else 0
+        if after > latest:
+            after = -1
+        fresh = recent[-50:] if after < 0 else [event for event in recent if event.sequence > after]
+        return {
+            "events": [event.model_dump(mode="json") for event in fresh],
+            "dot_status": bus.dot_status,
+            "after": fresh[-1].sequence if fresh else after,
         }
 
     @app.get("/dashboard", tags=["meta"])

@@ -25,9 +25,11 @@ node_modules/
 desktop/dist/
 desktop/src-tauri/target/
 desktop/src-tauri/gen/
+desktop/src-tauri/binaries/
 *.tsbuildinfo
 vite.config.d.ts
 *.local
+.freebuff/
 
 # os
 .DS_Store

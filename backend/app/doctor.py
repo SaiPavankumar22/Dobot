@@ -876,7 +876,7 @@ class Doctor:
 
 
     async def _transcriber(self) -> list[Capability]:
-        """Speech-to-text (CrisperWhisper). Optional; each missing piece gets its exact fix."""
+        """Speech-to-text. Optional; each missing piece gets its exact fix."""
         from app.agents.transcriber import get_transcriber
 
         info = get_transcriber().probe()
@@ -884,13 +884,15 @@ class Doctor:
         if state == "live":
             detail = "Local mic transcription ready"
             if info.get("loaded"):
-                detail += " (model loaded)"
+                detail += f" (model loaded, device={info.get('device', 'auto')})"
             elif not info.get("ffmpeg"):
                 detail += " — browser recordings (webm/ogg) need ffmpeg on PATH"
+            if info.get("note"):
+                detail += f" — {info['note']}"
             return [
                 Capability(
                     id="transcriber",
-                    label="Speech-to-text (CrisperWhisper)",
+                    label="Speech-to-text (local Whisper)",
                     state="live",
                     detail=detail,
                     env="TRANSCRIBER_ENABLED",
@@ -901,7 +903,7 @@ class Doctor:
             return [
                 Capability(
                     id="transcriber",
-                    label="Speech-to-text (CrisperWhisper)",
+                    label="Speech-to-text (local Whisper)",
                     state="broken",
                     detail=str(info.get("detail", "model failed to load")),
                     fix="Check TRANSCRIBER_DEVICE (try TRANSCRIBER_DEVICE=cpu) and free memory, then restart.",
@@ -913,10 +915,10 @@ class Doctor:
             return [
                 Capability(
                     id="transcriber",
-                    label="Speech-to-text (CrisperWhisper)",
+                    label="Speech-to-text (local Whisper)",
                     state="not_configured",
                     detail="TRANSCRIBER_ENABLED is on, but the whisper package is not installed.",
-                    fix='cd backend && uv pip install faster-whisper (and ffmpeg for webm/ogg).',
+                    fix="cd backend && uv sync --extra voice (and ffmpeg for webm/ogg).",
                     env="TRANSCRIBER_ENABLED",
                     meta=info,
                 )
@@ -924,7 +926,7 @@ class Doctor:
         return [
             Capability(
                 id="transcriber",
-                label="Speech-to-text (CrisperWhisper)",
+                label="Speech-to-text (local Whisper)",
                 state="declined",
                 detail="Off. The chat and widget mic buttons say so instead of pretending.",
                 fix="Set TRANSCRIBER_ENABLED=1 (and install the whisper package) to enable voice input.",

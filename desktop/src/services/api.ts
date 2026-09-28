@@ -3,6 +3,7 @@
 
 import type {
   ActivityRecord,
+  AttachmentLimits,
   ApprovalRecord,
   AutomationRecord,
   CanonicalFact,
@@ -23,15 +24,28 @@ import type {
   VoiceSummary,
 } from "../types";
 
-export const DEFAULT_BASE_URL = "http://127.0.0.1:8756";
+/** The deployed backend (Hugging Face Space). Private, so every call carries the API token. */
+export const HF_SPACE_URL = "https://sai-pavankumar22-dobot.hf.space";
+
+/** A backend you run yourself (`cd backend && uv run uvicorn app.main:app`). */
+export const LOCAL_BACKEND_URL = "http://127.0.0.1:8756";
+
+/**
+ * Where a build points before Settings overrides it: the deployed Space in release builds (so an
+ * installed app works with no local backend), the local backend in dev (`npm run tauri dev`).
+ * Settings → Backend stores an override in localStorage (`dobot.baseUrl`).
+ */
+export const DEFAULT_BASE_URL = import.meta.env.DEV ? LOCAL_BACKEND_URL : HF_SPACE_URL;
 
 let baseUrl = localStorage.getItem("dobot.baseUrl") || DEFAULT_BASE_URL;
 
 /**
- * The optional bearer token, when the backend's DOBOT_API_TOKEN gate is on.
+ * The bearer token sent with every call: a backend's DOBOT_API_TOKEN gate, or — for the private
+ * Hugging Face Space a release build points at — your HF read token (the Space's proxy demands it
+ * on every request, WS handshake included).
  *
  * Held in localStorage rather than baked into the build: it is a per-machine secret, and the whole
- * point of the gate is that it is not shipped in the app.
+ * point of both gates is that it is not shipped in the app.
  */
 let apiToken = localStorage.getItem("dobot.apiToken") || "";
 
@@ -54,6 +68,14 @@ export function setApiToken(token: string): void {
   else localStorage.removeItem("dobot.apiToken");
 }
 
+/**
+ * The bearer header alone, for raw `fetch`es that do not go through `request()` (voice, onboarding).
+ * A private Hugging Face Space rejects every call without it.
+ */
+export function authHeader(): Record<string, string> {
+  return apiToken ? { Authorization: `Bearer ${apiToken}` } : {};
+}
+
 function headers(extra?: Record<string, string>): Record<string, string> {
   const base: Record<string, string> = { "Content-Type": "application/json", ...extra };
   if (apiToken) base.Authorization = `Bearer ${apiToken}`;
@@ -70,13 +92,23 @@ export class ApiError extends Error {
   }
 }
 
-/** One manageable credential, as reported by GET /settings/keys (always masked, never raw). */
+/** One user-manageable credential, as reported by GET /settings/keys (masked, never raw). */
 export type KeyRecord = {
   id: string;
   field: string;
   kind: "secret" | "uri";
   set: boolean;
   masked: string;
+};
+
+/**
+ * A value that lives on the backend itself (environment / HF Space secret), not in the app: the UI
+ * shows where it comes from instead of an empty field nobody can legitimately fill.
+ */
+export type OperatorKey = {
+  id: string;
+  set: boolean;
+  why: string;
 };
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -109,7 +141,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     }
     if (response.status === 401) {
       message =
-        "This backend requires an API token. Generate one with `uv run python -m app.selftest --new-token`, add it to .env, then paste it in Settings.";
+        "This backend requires an API token. For a Hugging Face Space, paste your HF read token in Settings; for a local backend, generate one with `uv run python -m app.selftest --new-token`, add it to .env, then paste it in Settings.";
     }
     throw new ApiError(code, message, recoverable);
   }
@@ -130,7 +162,7 @@ export const api = {
       body: JSON.stringify(patch),
     }),
 
-  keyList: () => request<{ keys: KeyRecord[] }>("/settings/keys"),
+  keyList: () => request<{ keys: KeyRecord[]; operator?: OperatorKey[] }>("/settings/keys"),
   keySet: (id: string, value: string) =>
     request<{ ok: boolean; field: string }>(`/settings/keys/${id}`, {
       method: "PUT",
@@ -146,6 +178,7 @@ export const api = {
     mode?: ExecutionMode;
     region?: Region | null;
     image?: string | null;
+    attachments?: { name: string; mime: string; data: string }[];
     source?: string;
   }) =>
     request<ChatResponse>("/chat", {
@@ -160,9 +193,13 @@ export const api = {
           screen: Boolean(payload.image || payload.region),
           region: payload.region ?? null,
           image: payload.image ?? null,
+          attachments: payload.attachments ?? [],
         },
       }),
     }),
+
+  /** The attachment contract (counts, sizes, accepted types) the composer enforces up front. */
+  attachmentLimits: () => request<AttachmentLimits>("/chat/attachments"),
 
   screenAnalyze: (payload: { image?: string | null; region?: Region | null; question: string }) =>
     request<{ answer: string; context_id: string; screen: unknown }>("/screen/analyze", {

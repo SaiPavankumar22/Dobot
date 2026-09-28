@@ -50,6 +50,9 @@ the tray menu. The choice is remembered across restarts.
   per message and persisted across a paused plan.
 - **Look at your screen.** Select a region with `Ctrl+Shift+S` and ask about it. Capture happens only
   inside that explicit gesture — there is no continuous monitoring.
+- **Take what you hand it.** Attach images (4 × 5 MB) or text and code files (4 × 256 KB) with a drag,
+  a paste or the paperclip; images go to the vision model and come back as described context, so a
+  screenshot or a log file can be reasoned about, remembered and searched like anything else.
 - **Research the web.** Dobot turns a request into queries, retrieves sources with Tavily, and returns
   an answer that cites them.
 - **Do things.** Create and move files, run allow-listed terminal commands, open applications, drive a
@@ -77,6 +80,8 @@ the tray menu. The choice is remembered across restarts.
    │ DOBOT DESKTOP  (Tauri 2 + React + TypeScript)                │
    │   chat window · always-on dot · quick panel · dashboard       │
    │   regional screen select · tray · hotkeys · notifications      │
+│   (release builds talk to the backend on a Hugging Face Space   │
+│    (Settings → Backend points anywhere — localhost or your own) │
    └──────────────────────────────┬────────────────────────────────┘
                     HTTP (commands) │ WebSocket (events)
                                   ▼
@@ -201,6 +206,19 @@ for direct questions and final answer composition (`chat_template_kwargs: {"enab
 keeps it for deep planning, and routes trivial requests to the light tier — a direct question
 round-trips in ~2.5–3 s live. Set `NEMOTRON_ALWAYS_THINK=1` to always think.
 
+**Two audiences, one Settings page.** The app asks a person for exactly the four credentials that are
+theirs — `nebius`, `tavily`, `zilliz_token`, `zilliz_uri` — and stores them on whichever backend it is
+pointed at. Everything infrastructure-shaped (`mongodb_uri`, the LangSmith trio, the backend's own
+`dobot_api_token`, Laya) belongs to whoever *runs* that backend: it is listed read-only with where it
+comes from, and `PUT /settings/keys/{langsmith,mongodb_uri,…}` answers **403 `OPERATOR_MANAGED`**.
+There is also an in-app **Guide** page: one searchable topic per sidebar feature, saying where it is,
+what it does and how to use it, for someone who has never seen the app.
+
+**Attachments.** Images ride the vision model (`NEMOTRON_VISION_MODEL`, MiniCPM-V-4.5 by default) and
+their description joins the same context pipeline as screen regions; text files are decoded, clipped
+and fenced into the prompt. The limits live in one place (`app/core/attachments.py`) and are published
+at `GET /chat/attachments` so the composer pre-checks against the same numbers the server enforces.
+
 ---
 
 ## Requirements
@@ -225,9 +243,16 @@ cp .env.example .env
 ```
 
 Fill in `NEBIUS_API_KEY` (required) and `TAVILY_API_KEY` (research), and optionally
-`MONGODB_URI` / `ZILLIZ_URI` (durable memory). Keys live in `.env` only, which is gitignored.
-Everything else has a working default — see [`docs/prerequisites.md`](docs/prerequisites.md) for a
-guide to every variable, including the optional Laya, LangGraph and LangSmith setups.
+`MONGODB_URI` / `ZILLIZ_URI` / `ZILLIZ_TOKEN` (durable memory). Keys live in `.env` only, which is
+gitignored — and once the app is running, **Settings → Your API keys** writes the four user
+credentials there for you. Everything else has a working default — see
+[`docs/prerequisites.md`](docs/prerequisites.md) for a guide to every variable, including the
+optional Laya, LangGraph and LangSmith setups.
+
+> **What to expect with an empty `.env`:** Dobot still starts — every capability that needs a key
+> reports exactly what is missing (the Doctor page lists them), memory falls back to a local file
+> store, and a chat message answers with a clear "offline mode" notice instead of an error. Add
+> `NEBIUS_API_KEY` and restart: reasoning, attachments and research light up with no other changes.
 
 ### 2. Backend
 
@@ -255,7 +280,7 @@ Dobot opens as a **chat window**. Turn on **Always on** in the header if you wan
 ### 4. Tests
 
 ```bash
-cd backend && uv run pytest -q      # 102 tests
+cd backend && uv run pytest -q      # 275 tests
 cd backend && uv run ruff check app tests
 cd desktop && npm run build          # tsc --noEmit + vite build
 ```
@@ -265,8 +290,13 @@ configured: `uv run python -m app.selftest`.
 
 ### Installing it as a real application on your laptop
 
-See **[`docs/install.md`](docs/install.md)** for building an installer, installing it, keeping the
-backend running, autostart, where your data lives, and uninstalling.
+See **[`docs/install.md`](docs/install.md)** for building an installer, installing it, autostart,
+where your data lives, and uninstalling. The installer ships **without** a backend inside: release
+builds talk to the backend deployed as a private Hugging Face Space — push it with
+`HF_TOKEN=… bash scripts/deploy-hf-space.sh` — and **Settings → Backend** points the app anywhere
+else (your own server, §5.5 there, or `127.0.0.1:8756`). A PyInstaller sidecar inside the installer
+still exists but is opt-in (`DOBOT_BUNDLE_SIDECAR=1`): the bundled one crashed the laptop it was
+first tried on. Remember that a deployed backend is where local-execution tools act.
 
 ---
 
@@ -290,7 +320,8 @@ Local, loopback-bound, and designed for the desktop app.
 
 | Area | Endpoints |
 | --- | --- |
-| Reasoning | `POST /chat`, `GET /chat/tools` |
+| Reasoning | `POST /chat`, `GET /chat/tools`, `GET /chat/attachments` (the upload contract the composer mirrors) |
+| Voice | `POST /voice/speak`, `POST /voice/transcribe`, `GET /voice/transcribe/status` |
 | Screen | `POST /screen/analyze`, `/screen/context`, `/screen/ocr`, `GET /screen/privacy` |
 | Research | `POST /research`, `GET /research/sources` |
 | Tasks | `GET,POST /tasks`, `GET,DELETE /tasks/{id}`, `POST /tasks/{id}/run`, `/tasks/{id}/cancel` |
@@ -300,8 +331,9 @@ Local, loopback-bound, and designed for the desktop app.
 | Skills | `GET,POST /skills`, `DELETE /skills/{name}`, `POST /skills/{name}/run` |
 | Security | `GET /security/status`, `/security/policies`, `/security/permissions`, `/security/skills`, `/security/active`, `POST /security/kill` |
 | Observability | `GET /health`, `/dashboard`, `/activity`, `/activity/{task_id}`, `/debug/trace` |
-| Settings | `GET,PATCH /settings`, `GET /settings/providers`, `/settings/onboarding` |
-| Live events | `ws://127.0.0.1:8756/ws` (recent events replayed on connect) |
+| Settings | `GET,PATCH /settings`, `GET /settings/providers`, `/settings/onboarding`, `GET /settings/keys`, `PUT,DELETE /settings/keys/{name}` (user keys only — operator values answer 403) |
+| Auth | `GET /auth/status` |
+| Live events | `ws://127.0.0.1:8756/ws` (recent events replayed on connect), plus `GET /events?after=<seq>` — the same stream over HTTP, which is what a private Hugging Face Space needs because its proxy refuses the WebSocket upgrade |
 
 ---
 
@@ -394,12 +426,12 @@ missing one:
 | OS-level sandbox | On Windows the default is `SANDBOX_PROVIDER=local`, so `isolation: none`. The action firewall is enforced in-process; NemoClaw/OpenShell must be running for kernel-level isolation. |
 | Desktop (GUI) control | The `computer_*` tools need the Hermes runtime. Without it they refuse rather than pretend to click. |
 | Outbound messaging / email | `message_send` composes a draft and reports `sent: false`. Dobot does not send anything. |
-| Voice | Not implemented (it is optional in the specification). |
-| API authentication | The gateway is unauthenticated and bound to loopback. Do not expose the port. |
+| Voice | Both halves work but need local pieces: speaking uses the OS engine (PowerShell SAPI) and listening downloads a ~484 MB Whisper-small checkpoint (`uv sync --extra voice`, plus ffmpeg). Not in the Docker image, so a Space-hosted backend reports both as declined. |
+| API authentication | Loopback runs open by default (single-user laptop). A deployed backend must set `DOBOT_API_TOKEN`; on the private Space, both that gate and HF's proxy token check sit in front of every request. |
 | Long-term memory backends | Defaults to a local file store with a local cosine index; MongoDB and Zilliz are optional extras. |
 | Automatic skill learning | Skills are authored in `skills/` or saved explicitly. Dobot does not invent workflows on its own. |
 | Mobile, email-ecosystem and financial automation | Explicitly future work. |
-| Backend autostart | The desktop app does not spawn the backend for you (no sidecar yet) — `docs/install.md` covers the current options. |
+| Backend autostart | The desktop app spawns no backend by default — a release build expects the Hugging Face Space (or whatever **Settings → Backend** points at). `docs/install.md` §5 covers the local options. |
 
 One specification conflict is resolved deliberately: §58 mentions Postgres + pgvector, while the
 product header specifies MongoDB + Zilliz. The header wins, and it is recorded in

@@ -23,6 +23,7 @@ import { applyTheme, loadThemeId } from "./theme";
 
 const DASHBOARD_HASHES = [
   "dashboard",
+  "guide",
   "overview",
   "tasks",
   "automations",

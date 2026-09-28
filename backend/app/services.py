@@ -94,6 +94,7 @@ class Services:
         question: str = "",
         application: str = "",
         window_title: str = "",
+        attachments: list[Any] | None = None,
     ) -> ContextRequestData:
         return ContextRequestData(
             message=message,
@@ -102,6 +103,7 @@ class Services:
             question=question or message,
             application=application,
             window_title=window_title,
+            attachments=attachments or [],
         )
 
     def tool_context(self, *, task_id: str = "", token: Any = None) -> ToolContext:
