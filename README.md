@@ -48,8 +48,12 @@ the tray menu. The choice is remembered across restarts.
   nothing), **Assist** (confirm anything beyond a read), or **Agent** (the default: safe reversible
   work proceeds, the risky stops for you). The mode *is* the approval threshold, and it is remembered
   per message and persisted across a paused plan.
-- **Look at your screen.** Select a region with `Ctrl+Shift+S` and ask about it. Capture happens only
-  inside that explicit gesture — there is no continuous monitoring.
+- **Look at your screen.** Select a region with `Ctrl+Shift+S`, or hand over the window you are in
+  with `Ctrl+Alt+L` and check the preview before anything goes. Capture happens only inside that
+  explicit gesture — there is no continuous monitoring.
+- **Talk to it from anywhere.** Hold `Ctrl+Shift+Space` and speak: the quick panel comes up already
+  listening, a waveform shows it hears you, and letting go sends what you said. The audio is
+  transcribed locally by Whisper and never leaves the machine.
 - **Take what you hand it.** Attach images (4 × 5 MB) or text and code files (4 × 256 KB) with a drag,
   a paste or the paperclip; images go to the vision model and come back as described context, so a
   screenshot or a log file can be reasoned about, remembered and searched like anything else.
@@ -304,7 +308,8 @@ first tried on. Remember that a deployed backend is where local-execution tools 
 
 | Hotkey | Action |
 | --- | --- |
-| `Ctrl+Shift+Space` | Compact quick-ask panel |
+| `Ctrl+Shift+Space` | Talk — the quick panel opens already listening; let go (or tap again) to send |
+| `Ctrl+Alt+L` | Show Dobot the window you are in — preview it in the composer before it goes |
 | `Ctrl+Shift+S` | Select a screen region to ask about |
 | `Ctrl+Alt+D` | Dashboard |
 | `Ctrl+Shift+Esc` | Kill switch — stop the active task immediately |

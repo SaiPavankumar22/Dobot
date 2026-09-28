@@ -583,6 +583,8 @@ not — so you never have to guess whether isolation is real.
 | Answers arrive but research says offline | `TAVILY_API_KEY` is missing or rejected. Check `/health`. |
 | `/chat/completions` returns 404 | `NEBIUS_BASE_URL` points at the legacy `api.studio.nebius.com` host. It must be `https://api.tokenfactory.nebius.com/v1`. |
 | A hotkey does nothing | Another app owns the chord (often `Ctrl+Shift+S`). Dobot logs the failure and keeps running; change or free the shortcut. |
+| The talk chord (`Ctrl+Shift+Space`) opens the panel but it never hears you | Microphone access was denied, or there is no input device — the panel says so beside the composer. Allow the microphone for Dobot in Windows settings (browser site settings in `npm run dev`) and press the chord again. |
+| `Ctrl+Alt+L` reports it could not take a picture | A few windows refuse to be captured (DRM video, the secure desktop, or every window on screen belongs to Dobot). Fall back to `Ctrl+Shift+S` and select the region yourself. |
 | Screen selection gives a blank image | On Windows, check the display is not in a protected/exclusive mode; on multi-GPU laptops, capture follows the monitor the region is on. |
 | SmartScreen blocks the installer | Unsigned build — **More info → Run anyway**, or sign the bundle. |
 | `cargo tauri build` fails on a missing linker | The MSVC C++ build tools are not installed. `npx tauri info` will confirm. |

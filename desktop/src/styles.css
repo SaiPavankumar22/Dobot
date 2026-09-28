@@ -2613,4 +2613,59 @@ h3 {
   color: var(--text);
 }
 
+/* ── Voice ───────────────────────────────────────────────────────────────────────
+   The composer becomes the recorder: a waveform while the mic is live, a still line while
+   Whisper writes it down, and a hint that says how it gets sent. */
+.wave {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  flex: 1;
+  min-width: 0;
+  height: 26px;
+}
+
+.wave__bar {
+  flex: 1 1 0;
+  min-width: 2px;
+  max-width: 5px;
+  height: 8%;
+  border-radius: 999px;
+  background: var(--accent);
+  transition: height 75ms linear;
+}
+
+.listening__label {
+  flex: 1;
+  min-width: 0;
+  font-size: 12.5px;
+  color: var(--text-dim);
+  animation: listening-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes listening-pulse {
+  50% {
+    opacity: 0.45;
+  }
+}
+
+.listening__hint {
+  font-size: 11.5px;
+  color: var(--text-dim);
+  padding: 5px 2px 0;
+}
+
+.composer--listening {
+  align-items: center;
+  min-height: 44px;
+}
+
+/* The panel's status chip carries what Dobot is actually doing; past a point it is a tooltip. */
+.chip--detail {
+  max-width: 46%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 

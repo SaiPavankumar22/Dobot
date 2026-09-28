@@ -89,6 +89,29 @@ export default function App() {
     }).then((fn) => {
       unlisten = fn ?? undefined;
     });
+    // A Look chord: the shell already took the picture, so it lands as a ready selection in this
+    // window's store — every window gets it, and the user may be in any of them.
+    let unlistenLook: (() => void) | undefined;
+    void native.onLook((payload) => {
+      if (payload.error || !payload.image) {
+        useDobot.setState({
+          lastError: payload.error || "Dobot couldn't take a picture of that window.",
+        });
+        return;
+      }
+      useDobot.setState({
+        lastError: null,
+        selection: {
+          image: payload.image,
+          region: payload.region,
+          application: payload.application,
+          windowTitle: payload.window_title,
+          source: "native",
+        },
+      });
+    }).then((fn) => {
+      unlistenLook = fn ?? undefined;
+    });
     let unlistenHotkey: (() => void) | undefined;
     void native.onHotkey((action) => {
       if (action === "panel") void native.openPanel();
@@ -100,6 +123,7 @@ export default function App() {
     });
     return () => {
       unlisten?.();
+      unlistenLook?.();
       unlistenHotkey?.();
     };
   }, [captureScreen, kill]);

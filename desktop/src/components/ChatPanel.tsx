@@ -1,5 +1,10 @@
 // The compact panel: ask, watch the plan, approve, done. Small on purpose — it sits next to whatever
 // the user is already doing rather than replacing it.
+//
+// It is also the voice surface: the talk chord (Ctrl+Shift+Space) always comes here, because only
+// one window can hold the microphone. Press and the panel is already up and listening, let go and
+// what was said is sent; the mic button in the composer is the slower, editable version of the same
+// thing.
 
 import { useEffect, useRef, useState } from "react";
 import { ApprovalCard } from "./ApprovalCard";
@@ -26,14 +31,80 @@ export function ChatPanel() {
   const kill = useDobot((state) => state.kill);
   const capturing = useDobot((state) => state.capturing);
   const setCapturing = useDobot((state) => state.setCapturing);
+  const captureActiveWindow = useDobot((state) => state.captureActiveWindow);
+  const dotDetail = useDobot((state) => state.dotDetail);
 
   const [draft, setDraft] = useState("");
   const [useScreen, setUseScreen] = useState(true);
   const bodyRef = useRef<HTMLDivElement>(null);
+  /** Always the words in the box now: a recording's callbacks land later than this render. */
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
+  /** Whether the recording came from the talk chord, which sends rather than filling the box. */
+  const hotkeyVoice = useRef(false);
 
-  const voice = useVoiceInput((text) => {
-    setDraft((current) => (current ? `${current} ${text}` : text));
-  });
+  const voice = useVoiceInput(
+    (text) => {
+      if (hotkeyVoice.current) {
+        hotkeyVoice.current = false;
+        const base = draftRef.current.trim();
+        const message = base ? `${base} ${text}` : text;
+        if (message) {
+          void send(message, { shadow: shadowMode, useSelection: useScreen && Boolean(selection) });
+          return;
+        }
+      }
+      setDraft((current) => (current ? `${current} ${text}` : text));
+    },
+    () => {
+      // However it ended — transcribed, too short to be words, cancelled, mic refused — the
+      // chord's session is over, and the shell must be told so the next press starts fresh.
+      hotkeyVoice.current = false;
+      void native.voiceDone();
+    },
+  );
+
+  // The talk chord: the shell owns the key, this window owns the microphone.
+  const { start: startListening, stop: stopListening, cancel: cancelListening } = voice;
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    void native
+      .onVoice((signal) => {
+        if (signal === "start") {
+          hotkeyVoice.current = true;
+          void startListening();
+        } else if (signal === "stop") {
+          stopListening();
+        }
+      })
+      .then((fn) => {
+        unlisten = fn ?? undefined;
+      });
+    return () => unlisten?.();
+  }, [startListening, stopListening]);
+
+  // A press can land before this page has finished loading; the shell still holds the session open.
+  useEffect(() => {
+    void native.voiceListening().then((listening) => {
+      if (listening) {
+        hotkeyVoice.current = true;
+        void startListening();
+      }
+    });
+  }, [startListening]);
+
+  // Esc lets go of the microphone, the way any recorder does.
+  useEffect(() => {
+    if (voice.phase !== "recording") return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        cancelListening();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [voice.phase, cancelListening]);
 
   useEffect(() => {
     bodyRef.current?.scrollTo({ top: bodyRef.current.scrollHeight, behavior: "smooth" });
@@ -53,8 +124,15 @@ export function ChatPanel() {
           ●
         </span>
         <span className="panel__title">Dobot</span>
-        <span className={`chip ${connected ? "chip--ok" : "chip--danger"}`} title={connectionDetail}>
-          {connected ? statusLabel(dotStatus) : "reconnecting"}
+        <span
+          className={`chip ${connected ? "chip--ok" : "chip--danger"} chip--detail`}
+          title={connected ? (dotDetail ? `${statusLabel(dotStatus)} — ${dotDetail}` : connectionDetail) : connectionDetail}
+        >
+          {connected
+            ? dotDetail && (dotStatus === "EXECUTING" || dotStatus === "THINKING")
+              ? dotDetail
+              : statusLabel(dotStatus)
+            : "reconnecting"}
         </span>
         <span className="panel__spacer" />
         <button className="ghost" title="Open the dashboard" onClick={() => void native.openDashboard()}>
@@ -80,8 +158,9 @@ export function ChatPanel() {
 
         {messages.length === 0 && (
           <div className="notice">
-            Ask a question, or select something on screen and ask Dobot about it. Try “Explain this”
-            after a selection, or “clean my downloads folder” to see the action firewall.
+            Ask a question, hold <span className="mono">Ctrl+Shift+Space</span> anywhere and speak, or
+            show Dobot a window (<span className="mono">Ctrl+Alt+L</span>). Try “clean my downloads
+            folder” to see the action firewall.
           </div>
         )}
 
@@ -132,6 +211,16 @@ export function ChatPanel() {
           >
             {selection ? "Screen selected" : "Select screen"}
           </button>
+          {native.isNative && (
+            <button
+              className="chip"
+              onClick={() => void captureActiveWindow()}
+              disabled={capturing}
+              title="Show Dobot the window you are in (Ctrl+Alt+L) — you check it before it goes"
+            >
+              This window
+            </button>
+          )}
           {selection && (
             <button className="chip" onClick={clearSelection}>
               clear
@@ -146,49 +235,79 @@ export function ChatPanel() {
           <img className="mini-thumb" src={previewDataUrl(selection) ?? undefined} alt="selected region" />
         )}
 
-        <div className="composer">
-          <textarea
-            value={draft}
-            placeholder={
-              voice.phase === "recording"
-                ? "Listening… click the mic to stop"
-                : voice.phase === "processing"
-                  ? "Transcribing…"
-                  : selection
-                    ? "Ask about the selected region…"
-                    : "Ask Dobot — or tap the mic and speak…"
-            }
-            onChange={(event) => setDraft(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" && !event.shiftKey) {
-                event.preventDefault();
-                void submit();
-              }
-            }}
-            rows={1}
-          />
-          {voice.error && (
-            <span className="chat__voice-error" title={voice.error} role="alert">
-              mic
-            </span>
+        <div className={`composer ${voice.phase !== "idle" ? "composer--listening" : ""}`}>
+          {voice.phase !== "idle" ? (
+            <>
+              <button
+                className="chip"
+                onClick={() => voice.cancel()}
+                title="Discard what was said (Esc)"
+                aria-label="Discard recording"
+              >
+                ✕
+              </button>
+              {voice.phase === "recording" ? (
+                <span className="wave" aria-hidden="true">
+                  {voice.levels.map((level, index) => (
+                    <span key={index} className="wave__bar" style={{ height: `${Math.max(8, level * 100)}%` }} />
+                  ))}
+                </span>
+              ) : (
+                <span className="listening__label" role="status">
+                  Writing it down…
+                </span>
+              )}
+            </>
+          ) : (
+            <>
+              <textarea
+                value={draft}
+                placeholder={selection ? "Ask about the selected region…" : "Ask Dobot — or tap the mic and speak…"}
+                onChange={(event) => setDraft(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && !event.shiftKey) {
+                    event.preventDefault();
+                    void submit();
+                  }
+                }}
+                rows={1}
+              />
+              {voice.error && (
+                <span className="chat__voice-error" title={voice.error} role="alert">
+                  mic
+                </span>
+              )}
+              <button
+                className="chip chat__mic"
+                onClick={() => void voice.start()}
+                title="Speak — audio is transcribed locally by Whisper"
+              >
+                🎤
+              </button>
+            </>
           )}
           <button
-            className={`chip chat__mic ${voice.phase === "recording" ? "chat__mic--live" : ""}`}
-            onClick={() => (voice.phase === "recording" ? voice.stop() : void voice.start())}
-            disabled={voice.phase === "processing"}
+            className="primary"
+            onClick={() => (voice.phase === "recording" ? voice.stop() : void submit())}
+            disabled={voice.phase === "processing" || (voice.phase === "idle" && !draft.trim())}
             title={
               voice.phase === "recording"
-                ? "Stop recording and transcribe"
-                : "Speak — audio is transcribed locally by Whisper"
+                ? hotkeyVoice.current
+                  ? "Send what you said"
+                  : "Write it into the box"
+                : "Send (Enter)"
             }
-            aria-pressed={voice.phase === "recording"}
           >
-            {voice.phase === "recording" ? "■" : voice.phase === "processing" ? "…" : "🎤"}
-          </button>
-          <button className="primary" onClick={() => void submit()} disabled={!draft.trim()}>
-            Send
+            {voice.phase === "recording" && !hotkeyVoice.current ? "Transcribe" : "Send"}
           </button>
         </div>
+        {voice.phase === "recording" && (
+          <div className="listening__hint">
+            {hotkeyVoice.current
+              ? "Let go of Ctrl+Shift+Space (or press it again) to send · Esc to cancel"
+              : "Say it all, then Transcribe — it lands in the box to check · Esc to cancel"}
+          </div>
+        )}
         <div className="row" style={{ justifyContent: "space-between" }}>
           <label className="row" style={{ gap: 6, color: "var(--text-dim)", fontSize: 12 }}>
             <input

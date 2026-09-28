@@ -11,6 +11,7 @@ import { Automations } from "../pages/Automations";
 import { ApprovalCard } from "../components/ApprovalCard";
 import {
   IconClose,
+  IconEye,
   IconFile,
   IconImage,
   IconMic,
@@ -155,6 +156,7 @@ export function Chat() {
   const capturing = useDobot((state) => state.capturing);
   const send = useDobot((state) => state.send);
   const captureScreen = useDobot((state) => state.captureScreen);
+  const captureActiveWindow = useDobot((state) => state.captureActiveWindow);
   const clearSelection = useDobot((state) => state.clearSelection);
   const setShadowMode = useDobot((state) => state.setShadowMode);
   const setDotEnabled = useDobot((state) => state.setDotEnabled);
@@ -177,6 +179,19 @@ export function Chat() {
     setDraft((current) => (current ? `${current} ${text}` : text));
     composerRef.current?.focus();
   });
+
+  // Esc lets go of the microphone, the way any recorder does.
+  useEffect(() => {
+    if (voice.phase !== "recording") return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        voice.cancel();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [voice.phase, voice.cancel]);
 
   // The attachment limits come from the backend, so the two can never drift apart. A backend that
   // predates the endpoint simply leaves the defaults in place.
@@ -354,10 +369,10 @@ export function Chat() {
                 ))}
               </div>
               <div className="chat__hero-foot">
-                <span className="mono">Ctrl+Shift+Space</span> quick ask ·{" "}
-                <span className="mono">Ctrl+Shift+S</span> select screen ·{" "}
-                <span className="mono">Ctrl+Alt+D</span> dashboard ·{" "}
-                <span className="mono">Ctrl+Shift+Esc</span> stop
+                <span className="mono">Ctrl+Shift+Space</span> talk · <span className="mono">Ctrl+Alt+L</span>{" "}
+                show a window · <span className="mono">Ctrl+Shift+S</span> select screen ·{" "}
+                <span className="mono">Ctrl+Alt+D</span> dashboard · <span className="mono">Ctrl+Shift+Esc</span>{" "}
+                stop
               </div>
             </div>
           ) : (
@@ -518,6 +533,17 @@ export function Chat() {
               <IconScreen size={14} />
               {selection ? "Screen attached" : "Select screen"}
             </button>
+            {native.isNative && (
+              <button
+                className="tool-chip"
+                onClick={() => void captureActiveWindow()}
+                disabled={capturing}
+                title="Show Dobot the window you are in — Ctrl+Alt+L — and check it before it goes"
+              >
+                <IconEye size={14} />
+                This window
+              </button>
+            )}
             {selection && (
               <button className="tool-chip" onClick={clearSelection} title="Remove the selected region">
                 <IconClose size={12} />
@@ -547,68 +573,81 @@ export function Chat() {
             >
               <IconPaperclip />
             </button>
-            <textarea
-              ref={composerRef}
-              value={draft}
-              placeholder={
-                voice.phase === "recording"
-                  ? "Listening… click the mic to stop"
-                  : voice.phase === "processing"
-                    ? "Transcribing…"
-                    : selection
+            {voice.phase !== "idle" ? (
+              <>
+                <button
+                  className="icon-btn"
+                  onClick={() => voice.cancel()}
+                  title="Discard what was said (Esc)"
+                  aria-label="Discard recording"
+                >
+                  <IconClose />
+                </button>
+                {voice.phase === "recording" ? (
+                  <span className="wave" aria-hidden="true">
+                    {voice.levels.map((level, index) => (
+                      <span key={index} className="wave__bar" style={{ height: `${Math.max(8, level * 100)}%` }} />
+                    ))}
+                  </span>
+                ) : (
+                  <span className="listening__label" role="status">
+                    Writing it down…
+                  </span>
+                )}
+              </>
+            ) : (
+              <>
+                <textarea
+                  ref={composerRef}
+                  value={draft}
+                  placeholder={
+                    selection
                       ? "Ask about the selected region…"
                       : mode === "ask"
                         ? "Ask a question — Ask mode runs nothing…"
                         : attachments.length
                           ? "Tell Dobot what to do with what you attached…"
                           : "Message Dobot…"
-              }
-              onChange={(event) => setDraft(event.target.value)}
-              onPaste={(event) => {
-                const files = Array.from(event.clipboardData?.files ?? []);
-                if (files.length) {
-                  event.preventDefault();
-                  void addFiles(files);
-                }
-              }}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" && !event.shiftKey) {
-                  event.preventDefault();
-                  void submit();
-                }
-              }}
-              rows={1}
-            />
-            {voice.error && (
-              <span className="chat__voice-error" title={voice.error} role="alert">
-                mic: {voice.error}
-              </span>
+                  }
+                  onChange={(event) => setDraft(event.target.value)}
+                  onPaste={(event) => {
+                    const files = Array.from(event.clipboardData?.files ?? []);
+                    if (files.length) {
+                      event.preventDefault();
+                      void addFiles(files);
+                    }
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" && !event.shiftKey) {
+                      event.preventDefault();
+                      void submit();
+                    }
+                  }}
+                  rows={1}
+                />
+                {voice.error && (
+                  <span className="chat__voice-error" title={voice.error} role="alert">
+                    mic: {voice.error}
+                  </span>
+                )}
+                <button
+                  className="icon-btn composer__mic"
+                  onClick={() => void voice.start()}
+                  title="Speak to Dobot — the audio is transcribed by your own backend"
+                  aria-label="Voice input"
+                >
+                  <IconMic />
+                </button>
+              </>
             )}
             <button
-              className={`icon-btn composer__mic ${voice.phase === "recording" ? "icon-btn--recording" : ""}`}
-              onClick={() => (voice.phase === "recording" ? voice.stop() : void voice.start())}
-              disabled={voice.phase === "processing"}
-              title={
-                voice.phase === "recording"
-                  ? "Stop recording and transcribe"
-                  : "Speak to Dobot — the audio is transcribed by your own backend"
-              }
-              aria-pressed={voice.phase === "recording"}
-              aria-label="Voice input"
-            >
-              {voice.phase === "recording" ? (
-                <IconStopCircle />
-              ) : voice.phase === "processing" ? (
-                <span className="spinner" />
-              ) : (
-                <IconMic />
-              )}
-            </button>
-            <button
               className="composer__send"
-              onClick={() => void submit()}
-              disabled={!draft.trim() && attachments.length === 0}
-              title="Send (Enter)"
+              onClick={() => (voice.phase === "recording" ? voice.stop() : void submit())}
+              disabled={
+                voice.phase === "processing" ||
+                (voice.phase === "idle" && !draft.trim() && attachments.length === 0)
+              }
+              title={voice.phase === "recording" ? "Send what you said (Enter)" : "Send (Enter)"}
               aria-label="Send"
             >
               <IconSend />
@@ -624,9 +663,13 @@ export function Chat() {
               />
               attach the selected screen region
             </label>
-            <span className="mono" style={{ color: "var(--text-dim)" }}>
-              Enter to send · Shift+Enter for a new line
-            </span>
+            {voice.phase === "recording" ? (
+              <span className="listening__hint">Listening — say it all, then Send · Esc to cancel</span>
+            ) : (
+              <span className="mono" style={{ color: "var(--text-dim)" }}>
+                Enter to send · Shift+Enter for a new line
+              </span>
+            )}
           </div>
         </footer>
           </>

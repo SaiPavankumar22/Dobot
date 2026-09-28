@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::io::Cursor;
 use xcap::Monitor;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Region {
     pub x: i32,
     pub y: i32,

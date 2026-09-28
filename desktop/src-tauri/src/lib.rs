@@ -7,6 +7,7 @@
 mod backend;
 mod capture;
 mod hotkeys;
+mod look;
 mod state;
 mod tray;
 mod windows;
@@ -18,7 +19,7 @@ use tauri::{AppHandle, Emitter, Manager, WindowEvent};
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 use tauri_plugin_notification::NotificationExt;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SelectionPayload {
     pub image: String,
     pub region: Region,
@@ -26,6 +27,9 @@ pub struct SelectionPayload {
     pub application: String,
     #[serde(default)]
     pub window_title: String,
+    /// Why there is no picture, when there is none (a Look that could not see). Empty when there is one.
+    #[serde(default)]
+    pub error: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -126,6 +130,38 @@ fn cancel_selection(app: AppHandle) {
     windows::close_overlay(&app);
 }
 
+/// Take a picture of the window the user is in — the Look chord's job, and the composer button's.
+#[tauri::command]
+async fn capture_active_window(app: AppHandle) -> Result<SelectionPayload, String> {
+    // Capturing lists windows and paints a bitmap; neither belongs on the main thread.
+    tauri::async_runtime::spawn_blocking(move || look::capture(&app))
+        .await
+        .map_err(|error| format!("could not capture the active window: {error}"))
+}
+
+/// Is the talk chord currently holding the panel in a listening session? The panel asks on mount,
+/// because a press can land before its page has finished loading.
+#[tauri::command]
+fn voice_state() -> bool {
+    hotkeys::talk_is_listening()
+}
+
+/// The panel has stopped listening on its own — transcribed, cancelled, or the mic never answered.
+#[tauri::command]
+fn voice_done() {
+    hotkeys::talk_done();
+}
+
+/// Whether any Dobot window has the user's attention. A task that finishes while they are in
+/// another application needs a notification; one that finishes while they are reading us does not.
+#[tauri::command]
+fn dobot_focused(app: AppHandle) -> bool {
+    [windows::CHAT, windows::PANEL, windows::DASHBOARD]
+        .into_iter()
+        .filter_map(|label| app.get_webview_window(label))
+        .any(|window| window.is_focused().unwrap_or(false))
+}
+
 #[tauri::command]
 fn notify_user(app: AppHandle, title: String, body: String) -> Result<(), String> {
     app.notification()
@@ -206,6 +242,10 @@ pub fn run() {
             close_overlay,
             finish_selection,
             cancel_selection,
+            capture_active_window,
+            voice_state,
+            voice_done,
+            dobot_focused,
             notify_user,
             autostart_enabled,
             set_autostart,

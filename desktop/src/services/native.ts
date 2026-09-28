@@ -30,7 +30,12 @@ export interface SelectionPayload {
   region: Region;
   application: string;
   window_title: string;
+  /** Why there is no picture, when the Look hotkey could not take one. Empty when it could. */
+  error?: string;
 }
+
+/** What the shell tells the panel to do with the microphone: start listening, stop and send. */
+export type VoiceSignal = "start" | "stop";
 
 function windowLabel(): string {
   if (!isNative) return "dashboard";
@@ -95,6 +100,12 @@ export const native = {
       console.warn("could not subscribe to dot toggle events", error);
       return null;
     }
+  },
+
+  /** Does any Dobot window have the user's attention right now? */
+  async dobotFocused(): Promise<boolean> {
+    if (!isNative) return false;
+    return (await this.invokeSafe<boolean>("dobot_focused")) ?? false;
   },
 
   async quit(): Promise<void> {
@@ -168,6 +179,51 @@ export const native = {
       console.warn("could not subscribe to selection events", error);
       return null;
     }
+  },
+
+  /**
+   * The Look chord: a picture of the window the user is in, taken by the shell (which knows what
+   * is in front) and broadcast to every window — each keeps its own store, and the user may be in
+   * any of them.
+   */
+  async onLook(callback: (payload: SelectionPayload) => void): Promise<UnlistenFn | null> {
+    if (!isNative) return null;
+    try {
+      return await listen<SelectionPayload>("dobot://look", (event) => callback(event.payload));
+    } catch (error) {
+      console.warn("could not subscribe to look events", error);
+      return null;
+    }
+  },
+
+  /** Take a picture of the window in front right now — the composer button's job. */
+  async captureActiveWindow(): Promise<SelectionPayload | null> {
+    return await this.invokeSafe<SelectionPayload>("capture_active_window");
+  },
+
+  /**
+   * Push-to-talk: the shell owns the chord, so it says when to listen and when to stop. The panel
+   * is the only window that owns the microphone.
+   */
+  async onVoice(callback: (signal: VoiceSignal) => void): Promise<UnlistenFn | null> {
+    if (!isNative) return null;
+    try {
+      return await listen<VoiceSignal>("dobot://voice", (event) => callback(event.payload));
+    } catch (error) {
+      console.warn("could not subscribe to voice events", error);
+      return null;
+    }
+  },
+
+  /** Is the talk chord currently holding a listening session (asked when the panel mounts). */
+  async voiceListening(): Promise<boolean> {
+    if (!isNative) return false;
+    return (await this.invokeSafe<boolean>("voice_state")) ?? false;
+  },
+
+  /** The panel has stopped listening — transcribed, cancelled, or the microphone never answered. */
+  async voiceDone(): Promise<void> {
+    await this.invokeSafe("voice_done");
   },
 
   async onHotkey(callback: (action: string) => void): Promise<UnlistenFn | null> {

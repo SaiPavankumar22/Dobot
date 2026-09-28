@@ -38,6 +38,27 @@ async function maybeSpeak(answer: string, get: () => DobotStore): Promise<void> 
   }
 }
 
+/**
+ * A reply that landed while the user was in another application is held up as a system
+ * notification: an always-on assistant should speak up when it is done, not wait to be looked at.
+ * The chat window speaks for every window (they all see the same event), and only when no Dobot
+ * window has the user's attention — if they are already reading us, the thread is the feedback.
+ */
+async function notifyIfAway(task: TaskRecord): Promise<void> {
+  if (native.label() !== "chat") return;
+  if (await native.dobotFocused()) return;
+  const answer = (task.answer || task.error || "")
+    .replace(/[*_`#>]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  const body = answer
+    ? answer.length > 180
+      ? `${answer.slice(0, 180)}…`
+      : answer
+    : "Open Dobot to see what it did.";
+  await native.notify(task.status === "FAILED" ? "Dobot hit a snag" : "Dobot finished", body);
+}
+
 /** The mode chosen last time, defaulting to the specification's `agent`. */
 function storedMode(): ExecutionMode {
   const raw = localStorage.getItem(MODE_KEY);
@@ -53,6 +74,8 @@ function makeId(): string {
 
 interface DobotStore {
   dotStatus: DotStatus;
+  /** What the backend is actually doing, in its own words — the dot's tooltip and the panel's chip. */
+  dotDetail: string;
   connected: boolean;
   connectionDetail: string;
   providers: Record<string, string>;
@@ -82,6 +105,8 @@ interface DobotStore {
     options?: { shadow?: boolean; useSelection?: boolean; attachments?: ChatAttachment[] },
   ) => Promise<void>;
   captureScreen: () => Promise<void>;
+  /** One chord, one picture: the window the user is in, as ready-to-send selection. */
+  captureActiveWindow: () => Promise<void>;
   setCapturing: (capturing: boolean) => void;
   finishBrowserSelection: (selection: Selection) => void;
   clearSelection: () => void;
@@ -136,6 +161,7 @@ function mergeStepStatuses(plan: Plan | undefined, task: TaskRecord): Plan | und
 
 export const useDobot = create<DobotStore>((set, get) => ({
   dotStatus: "IDLE",
+  dotDetail: "",
   connected: false,
   connectionDetail: "not connected",
   providers: {},
@@ -184,7 +210,9 @@ export const useDobot = create<DobotStore>((set, get) => ({
     switch (event.type) {
       case "dot_status": {
         const status = (event.data.status as DotStatus) ?? "IDLE";
-        set({ dotStatus: status });
+        // The detail is what makes the dot readable at a glance: "understanding your request",
+        // "read file …", not just a spinning glyph.
+        set({ dotStatus: status, dotDetail: event.message || "" });
         break;
       }
       case "approval_required": {
@@ -236,7 +264,9 @@ export const useDobot = create<DobotStore>((set, get) => ({
     const userMessage: ChatMessage = {
       id: makeId(),
       role: "user",
-      text: selection ? `${trimmed}\n\n[selected ${selection.region?.width}×${selection.region?.height} region from ${selection.application || "screen"}]` : trimmed,
+      text: selection
+        ? `${trimmed}\n\n[selected ${selection.region?.width}×${selection.region?.height} region from ${selection.windowTitle || selection.application || "screen"}]`
+        : trimmed,
       createdAt: Date.now(),
       attachments: attachments.length ? attachments : undefined,
     };
@@ -301,6 +331,25 @@ export const useDobot = create<DobotStore>((set, get) => ({
   },
 
   setCapturing: (capturing) => set({ capturing, lastError: capturing ? null : get().lastError }),
+
+  captureActiveWindow: async () => {
+    if (!native.isNative) return;
+    set({ lastError: null });
+    const payload = await native.captureActiveWindow();
+    if (!payload || payload.error || !payload.image) {
+      set({ lastError: payload?.error ?? "Dobot couldn't take a picture of that window." });
+      return;
+    }
+    set({
+      selection: {
+        image: payload.image,
+        region: payload.region,
+        application: payload.application,
+        windowTitle: payload.window_title,
+        source: "native",
+      },
+    });
+  },
 
   finishBrowserSelection: (selection) => set({ selection, capturing: false }),
 
@@ -439,6 +488,8 @@ async function finaliseTask(
     await maybeSpeak(task.answer, get);
     void get().refreshApprovals();
     void get().refreshDashboard();
+    // After the state is written: whoever comes back from the notification finds the answer there.
+    await notifyIfAway(task);
   } catch {
     set({ busy: false });
   }

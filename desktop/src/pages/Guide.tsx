@@ -69,8 +69,9 @@ const TOPICS: Topic[] = [
   {
     id: "voice",
     title: "Talking instead of typing",
-    where: "The microphone button in the composer (and on the quick panel).",
-    what: "Your speech is transcribed locally by Whisper (faster-whisper) — audio goes only to your own backend, never to a third party. It needs the faster-whisper package (and ffmpeg for browser recordings) installed on the machine running the backend.",
+    where: "The microphone button in the composer (and on the quick panel), or Ctrl+Shift+Space anywhere.",
+    what: "Your speech is transcribed locally by Whisper (faster-whisper) — audio goes only to your own backend, never to a third party. It needs the faster-whisper package (and ffmpeg for browser recordings) installed on the machine running the backend. Hold Ctrl+Shift+Space and speak from any application: the quick panel comes up already listening, letting go sends what you said (a short tap waits for the next press to send); Esc cancels, and a press too short to be words is ignored.",
+    steps: ["Hold Ctrl+Shift+Space (or click the mic and speak)", "Talk — the waveform shows it hears you", "Let go to send, or press Esc and edit the words first"],
     tip: "If the mic reports 'not installed', the Doctor page shows the exact command. A Hugging Face Space backend does not ship the ~484 MB model, so voice input is a local-backend feature unless you add it to the Space.",
   },
   {
@@ -82,22 +83,23 @@ const TOPICS: Topic[] = [
   {
     id: "screen",
     title: "Pointing Dobot at your screen",
-    where: "‘Select screen’ in the composer, or Ctrl+Shift+S anywhere.",
-    what: "Drag a rectangle around anything on screen and the next message can be about it. Capture is strictly on demand — there is no continuous monitoring, and the region is only sent with the message you attach it to.",
-    tip: "The checkbox under the composer decides whether the pending region rides with your next message.",
+    where: "‘Select screen’ in the composer (Ctrl+Shift+S), or ‘This window’ / Ctrl+Alt+L for the whole window you are in.",
+    what: "Drag a rectangle around anything on screen and the next message can be about it — or, with one chord, hand over the window you are looking at without dragging anything: Dobot captures exactly that window (never one of its own) and leaves a preview in the composer to check, swap or drop before the message goes. Capture is strictly on demand — there is no continuous monitoring, and the region is only sent with the message you attach it to.",
+    tip: "Ctrl+Alt+L is the 'what's this error?' key: press it on the broken window, then ask. The checkbox under the composer decides whether the pending region rides with your next message.",
   },
   {
     id: "alwayson",
     title: "The floating dot and the quick panel",
     where: "The 'Always on' switch in the chat header.",
     what: "Turns Dobot into something always available: a small dot that floats above every window. Click it for a compact ask panel, drag it anywhere, right-click for the tray menu. Turn the switch off and Dobot is an ordinary chat window again.",
-    tip: "The dot's colour and motion show what it is doing — listening, thinking, executing, or waiting for your approval.",
+    tip: "The dot's colour and motion show what it is doing — listening, thinking, executing, or waiting for your approval — and hovering it says what it is working on right now.",
   },
   {
     id: "hotkeys",
     title: "Keyboard shortcuts",
     where: "Global — they work from any application (tray menu → Shortcuts lists the same set).",
-    what: "Ctrl+Shift+Space: quick ask panel · Ctrl+Shift+S: select a screen region · Ctrl+Alt+D: dashboard · Ctrl+Shift+Esc: stop the running task.",
+    what: "Ctrl+Shift+Space: talk — the quick panel opens listening, letting go sends · Ctrl+Alt+L: show Dobot the window you are in · Ctrl+Shift+S: select a screen region · Ctrl+Alt+D: dashboard · Ctrl+Shift+Esc: stop the running task.",
+    tip: "A chord another application already owns is reported in the Doctor page rather than failing the app.",
   },
   {
     id: "tasks",

@@ -148,6 +148,36 @@ pub fn restore_dot_position(app: &AppHandle) {
     let _ = dot.set_position(tauri::PhysicalPosition::new(x, y));
 }
 
+/// Lift our own floating windows out of a screen shot for a moment. The dot and the panel sit on
+/// top of everything, so a picture of the desktop would otherwise have Dobot in it. Only windows
+/// that are actually visible are moved, and the caller puts back exactly those — nothing that was
+/// hidden gets shown by a screenshot.
+pub fn hide_for_capture(app: &AppHandle) -> Vec<&'static str> {
+    let mut hidden = Vec::new();
+    for label in [DOT, PANEL] {
+        if let Some(window) = app.get_webview_window(label) {
+            if window.is_visible().unwrap_or(false) {
+                let _ = window.hide();
+                hidden.push(label);
+            }
+        }
+    }
+    if !hidden.is_empty() {
+        // The compositor needs a beat to rebuild the desktop without them in it.
+        std::thread::sleep(std::time::Duration::from_millis(120));
+    }
+    hidden
+}
+
+/// Put back whatever `hide_for_capture` took away, in the same order, right after the picture.
+pub fn restore_after_capture(app: &AppHandle, hidden: Vec<&'static str>) {
+    for label in hidden {
+        if let Some(window) = app.get_webview_window(label) {
+            let _ = window.show();
+        }
+    }
+}
+
 /// Create (or raise) the transparent selection overlay covering the whole virtual desktop.
 pub fn open_overlay(app: &AppHandle) -> Result<(), String> {
     if let Some(existing) = app.get_webview_window(OVERLAY) {

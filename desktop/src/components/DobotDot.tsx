@@ -41,6 +41,7 @@ const LABELS: Record<DotStatus, string> = {
 
 export function DobotDot() {
   const dotStatus = useDobot((state) => state.dotStatus);
+  const dotDetail = useDobot((state) => state.dotDetail);
   const approvals = useDobot((state) => state.approvals);
   const connected = useDobot((state) => state.connected);
   const [visibleStatus, setVisibleStatus] = useState<DotStatus>("IDLE");
@@ -98,15 +99,22 @@ export function DobotDot() {
     }
   }, []);
 
+  // The glyph says *that* something is happening; the detail says *what* — and a hovering or
+  // screen-reading user gets both, not just a colour.
+  const label =
+    dotDetail && (visibleStatus === "EXECUTING" || visibleStatus === "THINKING")
+      ? `${LABELS[visibleStatus]} — ${dotDetail}`
+      : LABELS[visibleStatus];
+
   return (
     <div
       className="dot-shell"
       onMouseDown={onMouseDown}
       onMouseUp={onMouseUp}
       onMouseMove={onMouseMove}
-      title={LABELS[visibleStatus]}
+      title={label}
     >
-      <div className={`dot ${CLASSES[visibleStatus]}`} role="button" aria-label={LABELS[visibleStatus]}>
+      <div className={`dot ${CLASSES[visibleStatus]}`} role="button" aria-label={label}>
         <span className="dot__glyph">{GLYPHS[visibleStatus]}</span>
         {approvals.length > 0 && <span className="dot__badge">{approvals.length}</span>}
         {!connected && <span className="dot__badge" style={{ background: "#6b7280" }}>·</span>}
