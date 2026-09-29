@@ -134,12 +134,24 @@ async def providers(services: ServicesDep) -> dict:
 @router.get("/onboarding")
 async def onboarding(services: ServicesDep) -> dict:
     status = await services.provider_status()
+    reasoning_detail = {
+        "key_rejected": (
+            "Nebius refused the saved key (HTTP 401). Paste a valid Token Factory API key under "
+            "Your API keys — the one saved now is wrong, expired or revoked."
+        ),
+        "unreachable": "A key is saved, but the Nebius endpoint did not answer. Check the backend's network access.",
+    }.get(
+        status["nemotron"],
+        "Paste your Nebius key under Your API keys (or set NEBIUS_API_KEY in .env) — without it Dobot "
+        "runs in limited offline mode.",
+    )
     steps = [
         {
             "id": "reasoning",
             "title": "Connect Nemotron via Nebius Token Factory",
             "done": status["nemotron"] == "connected",
-            "detail": "Set NEBIUS_API_KEY in .env — without it Dobot runs in limited offline mode.",
+            "state": status["nemotron"],
+            "detail": reasoning_detail,
         },
         {
             "id": "research",

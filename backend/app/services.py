@@ -133,8 +133,10 @@ class Services:
         """
         if not self.reasoner.available:
             nemotron = "not_configured"
+        elif await self.reasoner.health():
+            nemotron = "connected"
         else:
-            nemotron = "connected" if await self.reasoner.health() else "unreachable"
+            nemotron = "key_rejected" if getattr(self.reasoner, "key_rejected", False) else "unreachable"
         tavily = "connected" if getattr(self.tavily, "available", False) else "not_configured"
         runtime_info = await self.runtime.info()
         sandbox = await self.sandbox.status()

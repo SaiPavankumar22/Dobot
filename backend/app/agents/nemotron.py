@@ -24,6 +24,9 @@ logger = get_logger(__name__)
 
 DEFAULT_TEMPERATURE = 0.2
 DEFAULT_MAX_TOKENS = 2048
+#: A failed probe is re-tried after this long, so a fixed network or a newly pasted key is noticed
+#: without restarting the backend. A passing probe stays cached until credentials change.
+HEALTH_RETRY_SECONDS = 30.0
 
 
 @dataclass
@@ -58,10 +61,17 @@ class NemotronClient:
         self.settings = settings or get_settings()
         self._client: httpx.AsyncClient | None = None
         self._reachable: bool | None = None
+        self._checked_at = 0.0
+        self._probe_status: int | None = None
 
     @property
     def available(self) -> bool:
         return self.settings.has_nebius
+
+    @property
+    def key_rejected(self) -> bool:
+        """Nebius answered, but refused the key (401/403) — a bad key, not a network problem."""
+        return self._probe_status in (401, 403)
 
     def _http(self) -> httpx.AsyncClient:
         if self._client is None:
@@ -142,15 +152,23 @@ class NemotronClient:
     async def health(self) -> bool:
         if not self.available:
             self._reachable = False
+            self._probe_status = None
             return False
-        if self._reachable is not None:
+        if self._reachable or (
+            self._reachable is False and time.monotonic() - self._checked_at < HEALTH_RETRY_SECONDS
+        ):
             return self._reachable
         try:
             response = await self._http().get("/models", timeout=httpx.Timeout(10.0))
+            self._probe_status = response.status_code
             self._reachable = response.status_code < 400
+            if self.key_rejected:
+                logger.warning("nebius rejected the configured API key (HTTP %s)", response.status_code)
         except Exception as exc:  # noqa: BLE001
             logger.warning("nebius endpoint unreachable (%s)", exc)
+            self._probe_status = None
             self._reachable = False
+        self._checked_at = time.monotonic()
         return self._reachable
 
     async def aclose(self) -> None:
@@ -158,8 +176,16 @@ class NemotronClient:
             await self._client.aclose()
 
     def reset_http(self) -> None:
-        """Drop the cached HTTP client so the next call re-reads credentials."""
+        """Drop the cached HTTP client and health verdict so the next call re-reads credentials."""
         self._client = None
+        self._reachable = None
+        self._probe_status = None
+
+    def mark_rejected(self, status: int) -> None:
+        """A live call was refused for auth, so a cached "reachable" verdict is no longer true."""
+        self._probe_status = status
+        self._reachable = False
+        self._checked_at = time.monotonic()
 
 
 OFFLINE_NOTICE = "Nemotron is unreachable, so this ran in Dobot's limited offline mode."
@@ -219,6 +245,8 @@ class Reasoner:
             )
             return response
         except Exception as exc:  # noqa: BLE001 - any transport/auth failure degrades
+            if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code in (401, 403):
+                self.client.mark_rejected(exc.response.status_code)
             logger.warning("nemotron call failed (%s); degrading", exc)
             self._last_degraded = True
             record_usage(model="offline", tier=tier.value, usage={}, degraded=True, settings=self.settings)
@@ -241,6 +269,10 @@ class Reasoner:
 
     async def health(self) -> bool:
         return await self.client.health()
+
+    @property
+    def key_rejected(self) -> bool:
+        return self.client.key_rejected
 
     async def aclose(self) -> None:
         await self.client.aclose()

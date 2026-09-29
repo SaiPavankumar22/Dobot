@@ -170,6 +170,19 @@ class Doctor:
                 )
             ]
         reachable = await self._check(reasoner.health(), False)
+        if not reachable and getattr(reasoner, "key_rejected", False):
+            return [
+                Capability(
+                    id="reasoning",
+                    label="Reasoning (Nemotron 3 Ultra via Nebius)",
+                    state="broken",
+                    detail="Nebius answered but refused the key (HTTP 401) — it is wrong, expired or revoked.",
+                    fix="Create a new API key in Nebius Token Factory and paste it in Settings → Your API keys.",
+                    env="NEBIUS_API_KEY",
+                    optional=False,
+                    meta={"model": settings.nemotron_model, "base_url": settings.nebius_base_url},
+                )
+            ]
         if not reachable:
             return [
                 Capability(

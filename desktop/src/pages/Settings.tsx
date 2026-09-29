@@ -18,8 +18,14 @@ interface OnboardingStep {
   id: string;
   title: string;
   done: boolean;
+  state?: string;
   detail: string;
 }
+
+const STEP_LABELS: Record<string, string> = {
+  key_rejected: "key rejected",
+  unreachable: "unreachable",
+};
 
 /**
  * What each credential the *user* owns actually buys them. The backend publishes the list of
@@ -200,7 +206,7 @@ export function Settings() {
           <div className="row" style={{ justifyContent: "space-between" }}>
             <strong>{step.title}</strong>
             <span className={`chip ${step.done ? "chip--ok" : "chip--warn"}`}>
-              {step.done ? "ready" : "not configured"}
+              {step.done ? "ready" : STEP_LABELS[step.state ?? ""] ?? "not configured"}
             </span>
           </div>
           <div className="subtle">{step.detail}</div>
