@@ -16,6 +16,7 @@ import type {
   MemoryHit,
   MemoryRecord,
   PermissionMatrix,
+  PermissionGrant,
   Region,
   SkillFinding,
   SkillRecord,
@@ -222,10 +223,16 @@ export const api = {
 
   approvals: (includeResolved = false) =>
     request<ApprovalRecord[]>(`/approvals${includeResolved ? "?include_resolved=true" : ""}`),
-  decide: (id: string, decision: "approve" | "reject" | "edit", note = "", edits?: Record<string, unknown>) =>
+  decide: (
+    id: string,
+    decision: "approve" | "reject" | "edit",
+    note = "",
+    edits?: Record<string, unknown>,
+    scope: "once" | "lifetime" = "once",
+  ) =>
     request<ChatResponse>(`/approvals/${id}`, {
       method: "POST",
-      body: JSON.stringify({ decision, note, edits }),
+      body: JSON.stringify({ decision, note, edits, scope }),
     }),
 
   automations: () => request<AutomationRecord[]>("/automations"),
@@ -272,6 +279,9 @@ export const api = {
     }>("/security/skills"),
   kill: (taskId?: string) =>
     request<{ killed: string[] }>(`/security/kill${taskId ? `?task_id=${taskId}` : ""}`, { method: "POST" }),
+  grants: () => request<{ grants: PermissionGrant[] }>("/security/grants"),
+  revokeGrant: (id: string) =>
+    request<{ revoked: string }>(`/security/grants/${id}`, { method: "DELETE" }),
 
   // ------------------------------------------------------------------ system
 

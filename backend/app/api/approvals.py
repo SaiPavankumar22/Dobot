@@ -43,7 +43,11 @@ async def decide(
             detail={"code": "APPROVAL_NOT_FOUND", "message": approval_id, "recoverable": False},
         )
     response = await services.orchestrator.handle_approval(
-        approval_id, request.decision, note=request.note, edits=request.edits
+        approval_id,
+        request.decision,
+        note=request.note,
+        edits=request.edits,
+        scope=request.scope,
     )
     if response is None:  # pragma: no cover - record existed a moment ago
         raise HTTPException(

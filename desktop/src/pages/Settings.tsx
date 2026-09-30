@@ -77,6 +77,8 @@ export function Settings() {
   const setDotEnabled = useDobot((state) => state.setDotEnabled);
   const speakAnswers = useDobot((state) => state.speakAnswers);
   const setSpeakAnswers = useDobot((state) => state.setSpeakAnswers);
+  const connect = useDobot((state) => state.connect);
+  const disconnect = useDobot((state) => state.disconnect);
   const [baseUrl, setBase] = useState(getBaseUrl());
   const [token, setToken] = useState(getApiToken());
   const [connNote, setConnNote] = useState<{ ok: boolean; text: string } | null>(null);
@@ -133,6 +135,10 @@ export function Settings() {
           onClick={() => {
             setBaseUrl(baseUrl);
             setApiToken(token);
+            // The live socket still points at the previous backend (and carries the previous token
+            // in its handshake), so hand the stream over: close, then connect against the new URL.
+            disconnect();
+            connect();
             void load();
           }}
         >
@@ -152,6 +158,10 @@ export function Settings() {
         <button
           onClick={() => {
             setApiToken(token);
+            // The WebSocket authenticates with the token from its query string, so a token change
+            // only takes effect once the handshake is redone.
+            disconnect();
+            connect();
             void load();
           }}
         >

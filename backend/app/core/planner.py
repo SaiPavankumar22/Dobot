@@ -389,6 +389,25 @@ class Planner:
                 "removed and I will ask for approval first."
             )
 
+        if not steps:
+            move_match = re.search(r"(?i)\bmove\s+(\S+)\s+(?:to|into|in)\s+(\S+)", text)
+            if move_match:
+                source, destination = move_match.group(1).strip('\"\''), move_match.group(2).strip('\"\'')
+                # Only when both ends are written as paths: "remember I move to Paris" is prose.
+                if any(char in source for char in "/\\~") and any(
+                    char in destination for char in "/\\~"
+                ):
+                    add(
+                        "fs_move",
+                        {"source": source, "destination": destination, "on_conflict": "rename"},
+                        f"Move {source} into {destination}",
+                        "the file exists at the destination",
+                    )
+                    answer = (
+                        "I'll move that. If the destination is outside my usual workspace I'll stop "
+                        "and ask you first — once, or always."
+                    )
+
         if re.search(r"(?i)\b(delete|remove|erase|wipe)\b", lowered) and re.search(
             r"(?i)\b(files?|folder|downloads?|everything|all)\b", lowered
         ):

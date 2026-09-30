@@ -76,10 +76,14 @@ the tray menu. The choice is remembered across restarts.
 - **Research the web.** Dobot turns a request into queries, retrieves sources with Tavily, and returns
   an answer that cites them.
 - **Do things.** Create and move files, run allow-listed terminal commands, open applications, drive a
-  browser, and run reusable skills — each step classified and authorised before it executes.
+  browser, and run reusable skills — each step classified and authorised before it executes. Ten skills
+  ship with it (tidy downloads, weekly report, research topic, CI autopsy, release checklist, action
+  items, storage report, second brain, decision journal, autonomous goal).
 - **Ask first when it matters.** Anything irreversible or shell-level stops at an approval card that
   shows what will happen, at what risk, and with a concrete preview (file counts, byte totals,
-  destinations) rather than a vague "allow?".
+  destinations) rather than a vague "allow?". When the refusal is only about *where* — a folder outside
+  the workspace — the card offers **Allow once** or **Always allow**, remembered per folder and
+  revocable from the Security page.
 - **Verify itself.** Every step records the checks that prove it worked — or that it could not be
   independently verified. It never reports success it did not confirm.
 - **Remember.** Preferences, projects, people, workflows and task episodes persist and come back as
@@ -310,7 +314,7 @@ Dobot opens as a **chat window**. Turn on **Always on** in the header if you wan
 ### 4. Tests
 
 ```bash
-cd backend && uv run pytest -q      # 275 tests
+cd backend && uv run pytest -q      # 297 tests
 cd backend && uv run ruff check app tests
 cd desktop && npm run build          # tsc --noEmit + vite build
 ```
@@ -377,6 +381,11 @@ Local, loopback-bound, and designed for the desktop app.
   engine before it reaches the agent runtime.
 - **`HIGH` and `CRITICAL` require explicit human approval.** `CRITICAL` never auto-runs. Approvals show
   a concrete preview, not a prompt.
+- **A refusal you can lift, deliberately.** When an action is refused only because the target sits
+  outside the workspace, the card asks instead of refusing: **Allow once** (this attempt) or **Always
+  allow** (remembered per folder, listed and revocable under Security → Granted permissions). Credential
+  locations, system directories, destructive commands and shell evasion are *not* grantable — no answer
+  to that question loosens them.
 - **`REQUIRE_WRITE_APPROVAL=true` makes it stricter still** — every mutating tool (files, terminal,
   skills, GUI actions) stops for approval even at `MEDIUM` risk, while reads stay automatic.
 - **Paths, hosts and timeouts are enforced in-process** even when no sandbox is running.
@@ -410,12 +419,12 @@ backend/                 FastAPI gateway, orchestrator, decision engine, memory,
                          decision engine · verifier · scheduler · activity · killswitch
   app/observability/     LangSmith tracer (optional, null-object when unconfigured)
   app/agents/            nemotron · hermes · sandbox · research agent
-  app/security/          risk classification · policies · JEV (Laya) · approvals
+  app/security/          risk classification · policies · JEV (Laya) · approvals · permission grants
   app/memory/            manager · retriever · record store · vectors · embeddings
   app/tools/             filesystem · terminal · browser · screen · computer · apps · productivity
   app/api/               chat · screen · research · tasks · automations · approvals · memory
                          skills · settings · security · activity · websocket
-  tests/                 275 tests, no network required
+  tests/                 297 tests, no network required
 desktop/                 Tauri 2 + React 18 + TypeScript + zustand
   src/pages/             Chat (default) · Overview · Tasks · Automations · Approvals · Memory
                          Skills · Activity · Security · Settings
@@ -423,6 +432,7 @@ desktop/                 Tauri 2 + React 18 + TypeScript + zustand
   src-tauri/src/         windows · state · capture · hotkeys · tray
 skills/                  clean_downloads · research_topic · weekly_report
                          second_brain · autonomous_goal · decision_journal
+                         ci_autopsy · release_checklist · action_items · disk_report
 scripts/                 start-dobot.bat — backend + desktop app in one double-click
 docs/                    architecture · security · memory · agent · development · install
 report.md               development and verification report (V1 → V2, test evidence, gaps)

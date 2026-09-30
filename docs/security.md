@@ -167,20 +167,63 @@ read is computed from the same objects the decision engine actually evaluates.
 Policies are data, not prose:
 
 ```python
-Policy(name="no_credentials_in_shell",
-       match=Pattern(tool="terminal", command_regex=r"(?i)(password|api[_-]?key|secret)"),
+Policy(name="no_credentials_in_command",
+       match=Pattern(tool="terminal", command_regex=CREDENTIAL_SHAPE),
        verdict=Verdict.BLOCK,
-       reason="Refusing to pass credentials through a shell command")
+       reason="Refusing to pass a credential value through a shell command")
 ```
 
 Verdicts: `ALLOW`, `APPROVAL`, `BLOCK`. A single `BLOCK` in the plan short-circuits the whole task.
 `SHADOW_MODE=true` downgrades every verdict to plan-only, so nothing executes.
 
+### Credentials are matched by shape, not by word
+
+`CREDENTIAL_SHAPE` (`app/security/risk.py`, shared by the risk classifier and the policy engine) fires
+only when a credential is actually *handled*: an assignment (`api_key=…`), a flag with a value
+(`--password …`), an environment expansion (`$AWS_SECRET_ACCESS_KEY`, `%TOKEN%`), a bearer header, or a
+literal key (`ghp_…`, `AKIA…`, `sk-…`, a PEM block).
+
+The bare word is deliberately not enough. `grep password config.yaml`, `type passwords.txt` and a file
+called `secret_santa.txt` are ordinary work; a rule that refuses them makes every real prompt look like
+noise, and a user trained to approve without reading is worse than no gate at all. What still counts
+without a value: a **path argument** that names a credential file (`secrets.json`, `passwords.txt`,
+`credentials.json`, `.env`) — that is escalated to `CRITICAL`, and the file guard refuses `.env`,
+`id_rsa` and friends outright, whatever the wording around them.
+
+## Permission grants: allow once, or always
+
+A rule that only ever says no is safe and unusable: the person who owns the machine eventually needs
+to move a file into a folder Dobot did not put on the allowlist. So a **grantable** policy refusal
+(`path_outside_sandbox` — the target is outside `SANDBOX_ALLOWED_PATHS`) does not end the task. It
+becomes an approval carrying a `grant` block, and the card offers two answers:
+
+| Answer | What is stored | Lifetime |
+| --- | --- | --- |
+| **Allow once** | an in-memory grant for the folder roots of *this* attempt | 15 minutes, never survives a restart |
+| **Always allow** | a `PermissionGrant` document (`grants` collection) | until you revoke it |
+
+Both are checked in the same two places, so a decision and its consequence can never disagree:
+the decision engine (`app/core/decision_engine.py`) before a step is authorised, and the action
+firewall's `check_path` (`app/agents/sandbox.py`) when the tool actually touches the path. Coverage
+is per folder — a grant for `D:/photos` says nothing about `D:/mail` — and a grant is only honoured
+when **every** path of the action is covered, because half a move being permitted is worse than
+asking again.
+
+What is **never** grantable, whatever the user answers: the file guard (credential locations),
+`system_paths_read_only`, `destructive_command_blocked`, `shell_evasion_blocked` and
+`no_credentials_in_command`. The sandbox checks `is_forbidden_write` and protected filenames
+*before* it consults grants, so even a grant covering `C:/Windows` cannot write there.
+
+Management lives in two places: the approval cards (question) and **Security → Granted permissions**
+(`GET /security/grants`, `DELETE /security/grants/{id}` — revoke makes the next action in that folder
+ask again). `once` grants appear there too while they are valid, with their expiry.
+
 ## Sandbox contract
 
 `app/agents/sandbox.py` is the only path from a tool to the OS when a sandbox provider is configured:
 
-- **filesystem** — every path is resolved and must fall inside `SANDBOX_ALLOWED_PATHS`
+- **filesystem** — every path is resolved and must fall inside `SANDBOX_ALLOWED_PATHS`, unless a
+  remembered permission (see *Permission grants*) covers that folder
 - **network** — every outbound host must match `SANDBOX_ALLOWED_NETWORK`
 - **process** — commands are checked against an allowlist and run with a hard timeout
 - **credentials** — the API keys live in the backend process; sandboxed execution receives

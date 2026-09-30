@@ -34,6 +34,7 @@ from app.memory.manager import build_memory_manager
 from app.memory.store import build_record_store
 from app.schemas import Region
 from app.security.approvals import ApprovalStore
+from app.security.grants import GrantStore
 from app.security.interceptors import Interceptors, build_interceptors
 from app.security.policies import MUTATING_TOOLS
 from app.security.risk import TOOL_RISK_FLOORS
@@ -79,6 +80,8 @@ class Services:
     interceptors: Interceptors
     consolidator: Consolidator | None
     voice: Voice
+    #: Remembered permissions (allow once / always allow) shared by decision engine and sandbox.
+    grants: GrantStore
     orchestrator: Any = None
     extras: dict[str, Any] = field(default_factory=dict)
     _started: bool = False
@@ -175,6 +178,7 @@ class Services:
             "require_write_approval": self.settings.require_write_approval,
             "execution_mode": self.resolved_mode(),
             "protected_paths": self.settings.protected_path_list,
+            "grants": self.grants.summary(),
             "skill_scan": {
                 "mode": self.settings.skill_scan_mode,
                 "flagged": self.skills.flagged_names(),
@@ -331,7 +335,9 @@ async def build_services(settings: Settings | None = None, *, bus: EventBus | No
     memory = build_memory_manager(store, bus)
     skills = SkillsLibrary(directory=settings.skills_dir)
     skills.load()
-    sandbox = build_sandbox(settings)
+    grants = GrantStore(store, bus)
+    await grants.load()
+    sandbox = build_sandbox(settings, grants=grants)
     runtime = build_runtime(settings)
     reasoner = build_reasoner(settings)
     tavily = TavilyClient(settings)
@@ -339,7 +345,7 @@ async def build_services(settings: Settings | None = None, *, bus: EventBus | No
     research = ResearchAgent(tavily=tavily, reasoner=reasoner, bus=bus, settings=settings)
     registry = default_registry()
     tokenjuice = build_tokenjuice(settings)
-    decision = DecisionEngine(settings=settings, bus=bus)
+    decision = DecisionEngine(settings=settings, bus=bus, grants=grants)
     planner = Planner(
         reasoner=reasoner,
         registry=registry,
@@ -391,6 +397,7 @@ async def build_services(settings: Settings | None = None, *, bus: EventBus | No
         canonical=canonical,
         identity=identity,
         interceptors=build_interceptors(settings),
+        grants=grants,
         consolidator=build_consolidator(
             memory=memory,
             canonical=canonical,

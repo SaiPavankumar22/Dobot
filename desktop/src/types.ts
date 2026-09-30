@@ -130,6 +130,25 @@ export interface ApprovalRecord {
   created_at: string;
 }
 
+/** A restricted scope the user granted: payload.grant on an approval, or a stored permission. */
+export interface GrantInfo {
+  policy: string;
+  roots: string[];
+  reason?: string;
+}
+
+/** A remembered permission ("always allow"), listed and revocable on the Security page. */
+export interface PermissionGrant {
+  id: string;
+  policy: string;
+  roots: string[];
+  description: string;
+  kind: "once" | "lifetime";
+  created_at: string;
+  expires_at: string | null;
+  source: string;
+}
+
 export interface TaskStepRecord {
   id: string;
   sequence: number;

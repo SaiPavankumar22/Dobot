@@ -41,6 +41,7 @@ class ApprovalStore:
         description: str = "",
         preview: list[str] | None = None,
         reasons: list[str] | None = None,
+        grant: dict | None = None,
     ) -> ApprovalRecord:
         payload = {
             "tool": action.tool,
@@ -48,6 +49,10 @@ class ApprovalStore:
             "expected": action.expected,
             "reasons": reasons or [],
         }
+        if grant:
+            # The step was refused by a grantable policy: this is what lets the card offer
+            # "allow once" vs "always allow" instead of a bare approve/reject.
+            payload["grant"] = grant
         record = ApprovalRecord(
             task_id=task_id,
             step_id=step_id,

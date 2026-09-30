@@ -71,6 +71,59 @@ def test_credentials_in_command_are_blocked(policy_ctx: PolicyContext) -> None:
     assert engine.combine(outcomes) is Verdict.BLOCK
 
 
+def test_credential_shapes_are_still_refused(policy_ctx: PolicyContext) -> None:
+    """The shapes that *carry* a credential: assignment, flag, environment expansion, key file."""
+    engine = PolicyEngine()
+    refused = [
+        "export API_KEY=abcdef123456",
+        "mysql --password hunter2 mydb",
+        "echo $AWS_SECRET_ACCESS_KEY",
+        'curl -H "Authorization: Bearer abcdef1234567890" https://x',
+    ]
+    for command in refused:
+        action = ActionSpec(tool="terminal_run", params={"command": command})
+        assert engine.combine(engine.evaluate(action, policy_ctx)) is Verdict.BLOCK, command
+
+
+def test_mentioning_a_credential_word_is_not_refused(policy_ctx: PolicyContext) -> None:
+    """Over-restriction, fixed: the bare word in ordinary work is not a credential being handled.
+
+    A rule that refuses `grep password app.py` trains the user to approve without reading, which is
+    the opposite of what an approval gate is for.
+    """
+    engine = PolicyEngine()
+    ordinary = [
+        "grep password config.yaml",
+        "type passwords.txt",
+        "git log --grep 'rotate secret' --oneline",
+        "rg -i token src/",
+        "cat notes/api-keys.md",
+    ]
+    for command in ordinary:
+        action = ActionSpec(tool="terminal_run", params={"command": command})
+        assert engine.combine(engine.evaluate(action, policy_ctx)) is not Verdict.BLOCK, command
+
+
+def test_free_text_credential_mention_is_not_critical() -> None:
+    risk, _ = classify(ActionSpec(tool="terminal_run", params={"command": "grep password app.py"}))
+    assert risk is not RiskLevel.CRITICAL
+
+
+def test_handled_credential_value_is_critical() -> None:
+    risk, reasons = classify(
+        ActionSpec(tool="fs_write", params={"path": "~/notes.md", "content": "api_key=abcdef123456"})
+    )
+    assert risk is RiskLevel.CRITICAL
+    assert any("credential" in reason for reason in reasons)
+
+
+def test_credential_file_path_is_critical() -> None:
+    """A path that *names* a credential store keeps the human gate even with no value attached."""
+    for path in ("~/secrets.json", "~/passwords.txt", "~/credentials.json"):
+        risk, _ = classify(ActionSpec(tool="fs_write", params={"path": path, "content": "{}"}))
+        assert risk is RiskLevel.CRITICAL, path
+
+
 def test_path_outside_sandbox_is_blocked(policy_ctx: PolicyContext) -> None:
     engine = PolicyEngine()
     outside = str(policy_ctx.allowed_paths[0].parent / "elsewhere" / "file.txt")

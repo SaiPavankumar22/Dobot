@@ -19,7 +19,9 @@ export function Approvals() {
       <h1>Approvals</h1>
       <p className="subtle">
         Sensitive actions stop here. HIGH and CRITICAL actions never run without your decision, and the
-        CRITICAL ones cannot be auto-approved at all.
+        CRITICAL ones cannot be auto-approved at all. When Dobot asks about a folder outside its
+        workspace you can allow it <strong>once</strong> or <strong>always</strong> — remembered
+        permissions live on the Security page.
       </p>
 
       <h2>Waiting on you</h2>

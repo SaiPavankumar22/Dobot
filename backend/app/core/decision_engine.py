@@ -12,13 +12,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from app.config import Settings, get_settings
 from app.events import EventBus, EventType, get_event_bus
 from app.logging_setup import get_logger
 from app.schemas import ActionSpec, Decision, Plan, PlanStep, RiskLevel, Verdict
+from app.security.grants import GrantStore
 from app.security.jev import JEVEngine, JEVSignals, build_jev_engine
-from app.security.policies import PolicyContext, PolicyEngine
+from app.security.policies import PolicyContext, PolicyEngine, outside_roots
 from app.security.risk import classify, requires_approval
 
 logger = get_logger(__name__)
@@ -66,11 +68,15 @@ class DecisionEngine:
         policy_engine: PolicyEngine | None = None,
         jev: JEVEngine | None = None,
         bus: EventBus | None = None,
+        grants: GrantStore | None = None,
     ) -> None:
         self.settings = settings or get_settings()
         self.policies = policy_engine or PolicyEngine()
         self.jev = jev or build_jev_engine(self.settings)
         self.bus = bus or get_event_bus()
+        #: Remembered permissions (once / always). Defaults to an empty in-memory store so the
+        #: engine works standalone; the service graph injects the persistent one.
+        self.grants = grants or GrantStore()
 
     # ------------------------------------------------------------------ context
 
@@ -124,6 +130,37 @@ class DecisionEngine:
             if outcome.verdict is Verdict.BLOCK and not blocked_reason:
                 blocked_reason = outcome.reason
 
+        # A refusal the user is allowed to grant becomes a question instead of a wall. Only
+        # policies marked grantable get this far: the file guard, destructive commands and shell
+        # evasion are not grantable, so their BLOCK never reaches this branch.
+        grant_info: dict[str, Any] | None = None
+        granted = None
+        if verdict is Verdict.BLOCK:
+            blocking = [outcome for outcome in outcomes if outcome.verdict is Verdict.BLOCK]
+            roots = outside_roots(action, ctx) if blocking and all(
+                outcome.grantable for outcome in blocking
+            ) else []
+            if roots:
+                granted = self.grants.covering(roots, blocking[0].policy)
+                blocked_reason = ""
+                if granted is not None:
+                    verdict = Verdict.ALLOW
+                    reasons.append(
+                        f"permission already granted ({granted.kind}) for: "
+                        f"{', '.join(granted.roots)}"
+                    )
+                else:
+                    verdict = Verdict.APPROVAL
+                    grant_info = {
+                        "policy": blocking[0].policy,
+                        "roots": roots,
+                        "reason": blocking[0].reason,
+                    }
+                    reasons.append(
+                        f"{blocking[0].policy}: outside the allowed roots — you can allow this "
+                        "once or always"
+                    )
+
         jev_notes: list[str] = []
         if verdict is not Verdict.BLOCK and self.jev.enabled:
             advice = await self.jev.advise(action, signals, base_risk=risk)
@@ -145,11 +182,18 @@ class DecisionEngine:
             reasons.append("CRITICAL actions are never executed automatically")
 
         # The mode sets the approval threshold. Policies and JEV above can only add to it — nothing
-        # here can lower it, and HIGH/CRITICAL stay gated in every mode.
+        # here can lower it, and HIGH/CRITICAL stay gated in every mode. A remembered permission is
+        # the one deliberate exception: the user already answered for this exact scope, so asking
+        # again would be theatre (CRITICAL still wins — it is never auto-approved).
         threshold = self.approval_threshold(ctx.mode)
         if verdict is Verdict.ALLOW and (risk.rank >= threshold.rank or requires_approval(risk)):
-            verdict = Verdict.APPROVAL
-            reasons.append(f"{risk.value} actions require approval ({ctx.mode} mode)")
+            if granted is not None and risk is not RiskLevel.CRITICAL:
+                reasons.append(
+                    f"permission for this scope is already granted — not asking again ({risk.value})"
+                )
+            else:
+                verdict = Verdict.APPROVAL
+                reasons.append(f"{risk.value} actions require approval ({ctx.mode} mode)")
 
         if verdict is Verdict.BLOCK and ctx.shadow_mode is False and ctx.autonomy == "autonomous":
             block_notes = [reason for reason in reasons if ": " in reason]
@@ -164,6 +208,7 @@ class DecisionEngine:
             jev_notes=jev_notes,
             requires_approval=verdict is Verdict.APPROVAL,
             blocked_reason=blocked_reason,
+            grant=grant_info,
         )
 
     async def evaluate_plan(

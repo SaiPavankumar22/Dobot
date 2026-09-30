@@ -29,6 +29,7 @@ COLLECTIONS = (
     "settings",
     "canonical",
     "runs",
+    "grants",
 )
 
 

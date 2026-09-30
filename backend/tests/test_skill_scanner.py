@@ -57,6 +57,10 @@ def test_every_shipped_skill_survives_the_scanner() -> None:
         "second_brain",
         "autonomous_goal",
         "decision_journal",
+        "ci_autopsy",
+        "release_checklist",
+        "action_items",
+        "disk_report",
     }
 
 

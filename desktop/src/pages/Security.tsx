@@ -3,7 +3,7 @@ import { Switch } from "../components/Switch";
 import { api } from "../services/api";
 import { native } from "../services/native";
 import { useDobot } from "../store/dobotStore";
-import type { PermissionMatrix } from "../types";
+import type { PermissionGrant, PermissionMatrix } from "../types";
 
 interface SecurityStatus {
   sandbox: { provider: string; isolation: string; degraded: boolean; details: Record<string, unknown> };
@@ -34,11 +34,20 @@ export function Security() {
   const [autostart, setAutostart] = useState(false);
 
   const [matrix, setMatrix] = useState<PermissionMatrix | null>(null);
+  const [grants, setGrants] = useState<PermissionGrant[]>([]);
+
+  const refreshGrants = () => {
+    void api
+      .grants()
+      .then((payload) => setGrants(payload.grants ?? []))
+      .catch(() => setGrants([]));
+  };
 
   useEffect(() => {
     void api.security().then((payload) => setStatus(payload as unknown as SecurityStatus));
     void api.permissions().then(setMatrix).catch(() => setMatrix(null));
     void native.autostartEnabled().then(setAutostart);
+    refreshGrants();
   }, []);
 
   return (
@@ -149,6 +158,50 @@ export function Security() {
           disclosure even though it changes nothing, so the guard covers reads.
         </div>
         <div className="mono">{(status?.protected_paths ?? []).join("  ·  ") || "—"}</div>
+      </div>
+
+      <h2>Granted permissions</h2>
+      <div className="notice">
+        <div className="subtle" style={{ marginBottom: 6 }}>
+          When Dobot asks to work outside its workspace, <strong>always allow</strong> lands here and
+          is remembered per folder; <strong>allow once</strong> never persists — it expires with the
+          attempt. Revoking a permission means the next action in that folder asks again. Credentials,
+          system folders and destructive commands are never grantable at all.
+        </div>
+        {grants.length === 0 ? (
+          <div className="mono">No remembered permissions.</div>
+        ) : (
+          grants.map((grant) => (
+            <div
+              key={grant.id}
+              className="row"
+              style={{ justifyContent: "space-between", padding: "6px 0", gap: 12 }}
+            >
+              <span style={{ minWidth: 0 }}>
+                <span className={`pill ${grant.kind === "lifetime" ? "pill--auto" : "pill--ask"}`}>
+                  {grant.kind === "lifetime" ? "always" : "once"}
+                </span>{" "}
+                <span className="mono">{grant.roots.join(", ")}</span>
+                <div className="subtle" style={{ marginTop: 2 }}>
+                  {grant.policy}
+                  {grant.expires_at
+                    ? ` · expires ${new Date(grant.expires_at).toLocaleString()}`
+                    : grant.kind === "lifetime"
+                      ? " · remembered until you revoke it"
+                      : ""}
+                </div>
+              </span>
+              <button
+                className="ghost"
+                onClick={() => {
+                  void api.revokeGrant(grant.id).then(refreshGrants).catch(() => undefined);
+                }}
+              >
+                Revoke
+              </button>
+            </div>
+          ))
+        )}
       </div>
 
       <h2>Skill scanner</h2>

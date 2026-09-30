@@ -58,14 +58,52 @@ TOOL_RISK_FLOORS: dict[str, RiskLevel] = {
 _CRITICAL_PATTERNS: list[tuple[str, str]] = [
     (r"(?i)\b(purchase|buy now|checkout|place order|pay\b|payment|wire transfer|bitcoin|invoice)\b",
      "action looks financial"),
-    (r"(?i)\b(password|passwd|api[_-]?key|secret|token|credential|ssh key|private key)",
-     "action touches credentials"),
-    (r"(?i)\.env\b", "action touches the secret file"),
+    # The credential rule is *shape*-based (see CREDENTIAL_SHAPE): a bare "password" in a grep
+    # pattern or a file called secret_santa.txt is ordinary work, and gating it every time trains
+    # the user to approve without reading.
     (r"(?i)\b(delete (my )?account|close account|change (billing|2fa|two-factor)|recovery codes?)\b",
      "action changes account security"),
     (r"(?i)\b(secure erase|shred|wipe (disk|drive)|format [a-z]:|diskpart|mkfs|cipher /w)\b",
      "irreversible destruction"),
 ]
+
+#: A credential being *handled*, not merely named: an assignment, a flag with a value, a shell
+#: environment expansion, an authorization header, or a literal key. This one pattern is shared by
+#: the risk classifier and the policy engine so the two can never disagree about what counts.
+#:
+#: What it deliberately does not match: `grep password app.py`, `type passwords.txt`, a file called
+#: `secret_santa.txt`, a commit message about rotating tokens. Those are ordinary work; a rule that
+#: blocks them makes every real prompt look like noise.
+CREDENTIAL_WORD = (
+    r"(?:password|passwd|pwd|api[_-]?key|access[_-]?key|secret|token|credentials?|"
+    r"private[_-]?key|ssh[_-]?key|recovery codes?|2fa)"
+)
+CREDENTIAL_SHAPE = re.compile(
+    r"(?i)"
+    # key=value / key: value — `api_key=abcdef123456`, `Authorization: Bearer …`
+    + CREDENTIAL_WORD + r"\s*[=:]\s*\S{4,}"
+    # --password hunter2 / -token xyz (flag with a value)
+    + r"|--(?:password|passwd|pwd|token|secret|api[_-]?key|credential|private[_-]?key)\s+\S{4,}"
+    # $API_KEY, ${MY_PASSWORD}, %AWS_SECRET_ACCESS_KEY% — the value comes from the environment
+    + r"|\$\{?(?:[A-Za-z0-9_]+_)?" + CREDENTIAL_WORD + r"(?:_[A-Za-z0-9]+)?\}?"
+    + r"|%\{?(?:[A-Za-z0-9_]+_)?" + CREDENTIAL_WORD + r"(?:_[A-Za-z0-9]+)?\}?%"
+    # header tokens and well-known key shapes
+    + r"|bearer\s+[a-z0-9\-._~+/]{12,}"
+    + r"|\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}\b"
+    + r"|\bAKIA[0-9A-Z]{16}\b"
+    + r"|\bsk-[A-Za-z0-9]{20,}\b"
+    + r"|-----BEGIN [A-Z ]*PRIVATE KEY-----"
+)
+
+#: Credential-*ish file names. Checked only against path arguments: a path that names a credential
+#: store deserves the human gate even without a value attached (`secrets.json`, `passwords.txt`).
+CREDENTIAL_FILE_NAME = re.compile(
+    r"(?i)(\.env\b|id_(rsa|dsa|ecdsa|ed25519)|credentials?\.(json|txt|csv|ya?ml)|"
+    r"secrets?\.(json|txt|ya?ml)|passwords?\.(json|txt|csv|ya?ml)|keystore|\.pem$|\.pfx$)"
+)
+
+_PATH_KEYS_FOR_CREDENTIALS = ("path", "target", "destination", "source", "cwd", "directory", "paths")
+
 
 _HIGH_PATTERNS: list[tuple[str, str]] = [
     (r"(?i)\b(delete|remove|unlink|erase|rm\b|rmdir|del\b|trash)\b", "action deletes data"),
@@ -123,6 +161,24 @@ def classify(action: ActionSpec) -> tuple[RiskLevel, list[str]]:
         if re.search(pattern, text):
             risk = _escalate(risk, RiskLevel.MEDIUM)
             reasons.append(reason)
+
+    # Credentials: a handled value anywhere (shape), or a credential file named by a path argument.
+    # Free text that merely *mentions* a credential stays at its declared floor.
+    if CREDENTIAL_SHAPE.search(text):
+        risk = _escalate(risk, RiskLevel.CRITICAL)
+        reasons.append("action handles a credential value")
+    else:
+        path_text = " ".join(
+            str(action.params.get(key))
+            for key in _PATH_KEYS_FOR_CREDENTIALS
+            if action.params.get(key) is not None
+        )
+        if re.search(r"(?i)\.env\b", path_text):
+            risk = _escalate(risk, RiskLevel.CRITICAL)
+            reasons.append("action touches the secret file")
+        elif CREDENTIAL_FILE_NAME.search(path_text):
+            risk = _escalate(risk, RiskLevel.CRITICAL)
+            reasons.append("path names a credential file")
 
     for key in action.params:
         if _CREDENTIAL_KEYS.search(str(key)):

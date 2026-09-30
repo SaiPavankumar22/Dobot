@@ -1,0 +1,24 @@
+{
+  "steps": [
+    {
+      "tool": "terminal_run",
+      "params": { "command": "git status --short" },
+      "description": "Gate zero: is the working tree clean?"
+    },
+    {
+      "tool": "terminal_run",
+      "params": { "command": "git log --oneline -15" },
+      "description": "Summarise what is going out since the last tag"
+    },
+    {
+      "tool": "terminal_run",
+      "params": { "command": "git tag --sort=-v:refname" },
+      "description": "Identify the previous version from the tag list"
+    },
+    {
+      "tool": "terminal_run",
+      "params": { "command": "git diff --stat" },
+      "description": "See the shape of any uncommitted work before calling the tree shippable"
+    }
+  ]
+}

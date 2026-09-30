@@ -28,6 +28,7 @@ import httpx
 from app.config import Settings, get_settings
 from app.core.killswitch import CancellationToken
 from app.logging_setup import get_logger
+from app.security.policies import is_forbidden_write, is_protected_name
 
 logger = get_logger(__name__)
 
@@ -85,10 +86,14 @@ class LocalSandbox:
 
     name = "action-firewall"
 
-    def __init__(self, settings: Settings) -> None:
+    def __init__(self, settings: Settings, grants: Any = None) -> None:
         self.settings = settings
         self.allowed_paths = list(settings.allowed_paths) or [Path.home().resolve()]
         self.allowed_hosts = settings.allowed_hosts
+        #: Remembered user permissions (GrantStore). A path outside the roots is still refused
+        #: unless the user granted that scope — and even a grant never unlocks a system or
+        #: credential location, which this firewall checks independently.
+        self.grants = grants
 
     async def check_path(self, raw: str, *, write: bool = False) -> Path:
         path = Path(raw).expanduser()
@@ -96,12 +101,20 @@ class LocalSandbox:
             resolved = path.resolve(strict=False)
         except OSError as exc:
             raise SandboxDenied(f"cannot resolve path {raw}: {exc}") from exc
-        if not any(_is_inside(resolved, root) for root in self.allowed_paths):
-            raise SandboxDenied(
-                f"{resolved} is outside the allowed roots "
-                f"({', '.join(str(root) for root in self.allowed_paths)})"
-            )
-        return resolved
+        if any(_is_inside(resolved, root) for root in self.allowed_paths):
+            return resolved
+        # Outside the workspace: only an explicit, remembered permission can open this door, and
+        # only for folders the user approved — never for system directories or credential files.
+        if write and is_forbidden_write(resolved):
+            raise SandboxDenied(f"{resolved} is a system location and is never writable")
+        if is_protected_name(resolved.name):
+            raise SandboxDenied(f"{resolved.name} is a protected credential file")
+        if self.grants is not None and self.grants.allows_path(resolved):
+            return resolved
+        raise SandboxDenied(
+            f"{resolved} is outside the allowed roots "
+            f"({', '.join(str(root) for root in self.allowed_paths)})"
+        )
 
     async def check_host(self, host: str) -> str:
         host = (host or "").lower().strip()
@@ -362,9 +375,9 @@ def _safe_env() -> dict[str, str]:
     return env
 
 
-def build_sandbox(settings: Settings | None = None) -> FallbackSandbox:
+def build_sandbox(settings: Settings | None = None, grants: Any = None) -> FallbackSandbox:
     settings = settings or get_settings()
-    local = LocalSandbox(settings)
+    local = LocalSandbox(settings, grants=grants)
     if settings.sandbox_provider == "nemoclaw":
         return FallbackSandbox(NemoClawSandbox(settings, local), local, settings)
     return FallbackSandbox(local, local, settings)

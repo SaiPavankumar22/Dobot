@@ -176,6 +176,10 @@ class Decision(BaseModel):
     jev_notes: list[str] = Field(default_factory=list)
     requires_approval: bool = False
     blocked_reason: str = ""
+    #: Set when a *grantable* policy would have blocked this step and the user can instead grant
+    #: permission: the scope of the restriction (folders), the policy, and why it fired. The approval
+    #: card renders it as "allow once" vs "always allow".
+    grant: dict[str, Any] | None = None
 
 
 class CheckResult(BaseModel):
@@ -395,6 +399,33 @@ class ApprovalRecord(BaseModel):
     decision_note: str = ""
 
 
+class PermissionGrant(BaseModel):
+    """A remembered permission for a restricted scope: the user said yes, once or for good.
+
+    ``kind="once"`` grants live in memory only and expire (they exist so the *current* attempt can
+    run without being asked again mid-flight); ``kind="lifetime"`` grants persist and are revocable
+    from the Security page. A grant never covers a credential location or a system directory — those
+    policies are not grantable, so no grant can be produced for them.
+    """
+
+    id: str = Field(default_factory=lambda: new_id("grant"))
+    policy: str
+    #: Folder roots the permission covers; an action is covered when every path it touches sits
+    #: inside one of these roots.
+    roots: list[str] = Field(default_factory=list)
+    description: str = ""
+    kind: str = "lifetime"  # once | lifetime
+    created_at: datetime = Field(default_factory=utcnow)
+    expires_at: datetime | None = None
+    task_id: str = ""
+    #: The approval that produced it, so the audit trail joins up.
+    source: str = ""
+
+    @property
+    def expired(self) -> bool:
+        return self.expires_at is not None and self.expires_at <= utcnow()
+
+
 class ActivityRecord(BaseModel):
     id: str = Field(default_factory=lambda: new_id("log"))
     task_id: str = ""
@@ -517,6 +548,9 @@ class ApprovalDecisionRequest(BaseModel):
     decision: Literal["approve", "reject", "edit"]
     note: str = ""
     edits: dict[str, Any] | None = None
+    #: For approvals that carry a grant (a restricted scope): "once" runs this attempt only,
+    #: "lifetime" stores the permission so the same scope stops asking.
+    scope: Literal["once", "lifetime"] = "once"
 
 
 class MemoryCreateRequest(BaseModel):

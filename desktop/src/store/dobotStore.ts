@@ -114,7 +114,12 @@ interface DobotStore {
   refreshDashboard: () => Promise<void>;
   refreshProviders: () => Promise<void>;
   refreshSecurity: () => Promise<void>;
-  decide: (id: string, decision: "approve" | "reject", note?: string) => Promise<void>;
+  decide: (
+    id: string,
+    decision: "approve" | "reject",
+    note?: string,
+    scope?: "once" | "lifetime",
+  ) => Promise<void>;
   kill: (taskId?: string) => Promise<void>;
   setShadowMode: (on: boolean) => Promise<void>;
   setMode: (mode: ExecutionMode) => void;
@@ -388,9 +393,9 @@ export const useDobot = create<DobotStore>((set, get) => ({
     }
   },
 
-  decide: async (id, decision, note = "") => {
+  decide: async (id, decision, note = "", scope = "once") => {
     try {
-      const response = await api.decide(id, decision, note);
+      const response = await api.decide(id, decision, note, undefined, scope);
       set((state) => ({
         messages: patchMessage(state.messages, response.task_id, {
           text: response.answer,

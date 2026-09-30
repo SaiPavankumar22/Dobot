@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 
 from app.api.deps import ServicesDep
 from app.core.killswitch import get_kill_switch
@@ -19,6 +19,24 @@ async def status(services: ServicesDep) -> dict:
 @router.get("/policies")
 async def policies(services: ServicesDep) -> dict:
     return {"policies": services.decision.policies.summarise()}
+
+
+@router.get("/grants")
+async def grants(services: ServicesDep) -> dict:
+    """Permissions the user granted for restricted scopes (allow once / always allow)."""
+    return {"grants": services.grants.summary()}
+
+
+@router.delete("/grants/{grant_id}")
+async def revoke_grant(grant_id: str, services: ServicesDep) -> dict:
+    """Revoke a remembered permission; the next action in that scope asks again."""
+    revoked = await services.grants.revoke(grant_id)
+    if not revoked:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "GRANT_NOT_FOUND", "message": grant_id, "recoverable": False},
+        )
+    return {"revoked": grant_id, "grants": services.grants.summary()}
 
 
 @router.get("/permissions")

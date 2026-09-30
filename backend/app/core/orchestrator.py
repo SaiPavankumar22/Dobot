@@ -29,6 +29,7 @@ from app.events import EventType
 from app.logging_setup import get_logger
 from app.schemas import (
     ActivityRecord,
+    ApprovalStatus,
     ChatRequest,
     ChatResponse,
     ContextBundle,
@@ -494,6 +495,7 @@ class Orchestrator:
                     description=step.action.description or f"{step.action.tool} requires confirmation",
                     preview=await self._preview_step(step, ctx),
                     reasons=decision.reasons,
+                    grant=decision.grant,
                 )
                 step.status = StepStatus.WAITING_APPROVAL
                 step.approval_id = approval.id
@@ -508,6 +510,14 @@ class Orchestrator:
                     f"I need your approval before continuing: {approval.description}\n"
                     + "\n".join(f"• {line}" for line in approval.preview)
                 )
+                if decision.grant:
+                    roots = ", ".join(str(root) for root in decision.grant.get("roots", []))
+                    task.answer += (
+                        "\nThis target is outside my usual workspace ("
+                        + roots
+                        + "), so you can allow it once or always allow this folder — "
+                        "\"always\" is remembered and revocable on the Security page."
+                    )
                 await s.journal.append(
                     task.id,
                     "approval_required",
@@ -663,7 +673,13 @@ class Orchestrator:
     # ------------------------------------------------------------------ resume
 
     async def handle_approval(
-        self, approval_id: str, decision: str, *, note: str = "", edits: dict[str, Any] | None = None
+        self,
+        approval_id: str,
+        decision: str,
+        *,
+        note: str = "",
+        edits: dict[str, Any] | None = None,
+        scope: str = "once",
     ) -> ChatResponse | None:
         s = self.s
         approval = await s.approvals.get(approval_id)
@@ -672,6 +688,22 @@ class Orchestrator:
         record = await s.approvals.resolve(approval_id, decision, note=note, edits=edits)
         if record is None:
             return None
+
+        # A grant-carrying approval is a permission question, not just a yes/no: remember the
+        # answer at the scope the user chose (this attempt only, or for good).
+        grant_info = (record.payload or {}).get("grant")
+        if record.status is ApprovalStatus.APPROVED and isinstance(grant_info, dict):
+            try:
+                await s.grants.add(
+                    policy=str(grant_info.get("policy") or "path_outside_sandbox"),
+                    roots=[str(root) for root in (grant_info.get("roots") or [])],
+                    description=str(grant_info.get("description") or ""),
+                    scope=scope,
+                    task_id=record.task_id,
+                    source=record.id,
+                )
+            except Exception as exc:  # noqa: BLE001 - remembering must not lose the approval
+                logger.warning("could not store permission grant (%s)", exc)
 
         doc = await s.store.get("tasks", record.task_id)
         if not doc:

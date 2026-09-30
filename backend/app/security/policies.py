@@ -14,6 +14,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from app.schemas import ActionSpec, RiskLevel, Verdict
+from app.security.risk import CREDENTIAL_SHAPE
 
 # Paths that are never writable, no matter who asks.
 FORBIDDEN_WRITE_PREFIXES = (
@@ -155,6 +156,10 @@ class PolicyOutcome:
     verdict: Verdict
     reason: str
     escalate_to: RiskLevel | None = None
+    #: True when this refusal may be turned into a question: the user can grant the scope once or
+    #: for good instead of being told no. Only policies that guard a *location* the user owns are
+    #: grantable — credential stores, destructive commands and system directories never are.
+    grantable: bool = False
 
 
 @dataclass
@@ -166,6 +171,8 @@ class Policy:
     predicate: Callable[[ActionSpec, PolicyContext], bool] | None = None
     escalate_to: RiskLevel | None = None
     description: str = ""
+    #: Refusals the user may override with a one-time or lifetime permission (see grants.py).
+    grantable: bool = False
 
     def matches(self, action: ActionSpec, ctx: PolicyContext) -> bool:
         if self.tools and action.tool not in self.tools:
@@ -255,6 +262,31 @@ def _count(action: ActionSpec) -> int:
 
 def _name_is_protected(name: str) -> bool:
     return any(re.match(pattern, name) for pattern in PROTECTED_NAME_PATTERNS)
+
+
+def is_protected_name(name: str) -> bool:
+    """Public wrapper: the sandbox uses this so a grant can never unlock a credential file."""
+    return _name_is_protected(name)
+
+
+def outside_roots(action: ActionSpec, ctx: PolicyContext) -> list[str]:
+    """Folder roots this action touches *outside* the allowed workspace — the scope to ask about.
+
+    A file resolves to its containing folder, a directory to itself, so a grant means "this folder",
+    never "the whole drive".
+    """
+    if not ctx.allowed_paths:
+        return []
+    roots: list[str] = []
+    for raw in _all_paths(action):
+        path = resolve_path(raw)
+        if is_inside(path, ctx.allowed_paths):
+            continue
+        root = path if path.is_dir() else path.parent
+        text = root.as_posix()
+        if text not in roots:
+            roots.append(text)
+    return roots
 
 
 def _touches_protected(action: ActionSpec, ctx: PolicyContext) -> bool:
@@ -390,19 +422,22 @@ BUILTIN_POLICIES: list[Policy] = [
     Policy(
         name="no_credentials_in_command",
         verdict=Verdict.BLOCK,
-        reason="Refusing to pass credentials through a shell/automation command",
+        reason="Refusing to pass a credential value through a shell/automation command",
         tools=("terminal_run", "computer_type", "browser_type", "message_send", "email_send"),
-        predicate=lambda action, _ctx: bool(
-            re.search(
-                r"(?i)(password|passwd|api[_-]?key|secret|bearer\s+[a-z0-9\-\._~\+/]{12,}|private[_-]?key)",
-                _action_text(action),
-            )
+        predicate=lambda action, _ctx: bool(CREDENTIAL_SHAPE.search(_action_text(action))),
+        description=(
+            "Matches a credential *shape* — an assignment, a flag with a value, an environment "
+            "expansion, a bearer token, a literal key — not the bare word. `grep password app.py` "
+            "and a file named secret_santa.txt are ordinary work."
         ),
     ),
     Policy(
         name="path_outside_sandbox",
         verdict=Verdict.BLOCK,
-        reason="Target path is outside the allowed workspace roots",
+        reason=(
+            "Target path is outside the allowed workspace roots — you can allow it once "
+            "or always"
+        ),
         tools=("fs_write", "fs_delete", "fs_move", "fs_mkdir", "fs_read", "fs_list", "terminal_run"),
         predicate=lambda action, ctx: bool(
             ctx.allowed_paths
@@ -410,6 +445,11 @@ BUILTIN_POLICIES: list[Policy] = [
                 not is_inside(resolve_path(raw), ctx.allowed_paths)
                 for raw in _all_paths(action)
             )
+        ),
+        grantable=True,
+        description=(
+            "The user's own files are not Dobot's to forbid: a refusal here becomes a permission "
+            "question (once / always), and the answer is remembered per folder."
         ),
     ),
     Policy(
@@ -437,9 +477,9 @@ BUILTIN_POLICIES: list[Policy] = [
         tools=("credential_change", "fs_write", "terminal_run"),
         predicate=lambda action, _ctx: bool(
             re.search(
-                r"(?i)(\.env\b|id_rsa|credentials|keystore|\.ssh|password|api[_-]?key|2fa|recovery code)",
-                _action_text(action),
+                r"(?i)(\.env\b|id_rsa|keystore|\.ssh|2fa|recovery code)", _action_text(action)
             )
+            or CREDENTIAL_SHAPE.search(_action_text(action))
         ),
         escalate_to=RiskLevel.CRITICAL,
     ),
@@ -519,6 +559,7 @@ class PolicyEngine:
                         verdict=policy.verdict,
                         reason=policy.reason,
                         escalate_to=policy.escalate_to,
+                        grantable=policy.grantable,
                     )
                 )
         if not outcomes:

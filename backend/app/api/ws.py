@@ -79,10 +79,12 @@ async def event_stream(websocket: WebSocket) -> None:
                     killed = await services.orchestrator.kill(message.get("task_id"))
                     await websocket.send_json({"type": "kill_ack", "killed": killed})
                 elif kind == "approval":
+                    scope = str(message.get("scope", "once"))
                     await services.orchestrator.handle_approval(
                         str(message.get("approval_id", "")),
                         str(message.get("decision", "reject")),
                         note=str(message.get("note", "")),
+                        scope="lifetime" if scope == "lifetime" else "once",
                     )
                 elif kind == "status_request":
                     await websocket.send_json(
