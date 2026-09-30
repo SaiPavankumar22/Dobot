@@ -18,9 +18,10 @@ jobs:
         with:
           python-version: "3.11"
       - name: Install dependencies (lock-verified)
-        run: uv sync --locked
+        # pytest/ruff live in the `dev` extra, not the base dependency set.
+        run: uv sync --locked --extra dev
       - name: Run the test suite
-        run: uv run pytest -q
+        run: uv run --locked --extra dev pytest -q
 
   desktop:
     name: desktop (tsc + vite)
@@ -51,6 +52,6 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           python-version: "3.11"
-      - run: uv sync --locked
+      - run: uv sync --locked --extra dev
       # A blocked skill is invisible to the planner: shipping one silently disables a workflow.
-      - run: uv run pytest tests/test_skill_scanner.py -q
+      - run: uv run --locked --extra dev pytest tests/test_skill_scanner.py -q

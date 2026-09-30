@@ -128,6 +128,8 @@ export interface ApprovalRecord {
   preview: string[];
   status: "PENDING" | "APPROVED" | "REJECTED" | "EDITED" | "EXPIRED";
   created_at: string;
+  /** Note the user attached when they decided, if any. */
+  decision_note?: string;
 }
 
 /** A restricted scope the user granted: payload.grant on an approval, or a stored permission. */

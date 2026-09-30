@@ -1,8 +1,14 @@
 import { useEffect, useState } from "react";
 import { ActivityTimeline } from "../components/ActivityTimeline";
+import { Stats, Toolbar } from "../components/PageBits";
 import { api } from "../services/api";
 import { useDobot } from "../store/dobotStore";
 import type { ActivityRecord } from "../types";
+
+const VIEWS = [
+  { id: "timeline", label: "Timeline" },
+  { id: "debug", label: "Debug trace" },
+];
 
 export function Activity() {
   const events = useDobot((state) => state.events);
@@ -19,6 +25,8 @@ export function Activity() {
     return () => window.clearInterval(timer);
   }, [view]);
 
+  const errors = records.filter((record) => /fail|error|refus|block/i.test(record.message)).length;
+
   return (
     <>
       <h1>Activity</h1>
@@ -27,14 +35,25 @@ export function Activity() {
         parts that did not work.
       </p>
 
-      <div className="row">
-        <button className={view === "timeline" ? "primary" : ""} onClick={() => setView("timeline")}>
-          Timeline
-        </button>
-        <button className={view === "debug" ? "primary" : ""} onClick={() => setView("debug")}>
-          Debug trace
-        </button>
-      </div>
+      <Stats
+        items={[
+          { label: "Persisted events", value: records.length, hint: "last 200" },
+          { label: "Live this session", value: events.length },
+          { label: "Recorded failures", value: errors, tone: errors ? "warn" : undefined },
+          {
+            label: "View",
+            value: view === "timeline" ? "Timeline" : "Debug",
+            hint: view === "timeline" ? "readable log" : "raw stream",
+          },
+        ]}
+      />
+
+      <Toolbar
+        options={VIEWS}
+        active={view}
+        onActive={(id) => setView(id as "timeline" | "debug")}
+        count={view === "timeline" ? `showing ${Math.min(records.length, 80)} of ${records.length}` : `${trace.length} lines`}
+      />
 
       {view === "timeline" ? (
         <>
@@ -46,7 +65,10 @@ export function Activity() {
       ) : (
         <>
           <h2>Raw stream</h2>
-          <pre className="mono" style={{ background: "var(--bg-elevated)", padding: 12, borderRadius: 8, overflowX: "auto" }}>
+          <pre
+            className="mono"
+            style={{ background: "var(--bg-elevated)", padding: 12, borderRadius: 8, overflowX: "auto" }}
+          >
             {trace.join("\n") || "waiting for events…"}
           </pre>
         </>

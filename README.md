@@ -188,6 +188,13 @@ operations, reusable skills and scheduled workflows. Three runtimes are supporte
 **NemoClaw / OpenShell** is the controlled execution boundary: it keeps inference and MCP credentials
 outside the sandbox, applies network and filesystem policy, and manages the sandbox lifecycle.
 
+**Nebius Sandboxes (ConTree)** is that same boundary without a local daemon: with
+`SANDBOX_PROVIDER=nebius`, every `terminal_run` executes inside a VM-isolated cloud container whose
+filesystem persists across commands — the agent gets its own computer, on a machine where NemoClaw
+cannot run. It shares `NEBIUS_API_KEY` with the models and adds `NEBIUS_PROJECT_ID`; file tools still
+pass through the local action firewall, and an unreachable sandbox degrades visibly instead of
+pretending. See [`docs/security.md`](docs/security.md#the-nebius-sandbox-sandbox_providernebius).
+
 **Tavily** supplies the research capability: screen context or a request becomes search queries,
 sources are retrieved, and the answer comes back source-aware.
 
@@ -314,7 +321,7 @@ Dobot opens as a **chat window**. Turn on **Always on** in the header if you wan
 ### 4. Tests
 
 ```bash
-cd backend && uv run pytest -q      # 297 tests
+cd backend && uv run pytest -q      # 310 tests
 cd backend && uv run ruff check app tests
 cd desktop && npm run build          # tsc --noEmit + vite build
 ```
@@ -389,6 +396,11 @@ Local, loopback-bound, and designed for the desktop app.
 - **`REQUIRE_WRITE_APPROVAL=true` makes it stricter still** — every mutating tool (files, terminal,
   skills, GUI actions) stops for approval even at `MEDIUM` risk, while reads stay automatic.
 - **Paths, hosts and timeouts are enforced in-process** even when no sandbox is running.
+- **Isolation is a choice, and the UI never lies about which one is live.** Three execution backends
+  behind one interface: `local` (the in-process action firewall), `nemoclaw` (NemoClaw/OpenShell,
+  kernel-level) and `nebius` (a Nebius Sandboxes VM — VM-level isolation with no local daemon to
+  install). If the configured backend is unreachable, runs degrade to the firewall and the Security
+  page flips to `isolation: none` with the reason attached.
 - **Shadow mode** plans and previews everything and executes nothing — the safest way to try a
   dangerous-sounding request. **Ask mode** is the same guarantee per message.
 - **A file guard** keeps credential stores (`~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.kube`, `~/.netrc`,
@@ -424,7 +436,7 @@ backend/                 FastAPI gateway, orchestrator, decision engine, memory,
   app/tools/             filesystem · terminal · browser · screen · computer · apps · productivity
   app/api/               chat · screen · research · tasks · automations · approvals · memory
                          skills · settings · security · activity · websocket
-  tests/                 297 tests, no network required
+  tests/                 310 tests, no network required
 desktop/                 Tauri 2 + React 18 + TypeScript + zustand
   src/pages/             Chat (default) · Overview · Tasks · Automations · Approvals · Memory
                          Skills · Activity · Security · Settings
@@ -434,7 +446,7 @@ skills/                  clean_downloads · research_topic · weekly_report
                          second_brain · autonomous_goal · decision_journal
                          ci_autopsy · release_checklist · action_items · disk_report
 scripts/                 start-dobot.bat — backend + desktop app in one double-click
-docs/                    architecture · security · memory · agent · development · install
+docs/                    architecture · security · memory · agent · development · install · prior-art
 report.md               development and verification report (V1 → V2, test evidence, gaps)
 examples/                runnable end-to-end flows
 ```
@@ -445,11 +457,28 @@ examples/                runnable end-to-end flows
 | --- | --- |
 | [`docs/install.md`](docs/install.md) | Build, package and install Dobot on your own laptop |
 | [`docs/architecture.md`](docs/architecture.md) | Every module, the request lifecycle, the degradation model |
-| [`docs/security.md`](docs/security.md) | Risk model, policies, approvals, execution modes, file guard, evasion detection, skill scanner, kill switch, what is not enforced |
+| [`docs/security.md`](docs/security.md) | Risk model, policies, approvals, execution modes (local / NemoClaw / Nebius sandboxes), file guard, evasion detection, skill scanner, kill switch, what is not enforced |
+| [`docs/prior-art.md`](docs/prior-art.md) | What Dobot borrowed from rakazo, OpenMausBot, eigent and ouroboros — and what it rejected on purpose |
 | [`docs/memory.md`](docs/memory.md) | Memory types, recall scoring, stores and vectors |
 | [`docs/agent.md`](docs/agent.md) | Hermes runtimes, toolsets, skills and workflow authoring |
 | [`docs/development.md`](docs/development.md) | Setup, phase mapping, demo script, conventions |
 | [`report.md`](report.md) | Development and verification report: what V1 shipped, what V2 changed, how each claim was tested, what is still unproven |
+
+---
+
+## Prior art
+
+Dobot's shape is not accidental. Four open-source projects —
+[rakazo](https://github.com/elie222/rakazo),
+[OpenMausBot](https://github.com/milind-soni/OpenMausBot),
+[eigent](https://github.com/eigent-ai/eigent) and
+[ouroboros](https://github.com/razzant/ouroboros) — were read closely while taking the project from
+hackathon-ready to production-ready. What was borrowed, where it landed, and what was rejected on
+purpose is recorded in [`docs/prior-art.md`](docs/prior-art.md). The short version: rakazo's
+bring-your-own-computer model and OpenMausBot's computer-per-bot produced the `nebius` sandbox
+provider, OpenMausBot's "degrade, never crash" rule shaped `FallbackSandbox`, its permission broker
+is the ancestor of the Allow-once / Always-allow grants, and eigent/ouroboros produced the
+`ci_autopsy` and `release_checklist` skills.
 
 ---
 
@@ -465,7 +494,7 @@ missing one:
 
 | Gap | Reality |
 | --- | --- |
-| OS-level sandbox | On Windows the default is `SANDBOX_PROVIDER=local`, so `isolation: none`. The action firewall is enforced in-process; NemoClaw/OpenShell must be running for kernel-level isolation. |
+| OS-level sandbox | Default stays `SANDBOX_PROVIDER=local` (`isolation: none`, in-process action firewall). Two real options now exist: `nemoclaw` (kernel-level, needs the NemoClaw stack) and `nebius` (managed Nebius Sandboxes VM — needs `NEBIUS_API_KEY` + `NEBIUS_PROJECT_ID`, verified end to end: `isolation: vm`, session persists across commands, degrades honestly when unreachable). |
 | Desktop (GUI) control | The `computer_*` tools need the Hermes runtime. Without it they refuse rather than pretend to click. |
 | Outbound messaging / email | `message_send` composes a draft and reports `sent: false`. Dobot does not send anything. |
 | Voice | Both halves work but need local pieces: speaking uses the OS engine (PowerShell SAPI) and listening downloads a ~484 MB Whisper-small checkpoint (`uv sync --extra voice`, plus ffmpeg). Neither is in the container image, so a backend running in Docker reports both as declined. |

@@ -2668,4 +2668,273 @@ h3 {
   white-space: nowrap;
 }
 
+/* ── Skills ─────────────────────────────────────────────────────────────────────
+   A skill is a workflow, so the card must answer three questions at a glance — what it
+   does, whether it is allowed to run, and what it touches — and keep the machinery
+   (trigger, safety sentence, step list, file path) one click away. The grid therefore
+   shows a short card and opens into a full one instead of stacking everything at once.
+   Action buttons are pinned to the bottom of each card so a row of cards stays aligned. */
+
+.skills__toolbar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin: 14px 0;
+}
+
+.skills__search {
+  flex: 1 1 240px;
+  max-width: 360px;
+  min-width: 0;
+}
+
+.skills__filter {
+  font-size: 12px;
+  padding: 5px 11px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.skills__filter:hover {
+  color: var(--text);
+  border-color: var(--accent-dim);
+}
+
+.skills__filter--active {
+  color: var(--accent);
+  border-color: rgba(76, 154, 255, 0.5);
+  background: rgba(76, 154, 255, 0.08);
+}
+
+.skills__count {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.skills__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(296px, 1fr));
+  gap: 12px;
+  align-items: stretch;
+}
+
+.skill {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-elevated);
+  padding: 14px;
+}
+
+.skill--blocked {
+  border-color: rgba(248, 81, 73, 0.55);
+}
+
+.skill--warn {
+  border-color: rgba(210, 153, 34, 0.45);
+}
+
+.skill__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.skill__name {
+  font-family: "Cascadia Code", "Consolas", ui-monospace, monospace;
+  font-size: 13.5px;
+  font-weight: 650;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+/* Two lines collapsed; the open card shows the whole sentence. */
+.skill__desc {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-dim);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.skill--open .skill__desc {
+  display: block;
+  overflow: visible;
+  color: var(--text);
+}
+
+.skill__tools {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.skill__tool {
+  font-family: "Cascadia Code", "Consolas", ui-monospace, monospace;
+  font-size: 11px;
+  padding: 2px 7px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  background: transparent;
+}
+
+.skill__meta {
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.skill--open .skill__meta {
+  white-space: normal;
+}
+
+.skill__safety {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--warn);
+  border-left: 2px solid rgba(210, 153, 34, 0.55);
+  padding-left: 9px;
+}
+
+.skill__steps {
+  margin: 0;
+  padding-left: 20px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-dim);
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.skill__steps .skill__tool {
+  margin-left: 6px;
+}
+
+.skill__path {
+  font-family: "Cascadia Code", "Consolas", ui-monospace, monospace;
+  font-size: 11px;
+  color: var(--text-dim);
+  opacity: 0.8;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.skill__actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-top: auto;
+  padding-top: 6px;
+}
+
+/* Keeps Run/Details together on the left and parks Delete on the right. */
+.skill__actions > :last-child {
+  margin-left: auto;
+}
+
+@media (max-width: 560px) {
+  .skills__grid {
+    grid-template-columns: 1fr;
+  }
+
+  .skills__count {
+    margin-left: 0;
+  }
+}
+
+/* ── Records ───────────────────────────────────────────────────────────────────
+   The list item every page shares (tasks, automations, memories, approvals): a
+   head with the title and its status, one mono line of facts, the body, and the
+   actions. Tables are kept only where the data is genuinely tabular (audit
+   views), because a five-column table of prose is what made the app feel dense. */
+
+.record-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.record {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-elevated);
+  padding: 12px 14px;
+}
+
+.record--warn {
+  border-color: rgba(210, 153, 34, 0.45);
+}
+
+.record--danger {
+  border-color: rgba(248, 81, 73, 0.5);
+}
+
+.record__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.record__title {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.record__meta {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  font-family: "Cascadia Code", "Consolas", ui-monospace, monospace;
+  font-size: 11.5px;
+  color: var(--text-dim);
+}
+
+.record__body {
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--text-dim);
+  overflow-wrap: anywhere;
+}
+
+.record__actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  padding-top: 3px;
+}
+
 

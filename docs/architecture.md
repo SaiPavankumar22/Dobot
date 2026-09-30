@@ -67,7 +67,7 @@ thread, the activity timeline, and progress bars in the dashboard.
 | `app/core/killswitch.py` | Global cancellation of active executions |
 | `app/agents/nemotron.py` | Nebius client (OpenAI-compatible) + offline reasoning fallback |
 | `app/agents/hermes.py` | Execution runtime adapter (local tools / CLI / remote) |
-| `app/agents/sandbox.py` | NemoClaw / OpenShell boundary adapter |
+| `app/agents/sandbox.py` | Execution boundary adapter: NemoClaw/OpenShell, Nebius Sandboxes (ConTree), or the in-process action firewall — one interface, honest degradation |
 | `app/agents/research_agent.py` | Tavily research pipeline with parallel sub-queries |
 | `app/tools/*` | Tool implementations with declared risk levels |
 | `app/memory/*` | Structured store, vector store, embeddings, retriever |

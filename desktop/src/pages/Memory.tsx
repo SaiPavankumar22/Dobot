@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { Record, Stats, Toolbar } from "../components/PageBits";
 import { api } from "../services/api";
 import type { MemoryHit, MemoryRecord } from "../types";
 
@@ -22,6 +23,11 @@ export function Memory() {
     void load();
   }, [type, search]);
 
+  const typeOptions = useMemo(
+    () => TYPES.map((value) => ({ id: value, label: value || "All types" })),
+    [],
+  );
+
   return (
     <>
       <h1>Memory</h1>
@@ -30,44 +36,33 @@ export function Memory() {
         without appearing in the recall view below.
       </p>
 
-      <div className="cards">
-        <div className="card">
-          <div className="card__label">Total</div>
-          <div className="card__value">{stats?.total ?? 0}</div>
-        </div>
-        <div className="card">
-          <div className="card__label">Store</div>
-          <div className="card__value" style={{ fontSize: 16 }}>{stats?.store ?? "—"}</div>
-        </div>
-        <div className="card">
-          <div className="card__label">Vectors</div>
-          <div className="card__value" style={{ fontSize: 16 }}>{stats?.vectors ?? "—"}</div>
-        </div>
-        <div className="card">
-          <div className="card__label">Embedder</div>
-          <div className="card__value" style={{ fontSize: 13 }}>{stats?.embedder ?? "—"}</div>
-        </div>
-      </div>
+      <Stats
+        items={[
+          { label: "Memories", value: stats?.total ?? 0 },
+          { label: "Store", value: stats?.store ?? "—", hint: "where records live" },
+          { label: "Vectors", value: stats?.vectors ?? "—", hint: "retrieval index" },
+          { label: "Embedder", value: stats?.embedder ?? "—" },
+        ]}
+      />
 
-      <h2>Add a memory</h2>
-      <div className="row">
-        <input
-          placeholder="e.g. The user prefers Python for backend work"
-          value={draft}
-          onChange={(event) => setDraft(event.target.value)}
-          style={{ maxWidth: 520 }}
-        />
-        <button
-          className="primary"
-          disabled={!draft.trim()}
-          onClick={async () => {
-            await api.remember({ content: draft.trim(), importance: 0.7 });
-            setDraft("");
-            await load();
-          }}
-        >
-          Remember
-        </button>
+      <div className="record" style={{ marginTop: 14 }}>
+        <div className="record__head">
+          <span className="record__title">Remember something</span>
+        </div>
+        <div className="row">
+          <input
+            placeholder="e.g. The user prefers Python for backend work"
+            value={draft}
+            onChange={(event) => setDraft(event.target.value)}
+            style={{ maxWidth: 520 }}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && draft.trim()) void remember();
+            }}
+          />
+          <button className="primary" disabled={!draft.trim()} onClick={() => void remember()}>
+            Remember
+          </button>
+        </div>
       </div>
 
       <h2>Retrieval audit</h2>
@@ -97,7 +92,11 @@ export function Memory() {
               <tr key={hit.memory.id}>
                 <td>{hit.memory.content}</td>
                 <td className="mono">{hit.score.toFixed(3)}</td>
-                <td className="mono">{Object.entries(hit.components).map(([key, value]) => `${key}=${value.toFixed(2)}`).join(" ")}</td>
+                <td className="mono">
+                  {Object.entries(hit.components)
+                    .map(([key, value]) => `${key}=${value.toFixed(2)}`)
+                    .join(" ")}
+                </td>
               </tr>
             ))}
           </tbody>
@@ -105,48 +104,51 @@ export function Memory() {
       )}
 
       <h2>Stored memories</h2>
-      <div className="row">
-        <select value={type} onChange={(event) => setType(event.target.value)} style={{ maxWidth: 160 }}>
-          {TYPES.map((option) => (
-            <option key={option} value={option}>
-              {option || "all types"}
-            </option>
-          ))}
-        </select>
-        <input
-          placeholder="Search"
-          value={search}
-          onChange={(event) => setSearch(event.target.value)}
-          style={{ maxWidth: 260 }}
-        />
-      </div>
-      <table className="table">
-        <thead>
-          <tr>
-            <th>Content</th>
-            <th>Type</th>
-            <th>Importance</th>
-            <th>Added</th>
-            <th />
-          </tr>
-        </thead>
-        <tbody>
-          {memories.map((memory) => (
-            <tr key={memory.id}>
-              <td>{memory.content}</td>
-              <td className="mono">{memory.type}</td>
-              <td className="mono">{memory.importance.toFixed(2)}</td>
-              <td className="mono">{new Date(memory.created_at).toLocaleString()}</td>
-              <td>
-                <button className="ghost" onClick={() => void api.forget(memory.id).then(load)}>
-                  Forget
-                </button>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      <Toolbar
+        query={search}
+        onQuery={setSearch}
+        placeholder="Search what is stored…"
+        options={typeOptions}
+        active={type}
+        onActive={setType}
+        count={
+          search || type
+            ? `${memories.length} match${memories.length === 1 ? "" : "es"}`
+            : `${memories.length} stored`
+        }
+      />
+
       {memories.length === 0 && <div className="notice">Nothing remembered yet.</div>}
+
+      <div className="record-list">
+        {memories.map((memory) => (
+          <Record
+            key={memory.id}
+            title={memory.content}
+            meta={
+              <>
+                <span>{memory.type}</span>
+                <span>importance {memory.importance.toFixed(2)}</span>
+                <span>{new Date(memory.created_at).toLocaleString()}</span>
+              </>
+            }
+            actions={
+              <button
+                className="ghost"
+                onClick={() => void api.forget(memory.id).then(load)}
+              >
+                Forget
+              </button>
+            }
+          />
+        ))}
+      </div>
     </>
   );
+
+  async function remember() {
+    await api.remember({ content: draft.trim(), importance: 0.7 });
+    setDraft("");
+    await load();
+  }
 }

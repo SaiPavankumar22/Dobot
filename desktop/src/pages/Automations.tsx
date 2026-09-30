@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { Record, Stats, Toolbar } from "../components/PageBits";
 import { api, ApiError } from "../services/api";
 import type { AutomationRecord } from "../types";
 
@@ -9,12 +10,22 @@ const PRESETS = [
   { label: "Weekdays at 9 AM", cron: "0 9 * * 1-5" },
 ];
 
+type Filter = "all" | "active" | "paused";
+
+const FILTERS = [
+  { id: "all", label: "All" },
+  { id: "active", label: "Active" },
+  { id: "paused", label: "Paused" },
+];
+
 export function Automations() {
   const [automations, setAutomations] = useState<AutomationRecord[]>([]);
   const [name, setName] = useState("");
   const [schedule, setSchedule] = useState("0 18 * * 5");
   const [task, setTask] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
+  const [filter, setFilter] = useState<Filter>("all");
 
   async function load() {
     try {
@@ -28,6 +39,30 @@ export function Automations() {
     void load();
   }, []);
 
+  const stats = useMemo(() => {
+    const active = automations.filter((item) => item.status === "active");
+    const upcoming = active
+      .map((item) => item.next_run_at)
+      .filter((value): value is string => Boolean(value))
+      .sort()[0];
+    return {
+      total: automations.length,
+      active: active.length,
+      paused: automations.length - active.length,
+      next: upcoming ? new Date(upcoming).toLocaleString() : "—",
+    };
+  }, [automations]);
+
+  const visible = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    return automations.filter((item) => {
+      if (filter === "active" && item.status !== "active") return false;
+      if (filter === "paused" && item.status === "active") return false;
+      if (!needle) return true;
+      return `${item.name} ${item.prompt} ${item.schedule}`.toLowerCase().includes(needle);
+    });
+  }, [automations, query, filter]);
+
   return (
     <>
       <h1>Automations</h1>
@@ -36,7 +71,19 @@ export function Automations() {
         engine, same approvals, same verification.
       </p>
 
-      <div className="card">
+      <Stats
+        items={[
+          { label: "Automations", value: stats.total },
+          { label: "Active", value: stats.active, tone: stats.active ? "ok" : undefined },
+          { label: "Paused", value: stats.paused },
+          { label: "Next run", value: stats.next, hint: "earliest scheduled" },
+        ]}
+      />
+
+      <div className="record" style={{ marginTop: 14 }}>
+        <div className="record__head">
+          <span className="record__title">New automation</span>
+        </div>
         <div className="row">
           <input
             placeholder="Name, e.g. Weekly AI research"
@@ -52,7 +99,7 @@ export function Automations() {
             className="mono"
           />
         </div>
-        <div className="chip-row" style={{ marginTop: 8 }}>
+        <div className="chip-row">
           {PRESETS.map((preset) => (
             <button key={preset.cron} className="chip" onClick={() => setSchedule(preset.cron)}>
               {preset.label}
@@ -64,9 +111,8 @@ export function Automations() {
           value={task}
           onChange={(event) => setTask(event.target.value)}
           rows={2}
-          style={{ marginTop: 8 }}
         />
-        <div className="row" style={{ marginTop: 8 }}>
+        <div className="row">
           <button
             className="primary"
             disabled={!name.trim() || !task.trim()}
@@ -78,7 +124,9 @@ export function Automations() {
                 setTask("");
                 await load();
               } catch (createError) {
-                setError(createError instanceof ApiError ? createError.message : String(createError));
+                setError(
+                  createError instanceof ApiError ? createError.message : String(createError),
+                );
               }
             }}
           >
@@ -89,55 +137,77 @@ export function Automations() {
 
       {error && <div className="notice notice--danger">{error}</div>}
 
-      <h2>Configured</h2>
-      <table className="table">
-        <thead>
-          <tr>
-            <th>Name</th>
-            <th>Schedule</th>
-            <th>Next run</th>
-            <th>Status</th>
-            <th />
-          </tr>
-        </thead>
-        <tbody>
-          {automations.map((automation) => (
-            <tr key={automation.id}>
-              <td>
-                <div>{automation.name}</div>
-                <div className="subtle">{automation.prompt.slice(0, 120)}</div>
-              </td>
-              <td className="mono">{automation.schedule}</td>
-              <td className="mono">
-                {automation.next_run_at ? new Date(automation.next_run_at).toLocaleString() : "—"}
-              </td>
-              <td>
-                <span className={`status status--${automation.status === "active" ? "COMPLETED" : "WAITING_USER"}`}>
-                  {automation.status}
-                </span>
-              </td>
-              <td>
-                <div className="row">
-                  <button onClick={() => void api.runAutomation(automation.id)}>Run now</button>
-                  <button
-                    onClick={() =>
-                      void api
-                        .setAutomationStatus(automation.id, automation.status === "active" ? "paused" : "active")
-                        .then(load)
-                    }
-                  >
-                    {automation.status === "active" ? "Pause" : "Resume"}
-                  </button>
-                  <button className="ghost" onClick={() => void api.deleteAutomation(automation.id).then(load)}>
-                    Delete
-                  </button>
-                </div>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      <Toolbar
+        query={query}
+        onQuery={setQuery}
+        placeholder="Search name, task or schedule…"
+        options={FILTERS}
+        active={filter}
+        onActive={(id) => setFilter(id as Filter)}
+        count={
+          filter === "all" && !query
+            ? `${automations.length} scheduled`
+            : `${visible.length} of ${automations.length}`
+        }
+      />
+
       {automations.length === 0 && <div className="notice">Nothing scheduled yet.</div>}
+      {automations.length > 0 && visible.length === 0 && (
+        <div className="notice">Nothing matches this filter.</div>
+      )}
+
+      <div className="record-list">
+        {visible.map((automation) => (
+          <Record
+            key={automation.id}
+            title={automation.name}
+            tone={automation.status === "active" ? undefined : "warn"}
+            status={
+              <span
+                className={`status status--${automation.status === "active" ? "COMPLETED" : "WAITING_USER"}`}
+              >
+                {automation.status}
+              </span>
+            }
+            meta={
+              <>
+                <span>{automation.schedule}</span>
+                <span>
+                  next:{" "}
+                  {automation.next_run_at
+                    ? new Date(automation.next_run_at).toLocaleString()
+                    : "—"}
+                </span>
+                <span>ran {automation.run_count}×</span>
+              </>
+            }
+            body={automation.prompt.slice(0, 220)}
+            actions={
+              <>
+                <button onClick={() => void api.runAutomation(automation.id)}>Run now</button>
+                <button
+                  onClick={() =>
+                    void api
+                      .setAutomationStatus(
+                        automation.id,
+                        automation.status === "active" ? "paused" : "active",
+                      )
+                      .then(load)
+                  }
+                >
+                  {automation.status === "active" ? "Pause" : "Resume"}
+                </button>
+                <button
+                  className="ghost"
+                  onClick={() => void api.deleteAutomation(automation.id).then(load)}
+                >
+                  Delete
+                </button>
+              </>
+            }
+          />
+        ))}
+      </div>
     </>
   );
 }

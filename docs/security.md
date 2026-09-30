@@ -233,6 +233,52 @@ With `SANDBOX_PROVIDER=local` the same checks run inside Dobot (the action firew
 kernel-level isolation. The dashboard's Security page states this explicitly rather than implying
 safety it does not have.
 
+`SANDBOX_PROVIDER` picks which backend sits behind that interface:
+
+| Provider | Isolation | Where commands run | Needs |
+| --- | --- | --- | --- |
+| `local` (default) | none — the action firewall, in-process | on this machine | nothing |
+| `nemoclaw` | `openshell` — kernel-level | inside the NemoClaw-managed sandbox | NemoClaw CLI + `OPENSHIELD_GATEWAY_URL` |
+| `nebius` | `vm` — VM-level | inside a managed Nebius Sandboxes (ConTree) container | `NEBIUS_API_KEY` + `NEBIUS_PROJECT_ID` |
+
+Whatever is configured, the wrapper stays honest: if the chosen backend cannot serve a request the
+run degrades to the local action firewall, the log says which provider failed and why, and the
+Security page reports `isolation: none` with the reason attached — never a healthy flag for a
+sandbox that is not running.
+
+### The Nebius sandbox (`SANDBOX_PROVIDER=nebius`)
+
+Nebius *Sandboxes* (the ConTree beta, via `contree-sdk`) gives Dobot what the other two providers
+cannot offer on a plain Windows laptop: real VM-level isolation with **no local daemon to install**.
+Behaviour worth knowing before you enable it:
+
+- **The session persists.** Every command chains onto the previous checkpoint — files the agent
+  writes in one command are there for the next. ConTree versions the filesystem Git-like, so a
+  timed-out or branching run cannot corrupt the live state.
+- **Shell goes remote; file tools stay local.** `terminal_run` executes inside the VM, while
+  `check_path` / `check_host` keep enforcing the action firewall against *this* machine —
+  `filesystem_*` tools still operate on the real workspace. The Security page states this split
+  while the provider is live.
+- **Credentials come from Settings, not the process environment:** the same `NEBIUS_API_KEY` the
+  models use, plus `NEBIUS_PROJECT_ID`. Both are read from `.env` or the environment like every
+  other setting.
+- **The remote cwd is created on demand** (`mkdir -p … && cd …`), because the VM filesystem starts
+  fresh — absolute paths in commands behave the way they would locally.
+- **Failure degrades, never pretends.** Missing key or project id, a missing `contree-sdk`
+  package, an auth rejection or a transport error all become `SandboxUnavailable`: the firewall
+  takes over, the status flips to `isolation: none`, and the reason string says which of those it
+  was.
+
+Quick check after setting the provider in `.env`:
+
+```bash
+cd backend && uv run uvicorn app.main:app --port 8756
+# then in the app: Security → Sandbox should read  provider: nebius · isolation: vm
+```
+
+A reachability probe runs at most once a minute, so opening the Security page never hammers the
+ConTree API.
+
 ## Screen privacy
 
 - Continuous monitoring is off and cannot be turned on implicitly. Captures are triggered only by an

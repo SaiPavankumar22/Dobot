@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Record, Stats, Toolbar } from "../components/PageBits";
 import { Switch } from "../components/Switch";
 import { api } from "../services/api";
 import { native } from "../services/native";
@@ -6,7 +7,7 @@ import { useDobot } from "../store/dobotStore";
 import type { PermissionGrant, PermissionMatrix } from "../types";
 
 interface SecurityStatus {
-  sandbox: { provider: string; isolation: string; degraded: boolean; details: Record<string, unknown> };
+  sandbox: { provider: string; isolation: string; degraded: boolean; details: { [key: string]: unknown } };
   agent_runtime: { mode: string; name: string; available: boolean; toolsets: string[]; detail: string };
   screen_capture: string;
   continuous_monitoring: boolean;
@@ -35,6 +36,7 @@ export function Security() {
 
   const [matrix, setMatrix] = useState<PermissionMatrix | null>(null);
   const [grants, setGrants] = useState<PermissionGrant[]>([]);
+  const [toolFilter, setToolFilter] = useState("all");
 
   const refreshGrants = () => {
     void api
@@ -58,37 +60,45 @@ export function Security() {
       </p>
 
       <h2>Sandbox</h2>
-      <div className="cards">
-        <div className="card">
-          <div className="card__label">Provider</div>
-          <div className="card__value" style={{ fontSize: 18 }}>{status?.sandbox.provider ?? "—"}</div>
-          <div className="subtle">isolation: {status?.sandbox.isolation ?? "—"}</div>
-        </div>
-        <div className="card">
-          <div className="card__label">Execution runtime</div>
-          <div className="card__value" style={{ fontSize: 16 }}>{status?.agent_runtime.name ?? "—"}</div>
-          <div className="subtle">{status?.agent_runtime.available ? "available" : "unavailable"}</div>
-        </div>
-        <div className="card">
-          <div className="card__label">Screen capture</div>
-          <div className="card__value" style={{ fontSize: 16 }}>{status?.screen_capture ?? "—"}</div>
-          <div className="subtle">
-            continuous monitoring: {status?.continuous_monitoring ? "ON" : "OFF"}
-          </div>
-        </div>
-        <div className="card">
-          <div className="card__label">Kill switch</div>
-          <div className="card__value" style={{ fontSize: 16 }}>{status?.kill_switch_hotkey ?? "—"}</div>
-          <div className="subtle">{status?.active_tasks.length ?? 0} active task(s)</div>
-        </div>
-      </div>
+      <Stats
+        items={[
+          {
+            label: "Provider",
+            value: status?.sandbox.provider ?? "—",
+            hint:
+              status?.sandbox.provider === "nebius" && status.sandbox.isolation === "vm"
+                ? "isolation: vm · shell runs in the Nebius VM, file tools use the local firewall"
+                : `isolation: ${status?.sandbox.isolation ?? "—"}`,
+            tone: status && status.sandbox.isolation === "none" ? "warn" : undefined,
+          },
+          {
+            label: "Execution runtime",
+            value: status?.agent_runtime.name ?? "—",
+            hint: status?.agent_runtime.available ? "available" : "unavailable",
+            tone: status && !status.agent_runtime.available ? "warn" : undefined,
+          },
+          {
+            label: "Screen capture",
+            value: status?.screen_capture ?? "—",
+            hint: `continuous monitoring: ${status?.continuous_monitoring ? "ON" : "OFF"}`,
+          },
+          {
+            label: "Kill switch",
+            value: status?.kill_switch_hotkey ?? "—",
+            hint: `${status?.active_tasks.length ?? 0} active task(s)`,
+          },
+        ]}
+      />
 
       {status && status.sandbox.isolation === "none" && (
         <div className="notice notice--warn" style={{ marginTop: 12 }}>
           Kernel-level isolation is <strong>not</strong> active: Dobot's action firewall enforces paths,
-          hosts and timeouts in-process, but a real sandbox is not running. To enable it, run the
-          NemoClaw / OpenShell stack and set <span className="mono">SANDBOX_PROVIDER=nemoclaw</span> plus{" "}
-          <span className="mono">OPENSHIELD_GATEWAY_URL</span>.
+          hosts and timeouts in-process, but a real sandbox is not running. Two ways to fix that:
+          run the NemoClaw / OpenShell stack (<span className="mono">SANDBOX_PROVIDER=nemoclaw</span>{" "}
+          plus <span className="mono">OPENSHIELD_GATEWAY_URL</span>), or set{" "}
+          <span className="mono">SANDBOX_PROVIDER=nebius</span> with{" "}
+          <span className="mono">NEBIUS_API_KEY</span> + <span className="mono">NEBIUS_PROJECT_ID</span>{" "}
+          to execute inside a Nebius Sandboxes VM — no local daemon needed.
         </div>
       )}
 
@@ -231,33 +241,48 @@ export function Security() {
         automatic can still be gated or refused at runtime by a condition — a path outside the
         workspace, a credential argument, an evasion pattern.
       </p>
-      <table className="table">
-        <thead>
-          <tr>
-            <th>Tool</th>
-            <th>Risk floor</th>
-            <th>Unattended</th>
-            <th>Guards</th>
-          </tr>
-        </thead>
-        <tbody>
-          {(matrix?.tools ?? []).map((row) => (
-            <tr key={row.tool}>
-              <td className="matrix__tool">{row.tool}</td>
-              <td>
-                <span className={`risk risk--${row.risk_floor}`}>{row.risk_floor}</span>
-              </td>
-              <td>
-                <span className={`pill ${row.automatic ? "pill--auto" : "pill--ask"}`}>
-                  {row.automatic ? "runs" : "asks"}
+      <Toolbar
+        options={[
+          { id: "all", label: "All" },
+          { id: "asks", label: "Asks first" },
+          { id: "refuse", label: "Can refuse" },
+        ]}
+        active={toolFilter}
+        onActive={setToolFilter}
+        count={`${(matrix?.tools ?? []).filter((row) =>
+          toolFilter === "asks"
+            ? !row.automatic
+            : toolFilter === "refuse"
+              ? row.can_deny
+              : true,
+        ).length} of ${(matrix?.tools ?? []).length} tools`}
+      />
+      <div className="record-list">
+        {(matrix?.tools ?? [])
+          .filter((row) =>
+            toolFilter === "asks"
+              ? !row.automatic
+              : toolFilter === "refuse"
+                ? row.can_deny
+                : true,
+          )
+          .map((row) => (
+            <Record
+              key={row.tool}
+              title={<span className="mono">{row.tool}</span>}
+              status={
+                <span style={{ display: "inline-flex", gap: 4, alignItems: "center" }}>
+                  <span className={`risk risk--${row.risk_floor}`}>{row.risk_floor}</span>
+                  <span className={`pill ${row.automatic ? "pill--auto" : "pill--ask"}`}>
+                    {row.automatic ? "runs" : "asks"}
+                  </span>
+                  {row.can_deny && <span className="pill pill--deny">can refuse</span>}
                 </span>
-                {row.can_deny && <span className="pill pill--deny" style={{ marginLeft: 4 }}>can refuse</span>}
-              </td>
-              <td className="matrix__guards">{row.guards.join(", ") || "—"}</td>
-            </tr>
+              }
+              meta={row.guards.length ? `guards: ${row.guards.join(", ")}` : "no extra guards"}
+            />
           ))}
-        </tbody>
-      </table>
+      </div>
 
       <h2>Boundaries</h2>
       <div className="notice">
@@ -270,32 +295,29 @@ export function Security() {
       </div>
 
       <h2>Policies</h2>
-      <table className="table">
-        <thead>
-          <tr>
-            <th>Policy</th>
-            <th>Verdict</th>
-            <th>Reason</th>
-          </tr>
-        </thead>
-        <tbody>
-          {(status?.policies ?? []).map((policy) => (
-            <tr key={policy.name}>
-              <td className="mono">{policy.name}</td>
-              <td>
-                <span
-                  className={`status status--${
-                    policy.verdict === "BLOCK" ? "FAILED" : policy.verdict === "APPROVAL" ? "WAITING_USER" : "COMPLETED"
-                  }`}
-                >
-                  {policy.verdict}
-                </span>
-              </td>
-              <td>{policy.reason}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      <div className="record-list">
+        {(status?.policies ?? []).map((policy) => (
+          <Record
+            key={policy.name}
+            title={<span className="mono">{policy.name}</span>}
+            status={
+              <span
+                className={`pill ${
+                  policy.verdict === "BLOCK"
+                    ? "pill--deny"
+                    : policy.verdict === "APPROVAL"
+                      ? "pill--ask"
+                      : "pill--auto"
+                }`}
+              >
+                {policy.verdict}
+              </span>
+            }
+            tone={policy.verdict === "BLOCK" ? "danger" : policy.verdict === "APPROVAL" ? "warn" : undefined}
+            body={policy.reason}
+          />
+        ))}
+      </div>
     </>
   );
 }

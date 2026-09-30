@@ -103,11 +103,19 @@ class Settings(BaseSettings):
     hermes_allowed_tools: str = "browser_exec,computer_use,terminal,filesystem,skills"
     hermes_timeout_seconds: int = 300
 
-    # --- security boundary: NemoClaw / OpenShell ----------------------------
+    # --- security boundary: NemoClaw / OpenShell / Nebius sandboxes ---------
+    # local = Dobot's action firewall. nemoclaw = NemoClaw CLI / OpenShell gateway.
+    # nebius = Nebius Sandboxes (ConTree beta): terminal_run executes inside a persistent,
+    # VM-isolated cloud session via contree-sdk instead of on this machine.
     sandbox_provider: str = "local"
     nemoclaw_command: str = "nemoclaw"
     nemoclaw_sandbox: str = "dobot"
     openshield_gateway_url: str = ""
+    # The sandbox shares NEBIUS_API_KEY with the models above and additionally needs the
+    # project the sandbox bill lands in. Both arrive from the same .env / environment.
+    nebius_project_id: str = ""
+    nebius_sandbox_base_url: str = "https://api.tokenfactory.nebius.com/sandboxes/"
+    nebius_sandbox_image: str = "python:3.12-slim"
     sandbox_allowed_network: str = (
         "tavily.com,api.tavily.com,api.studio.nebius.com,github.com,arxiv.org"
     )
@@ -331,6 +339,11 @@ class Settings(BaseSettings):
         return bool(self.nebius_api_key.strip())
 
     @property
+    def has_nebius_sandbox(self) -> bool:
+        """True when both Nebius sandbox credentials are present (key + project id)."""
+        return bool(self.nebius_api_key.strip() and self.nebius_project_id.strip())
+
+    @property
     def has_tavily(self) -> bool:
         return bool(self.tavily_api_key.strip())
 
@@ -392,7 +405,7 @@ class Settings(BaseSettings):
     @field_validator("sandbox_provider")
     @classmethod
     def _known_sandbox(cls, value: str) -> str:
-        allowed = {"local", "nemoclaw"}
+        allowed = {"local", "nemoclaw", "nebius"}
         value = value.lower()
         return value if value in allowed else "local"
 
