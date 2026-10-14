@@ -30,7 +30,8 @@ SEE → UNDERSTAND → DECIDE → ACT → VERIFY → REMEMBER
 [Security](#security-posture) · [Status](#status)
 
 Built for the NVIDIA × Nebius **Personal AI** track: **NVIDIA Nemotron** reasoning served through
-**Nebius Token Factory**, with **Hermes** as the agent runtime, **NVIDIA NemoClaw / OpenShell** as the
+**Nebius Token Factory**, with a built-in **Playwright** browser driver and **Hermes** as optional
+agent runtimes, **NVIDIA NemoClaw / OpenShell** as the
 controlled execution boundary, and **Tavily** for source-aware web research — behind a deterministic
 **decision engine** that decides what may run without asking.
 
@@ -180,10 +181,12 @@ Latency is managed explicitly: Nemotron 3's visible chain-of-thought is **off by
 the light tier and the final answer composition never think at all, so a direct question returns in
 seconds, not minutes. Set `NEMOTRON_ALWAYS_THINK=1` to restore deep reasoning everywhere.
 
-**Hermes Agent** is the execution layer. Dobot deliberately does not reimplement computer use: it
-orchestrates Hermes for browser automation, desktop interaction, terminal commands, filesystem
-operations, reusable skills and scheduled workflows. Three runtimes are supported behind one interface
-(`local`, `cli`, `remote`) — see [`docs/agent.md`](docs/agent.md).
+**Hermes Agent** is the execution layer for desktop work, and the browser has a built-in one.
+Dobot drives a real, visible browser window itself through a local Playwright driver (the
+browser-use approach): navigate, click, type and downloads work with no external runtime at all.
+For desktop GUI interaction, terminal, filesystem and prompt delegation it orchestrates Hermes
+instead. Three runtimes sit behind one interface (`local`, `cli`, `remote`) — see
+[`docs/agent.md`](docs/agent.md).
 
 **NemoClaw / OpenShell** is the controlled execution boundary: it keeps inference and MCP credentials
 outside the sandbox, applies network and filesystem policy, and manages the sandbox lifecycle.
@@ -321,7 +324,7 @@ Dobot opens as a **chat window**. Turn on **Always on** in the header if you wan
 ### 4. Tests
 
 ```bash
-cd backend && uv run pytest -q      # 310 tests
+cd backend && uv run pytest -q      # 355 tests
 cd backend && uv run ruff check app tests
 cd desktop && npm run build          # tsc --noEmit + vite build
 ```
@@ -436,7 +439,7 @@ backend/                 FastAPI gateway, orchestrator, decision engine, memory,
   app/tools/             filesystem · terminal · browser · screen · computer · apps · productivity
   app/api/               chat · screen · research · tasks · automations · approvals · memory
                          skills · settings · security · activity · websocket
-  tests/                 310 tests, no network required
+  tests/                 355 tests, no network required
 desktop/                 Tauri 2 + React 18 + TypeScript + zustand
   src/pages/             Chat (default) · Overview · Tasks · Automations · Approvals · Memory
                          Skills · Activity · Security · Settings
@@ -462,6 +465,7 @@ examples/                runnable end-to-end flows
 | [`docs/memory.md`](docs/memory.md) | Memory types, recall scoring, stores and vectors |
 | [`docs/agent.md`](docs/agent.md) | Hermes runtimes, toolsets, skills and workflow authoring |
 | [`docs/development.md`](docs/development.md) | Setup, phase mapping, demo script, conventions |
+| [`docs/screenshots/`](docs/screenshots/README.md) | Captures of the running app — chat, overview, tasks, skills, security, activity, settings |
 | [`report.md`](report.md) | Development and verification report: what V1 shipped, what V2 changed, how each claim was tested, what is still unproven |
 
 ---
@@ -495,7 +499,7 @@ missing one:
 | Gap | Reality |
 | --- | --- |
 | OS-level sandbox | Default stays `SANDBOX_PROVIDER=local` (`isolation: none`, in-process action firewall). Two real options now exist: `nemoclaw` (kernel-level, needs the NemoClaw stack) and `nebius` (managed Nebius Sandboxes VM — needs `NEBIUS_API_KEY` + `NEBIUS_PROJECT_ID`, verified end to end: `isolation: vm`, session persists across commands, degrades honestly when unreachable). |
-| Desktop (GUI) control | The `computer_*` tools need the Hermes runtime. Without it they refuse rather than pretend to click. |
+| Desktop (GUI) control | The `computer_*` tools need the Hermes runtime. Without it they refuse rather than pretend to click. Browser interaction does **not** have this gap: a local Playwright driver navigates, clicks, types and downloads in a visible window. The driver launches Chrome from a one-time clone of your Chrome profile (`DOBOT_CHROME_PROFILE` picks which profile). Windows Chrome 151+ binds cookie encryption to the original profile path, so the clone's first launch purges copied login cookies — your existing logins cannot transfer. Dobot detects this and says so in the tool output: sign in once inside Dobot's window and that login persists for every future run. |
 | Outbound messaging / email | `message_send` composes a draft and reports `sent: false`. Dobot does not send anything. |
 | Voice | Both halves work but need local pieces: speaking uses the OS engine (PowerShell SAPI) and listening downloads a ~484 MB Whisper-small checkpoint (`uv sync --extra voice`, plus ffmpeg). Neither is in the container image, so a backend running in Docker reports both as declined. |
 | API authentication | Loopback runs open by default (single-user laptop). A deployed backend must set `DOBOT_API_TOKEN`; on a private Hugging Face Space, that gate and the Space proxy's token check both sit in front of every request. |
