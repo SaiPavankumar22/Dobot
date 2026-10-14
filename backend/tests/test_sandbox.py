@@ -7,6 +7,7 @@ Nothing here touches the network: ``NebiusSandbox`` is exercised through its sea
 
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -15,6 +16,7 @@ from app.agents.sandbox import (
     FallbackSandbox,
     LocalSandbox,
     NebiusSandbox,
+    SandboxDenied,
     SandboxUnavailable,
     build_sandbox,
 )
@@ -208,3 +210,27 @@ async def test_fallback_close_tolerates_a_non_httpx_client(settings) -> None:
     nebius._client = SimpleNamespace()  # contree clients have no aclose()
     fallback = FallbackSandbox(nebius, LocalSandbox(settings), _nebius_settings(settings))
     await fallback.close()  # must not raise
+
+
+# ---------------------------------------------------------- local cwd resolution
+
+
+@pytest.mark.asyncio
+async def test_local_run_command_expands_home_cwd(settings) -> None:
+    """``cwd='~/x'`` must reach the subprocess as a real directory.
+
+    create_subprocess_shell expands the *command* through the shell but takes cwd literally, so an
+    unexpanded ``~`` arrives as a directory named "~" that Windows rejects (WinError 267).
+    """
+    sandbox = LocalSandbox(settings)
+    result = await sandbox.run_command("cd", cwd="~")
+    assert result.ok, result.stderr
+    assert "~" not in result.stdout.strip()
+    assert Path(result.stdout.strip()).resolve() == Path.home().resolve()
+
+
+@pytest.mark.asyncio
+async def test_local_run_command_rejects_cwd_outside_the_roots(settings) -> None:
+    sandbox = LocalSandbox(settings)
+    with pytest.raises(SandboxDenied):
+        await sandbox.run_command("echo nope", cwd="C:/Windows/Temp")

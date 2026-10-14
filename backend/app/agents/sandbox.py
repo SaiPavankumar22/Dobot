@@ -145,7 +145,10 @@ class LocalSandbox:
         if token:
             token.raise_if_cancelled()
         if cwd:
-            await self.check_path(cwd)
+            # Resolve before handing it to the subprocess: check_path expands ``~`` and rejects
+            # paths outside the roots, and the raw string (e.g. ``~/foo``) is not a valid cwd —
+            # create_subprocess_shell does not run a shell expansion on the cwd argument.
+            cwd = str(await self.check_path(cwd))
         started = time.perf_counter()
         process = await asyncio.create_subprocess_shell(
             command,
