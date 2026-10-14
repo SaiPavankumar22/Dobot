@@ -1,0 +1,28 @@
+/* Local copies of the three fonts the Operations Console design uses — Sora for display,
+   Manrope for body, JetBrains Mono for code and micro-labels. Bundled rather than fetched:
+   the app's CSP only allows 'self', and the desktop window must render identically offline.
+   All three are variable fonts, so one file per family covers every weight we use. */
+
+@font-face {
+  font-family: "Sora";
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url("./Sora.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Manrope";
+  font-style: normal;
+  font-weight: 400 800;
+  font-display: swap;
+  src: url("./Manrope.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url("./JetBrainsMono.woff2") format("woff2");
+}

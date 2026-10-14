@@ -75,7 +75,7 @@ export function ThemeStudio() {
           <div>
             <h3 style={{ marginBottom: 2 }}>Theme family</h3>
             <p className="dim" style={{ margin: 0 }}>
-              The accent and risk colours were chosen against Midnight; the others shift them.
+              The accent and risk colours were chosen against Console; the others shift them.
             </p>
           </div>
         </div>
@@ -186,13 +186,30 @@ export function ThemeStudio() {
   );
 }
 
-/** `<input type="color">` only accepts `#rrggbb`, so an `rgba()` token needs a representative hex. */
+/** `<input type="color">` only accepts `#rrggbb`, so any other colour token needs a representative hex. */
 function toHex(value: string): string {
   if (/^#[0-9a-f]{6}$/i.test(value)) return value;
   const rgba = value.match(/rgba?\(([^)]+)\)/i);
-  if (!rgba) return "#000000";
-  const parts = rgba[1].split(",").map((part) => Number.parseFloat(part.trim()));
-  const [r, g, b] = parts;
-  if ([r, g, b].some((part) => Number.isNaN(part))) return "#000000";
-  return `#${[r, g, b].map((part) => Math.round(part).toString(16).padStart(2, "0")).join("")}`;
+  if (rgba) {
+    const parts = rgba[1].split(",").map((part) => Number.parseFloat(part.trim()));
+    const [r, g, b] = parts;
+    if (![r, g, b].some((part) => Number.isNaN(part))) {
+      return `#${[r, g, b].map((part) => Math.round(part).toString(16).padStart(2, "0")).join("")}`;
+    }
+  }
+  // Modern colour spaces (oklch and friends): let the renderer resolve the value, then read it back.
+  try {
+    const probe = document.createElement("span");
+    probe.style.color = value;
+    document.body.appendChild(probe);
+    const resolved = getComputedStyle(probe).color;
+    probe.remove();
+    const [r, g, b] = resolved.match(/\d+(\.\d+)?/g)?.slice(0, 3).map(Number) ?? [];
+    if ([r, g, b].every((part) => Number.isFinite(part))) {
+      return `#${[r, g, b].map((part) => Math.round(part).toString(16).padStart(2, "0")).join("")}`;
+    }
+  } catch {
+    /* fall through */
+  }
+  return "#000000";
 }

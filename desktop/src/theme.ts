@@ -36,30 +36,30 @@ export interface ThemeDefinition {
   tokens: ThemeTokens;
 }
 
-/** The shipped default. Kept in step with the `:root` block in styles.css (pre-paint value). */
+/** The shipped default — the Operations Console palette (kept in step with `:root` in styles.css). */
 export const MIDNIGHT: ThemeTokens = {
-  "--bg": "#0b0f17",
-  "--bg-elevated": "#131a26",
-  "--bg-glass": "rgba(11, 15, 23, 0.78)",
-  "--border": "#243043",
-  "--text": "#e8eefc",
-  "--text-dim": "#94a3b8",
-  "--accent": "#5b9dff",
-  "--accent-dim": "#2f6fe4",
-  "--ok": "#3ddc97",
-  "--warn": "#f0b429",
-  "--danger": "#ff6b6b",
-  "--high": "#ff9f43",
-  "--critical": "#ff5c5c",
-  "--radius": "14px",
-  "--shadow": "0 18px 48px rgba(2, 6, 18, 0.55)",
+  "--bg": "oklch(0.155 0.012 160)",
+  "--bg-elevated": "oklch(0.2 0.014 160)",
+  "--bg-glass": "oklch(0.155 0.012 160 / 0.88)",
+  "--border": "oklch(0.31 0.018 160)",
+  "--text": "oklch(0.965 0.008 160)",
+  "--text-dim": "oklch(0.7 0.018 160)",
+  "--accent": "oklch(0.79 0.16 154)",
+  "--accent-dim": "oklch(0.62 0.13 154)",
+  "--ok": "oklch(0.79 0.16 154)",
+  "--warn": "oklch(0.82 0.13 82)",
+  "--danger": "oklch(0.68 0.19 25)",
+  "--high": "oklch(0.75 0.15 60)",
+  "--critical": "oklch(0.68 0.2 25)",
+  "--radius": "12px",
+  "--shadow": "0 18px 44px rgba(0, 0, 0, 0.5)",
 };
 
 export const THEMES: ThemeDefinition[] = [
   {
     id: "midnight",
-    name: "Midnight",
-    blurb: "GitHub-dark blue. The default, and the one the asset colours were chosen against.",
+    name: "Console",
+    blurb: "Mint on deep green — the Operations Console look. The shipped default.",
     dark: true,
     tokens: MIDNIGHT,
   },

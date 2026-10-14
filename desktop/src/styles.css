@@ -1,23 +1,34 @@
-/* Dobot UI. Dark, translucent, deliberately quiet: the dot should feel like part of the desktop, not
-   an application window demanding attention. */
+/* Dobot UI — the Operations Console look.
+
+   The design language comes from the reference console: a deep green-tinted dark surface, a single
+   mint accent that carries every primary action, Sora for headings, Manrope for copy, JetBrains Mono
+   for the machine's voice (timestamps, ids, micro-labels), and small uppercase mono section labels
+   instead of shouty headings. Everything routes through the fifteen theme tokens, so the Theme
+   Studio can still repaint the whole thing. */
+
+@import "./assets/fonts/fonts.css";
 
 :root {
-  --bg: #0d1117;
-  --bg-elevated: #161b22;
-  --bg-glass: rgba(13, 17, 23, 0.86);
-  --border: #262d38;
-  --text: #e6edf3;
-  --text-dim: #8b949e;
-  --accent: #4c9aff;
-  --accent-dim: #1f6feb;
-  --ok: #3fb950;
-  --warn: #d29922;
-  --danger: #f85149;
-  --high: #db6d28;
-  --critical: #f85149;
+  --bg: oklch(0.155 0.012 160);
+  --bg-elevated: oklch(0.2 0.014 160);
+  --bg-glass: oklch(0.155 0.012 160 / 0.88);
+  --border: oklch(0.31 0.018 160);
+  --text: oklch(0.965 0.008 160);
+  --text-dim: oklch(0.7 0.018 160);
+  --accent: oklch(0.79 0.16 154);
+  --accent-dim: oklch(0.62 0.13 154);
+  --ok: oklch(0.79 0.16 154);
+  --warn: oklch(0.82 0.13 82);
+  --danger: oklch(0.68 0.19 25);
+  --high: oklch(0.75 0.15 60);
+  --critical: oklch(0.68 0.2 25);
   --radius: 12px;
-  --shadow: 0 12px 40px rgba(0, 0, 0, 0.55);
-  font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+  --shadow: 0 18px 44px rgba(0, 0, 0, 0.5);
+  /* Console companions to the theme tokens: the display face for headings, and the faint green
+     wash behind primary surfaces. Not user-editable — they follow the accent. */
+  --font-display: "Sora", var(--font-sans, "Segoe UI", system-ui, sans-serif);
+  --accent-wash: color-mix(in srgb, var(--accent) 7%, transparent);
+  font-family: "Manrope", "Segoe UI", system-ui, -apple-system, sans-serif;
   font-size: 14px;
 }
 
@@ -1610,8 +1621,8 @@ textarea.text-input.mono {
    ===================================================================================== */
 
 :root {
-  --font-sans: -apple-system, "Segoe UI Variable Text", "Segoe UI", Inter, system-ui, sans-serif;
-  --font-mono: "Cascadia Code", "JetBrains Mono", Consolas, ui-monospace, monospace;
+  --font-sans: "Manrope", -apple-system, "Segoe UI Variable Text", "Segoe UI", Inter, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "Cascadia Code", Consolas, ui-monospace, monospace;
   --radius-sm: 10px;
   --radius-md: 14px;
   --radius-lg: 20px;
@@ -2935,6 +2946,215 @@ h3 {
   align-items: center;
   flex-wrap: wrap;
   padding-top: 3px;
+}
+
+/* ── Console layer ─────────────────────────────────────────────────────────────
+   The Operations Console pass: the typography and micro-label language of the
+   reference design, applied on top of the green token palette. Sora carries the
+   headings, JetBrains Mono carries everything machine-made (ids, timestamps,
+   states, section labels), and stat cards get the numbered-corner treatment.
+   Every rule here is additive restyling — no class is renamed, no layout moves. */
+
+h1 {
+  font-family: var(--font-display);
+  font-size: 24px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+/* Section headings become the console's mono micro-labels: small, uppercase,
+   tracked out, with a mint tick in front — the sample's "WORKSPACE" convention. */
+h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  color: var(--text-dim);
+}
+
+h2::before {
+  content: "";
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex-shrink: 0;
+}
+
+h3 {
+  font-family: var(--font-display);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.mono,
+.record__meta,
+.skill__name,
+.skill__tool,
+.skill__path,
+.timeline__time,
+.code-inline,
+code {
+  font-family: var(--font-mono);
+}
+
+::selection {
+  background: color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
+* {
+  scrollbar-color: color-mix(in srgb, var(--border) 80%, transparent) transparent;
+}
+
+/* --- stat cards: the numbered-corner card from the sample ------------------------- */
+
+.cards {
+  counter-reset: stat-card;
+}
+
+.card {
+  position: relative;
+}
+
+.card__label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+}
+
+.card__value {
+  font-family: var(--font-display);
+  font-size: 28px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.card::after {
+  counter-increment: stat-card;
+  content: "0" counter(stat-card);
+  position: absolute;
+  top: 12px;
+  right: 14px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: color-mix(in srgb, var(--text-dim) 45%, transparent);
+}
+
+/* --- the machine's voice: states, pills, table headers ---------------------------- */
+
+.status,
+.pill {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.table th {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+/* --- sidebar: the sample's quiet nav ---------------------------------------------- */
+
+.sidebar {
+  background: oklch(0.17 0.014 160 / 0.92);
+}
+
+.sidebar__brand {
+  font-family: var(--font-display);
+  letter-spacing: -0.01em;
+}
+
+.sidebar__item {
+  font-size: 13.5px;
+}
+
+.sidebar__item--active {
+  background: var(--accent-wash);
+  color: var(--accent);
+  box-shadow: none;
+  font-weight: 600;
+}
+
+/* --- toolbar filters and search match the mint accent ------------------------------ */
+
+.skills__filter--active {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 50%, transparent);
+  background: var(--accent-wash);
+}
+
+.skills__count {
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+/* --- records and skills: mono names, calmer borders -------------------------------- */
+
+.record--warn {
+  border-color: color-mix(in srgb, var(--warn) 40%, transparent);
+}
+
+.record--danger {
+  border-color: color-mix(in srgb, var(--danger) 45%, transparent);
+}
+
+.skill--warn {
+  border-color: color-mix(in srgb, var(--warn) 40%, transparent);
+}
+
+.skill--blocked {
+  border-color: color-mix(in srgb, var(--danger) 50%, transparent);
+}
+
+.skill__safety {
+  border-left-color: color-mix(in srgb, var(--warn) 55%, transparent);
+}
+
+/* --- timeline rows: the sample's divided activity log ------------------------------ */
+
+.timeline__row {
+  background: transparent;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
+  border-radius: 0;
+  padding: 7px 6px;
+}
+
+.timeline__row:last-child {
+  border-bottom: none;
+}
+
+.timeline__time {
+  font-size: 10.5px;
+}
+
+.timeline__row:hover {
+  background: var(--surface-soft);
+}
+
+/* --- chat panel header: Sora for the brand, mono for the connection line ----------- */
+
+.chat__brand-name {
+  font-family: var(--font-display);
+}
+
+.chat__section-label {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.14em;
+}
+
+.chat__nav-badge {
+  font-family: var(--font-mono);
+  font-size: 10px;
 }
 
 
