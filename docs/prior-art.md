@@ -1,7 +1,7 @@
 # Prior art: what Dobot borrowed, and what it rejected on purpose
 
 Four open-source projects were studied closely (September 2026) while pushing Dobot from
-hackathon-ready to production-ready. This record states what was taken, where it landed in the
+prototype to production-ready. This record states what was taken, where it landed in the
 codebase, and what was deliberately left behind — a borrow without provenance is just a feature
 nobody can explain.
 

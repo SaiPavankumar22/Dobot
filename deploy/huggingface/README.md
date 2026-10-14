@@ -11,8 +11,8 @@ license: apache-2.0
 
 # Dobot backend
 
-The FastAPI brain of **Dobot** — an always-on personal AI operating layer (NVIDIA × Nebius
-hackathon). This Space runs the backend as a Docker image, so the Windows desktop app needs no
+The FastAPI brain of **Dobot** — an always-on personal AI operating layer. This Space runs the
+backend as a Docker image, so the Windows desktop app needs no
 local Python: install the app, point it at this Space, paste one token.
 
 ## Connecting the desktop app

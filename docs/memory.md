@@ -8,7 +8,7 @@ past actions.
 | Type | Example |
 | --- | --- |
 | `preference` | "User prefers Python for backend development." |
-| `project` | "User is building Dobot for an NVIDIA × Nebius hackathon." |
+| `project` | "User is building Dobot, a desktop AI assistant." |
 | `person` | "John is the reviewer for the Dobot report." |
 | `fact` | "Dobot's long-term vector memory uses Zilliz." |
 | `workflow` | "Weekly report: check GitHub → check issues → summarize → draft." |

@@ -52,10 +52,10 @@ async def test_task_tags_boost_relevance(memory: MemoryManager) -> None:
 
 @pytest.mark.asyncio
 async def test_forget_removes_record_and_vector(memory: MemoryManager) -> None:
-    record = await memory.remember("Temporary fact about the Dobot hackathon", type=MemoryType.FACT)
+    record = await memory.remember("Temporary fact about the Dobot demo", type=MemoryType.FACT)
     assert await memory.forget(record.id)
     assert await memory.get(record.id) is None
-    assert await memory.recall("Dobot hackathon fact", limit=3) == []
+    assert await memory.recall("Dobot demo fact", limit=3) == []
     assert await memory.vectors.count() == 0
 
 

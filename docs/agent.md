@@ -11,7 +11,7 @@ behind `app/agents/hermes.py`.
 | `cli` | Shell out to the Hermes CLI (`HERMES_COMMAND`, `HERMES_ARGS`) for a planned prompt. |
 | `remote` | POST the plan to a Hermes / MCP HTTP endpoint (`HERMES_ENDPOINT`). |
 
-`local` exists so the hackathon demo never depends on a third-party install being healthy; `cli` and
+`local` exists so Dobot never depends on a third-party install being healthy; `cli` and
 `remote` are how Dobot hands real work to Hermes in a deployment.
 
 ## Tool surface

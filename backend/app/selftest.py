@@ -1,7 +1,7 @@
 """End-to-end self test: ``python -m app.selftest``.
 
 Runs the real loop — context, plan, decision, execution, verification, memory — against whatever
-providers are configured, and prints the event trace. Useful on a judge's laptop and in CI.
+providers are configured, and prints the event trace. Useful on a fresh machine and in CI.
 """
 
 from __future__ import annotations
