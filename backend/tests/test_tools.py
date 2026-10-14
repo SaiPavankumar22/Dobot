@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -202,6 +203,212 @@ async def test_app_open_plans_a_command(ctx: ToolContext) -> None:
     result = await AppOpenTool().run({"app": "notepad"}, ctx)
     assert result.ok, result.error
     assert "command" in result.output
+
+
+def test_app_open_resolves_the_phrases_the_model_uses() -> None:
+    """The planner said "File Explorer"; launching that literal string timed out and then
+    failed its own process probe (tasklist can never match an image called "File Explorer")."""
+    from app.tools.apps import _resolve_alias
+
+    assert _resolve_alias("File Explorer") == "explorer"
+    assert _resolve_alias("file explorer") == "explorer"
+    assert _resolve_alias("VS Code") == "vscode"
+    assert _resolve_alias("Visual Studio Code") == "vscode"
+    assert _resolve_alias("web browser") == "browser"
+    assert _resolve_alias("notepad") == "notepad"
+    assert _resolve_alias("somethingelse") is None
+
+
+def test_app_open_process_hint_is_an_image_name_or_nothing() -> None:
+    from app.tools.apps import AppOpenTool
+
+    assert AppOpenTool._process_hint("explorer") == "explorer.exe"
+    assert AppOpenTool._process_hint("calc") == "CalculatorApp.exe"
+    # A spaced phrase is not an image name — probe() must not be handed it.
+    assert AppOpenTool._process_hint("File Explorer") == ""
+
+
+@pytest.mark.asyncio
+async def test_app_open_rejects_an_unknown_name_instead_of_launching_it(ctx: ToolContext) -> None:
+    result = await AppOpenTool().run({"app": "File Explorer"}, ctx)
+    # "File Explorer" now resolves to explorer, so this must be a *real* launch or a clean
+    # rejection — never `start "" "File Explorer"`.
+    if result.ok:
+        assert "File Explorer" not in result.output["command"]
+    else:
+        assert "unknown application" in (result.error or "")
+
+
+@pytest.mark.asyncio
+async def test_app_open_unresolvable_name_fails_cleanly(ctx: ToolContext) -> None:
+    result = await AppOpenTool().run({"app": "Banana Deluxe"}, ctx)
+    assert not result.ok
+    assert "unknown application" in (result.error or "")
+
+
+@pytest.mark.asyncio
+async def test_app_open_takes_a_url_target_for_browsers(
+    ctx: ToolContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A URL used to go through check_path, which resolved it against the working directory and
+    then refused it as outside the allowed roots — so opening a page in a browser never worked.
+
+    A stub sandbox keeps this deterministic on any platform: no real browser is launched, and the
+    assertion is that check_path is never asked to treat a URL as a path.
+    """
+    from app.tools import apps as apps_module
+
+    monkeypatch.setattr(apps_module, "_platform_key", lambda: "win32")
+    seen_paths: list[str] = []
+    commands: list[str] = []
+
+    class _StubSandbox:
+        async def check_path(self, raw: str, *, write: bool = False) -> Path:
+            seen_paths.append(raw)
+            return Path(raw)
+
+        async def run_command(self, command: str, **kwargs):
+            commands.append(command)
+            return SimpleNamespace(ok=True, exit_code=0, stdout="", stderr="", backend="stub")
+
+    tool = AppOpenTool()
+    stub_ctx = ToolContext(settings=ctx.settings, sandbox=_StubSandbox(), task_id="task_test")
+    result = await tool.run({"app": "browser", "target": "https://gemini.google.com"}, stub_ctx)
+
+    assert result.ok, result.error
+    assert result.output["target_kind"] == "url"
+    assert result.output["target"] == "https://gemini.google.com"
+    assert seen_paths == [], "a URL must never reach the filesystem path check"
+    launches = [c for c in commands if c.startswith("start ") or "msedge" in c and "tasklist" not in c]
+    assert launches and "https://gemini.google.com" in launches[0]
+    # ...and must never have been rewritten into a filesystem path.
+    assert "D:" not in launches[0]
+
+
+@pytest.mark.asyncio
+async def test_app_open_refuses_a_url_target_for_a_file_manager(
+    ctx: ToolContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """explorer cannot open a URL; say so instead of launching it with a nonsense argument.
+
+    The platform is pinned to win32 so this holds on the Linux CI runner too.
+    """
+    from app.tools import apps as apps_module
+
+    monkeypatch.setattr(apps_module, "_platform_key", lambda: "win32")
+    result = await AppOpenTool().run(
+        {"app": "explorer", "target": "https://gemini.google.com"}, ctx
+    )
+    assert not result.ok
+    assert "cannot open a URL" in (result.error or "")
+
+
+def test_url_target_is_not_routed_through_the_path_check() -> None:
+    from app.tools.apps import _URL_SCHEME
+
+    assert _URL_SCHEME.match("https://gemini.google.com")
+    assert _URL_SCHEME.match("http://localhost:3000/x?y=1")
+    assert not _URL_SCHEME.match("C:/Users/HP/notes.md")
+    assert not _URL_SCHEME.match("~/dobot-test")
+
+
+_TASKLIST_V = """\
+Image Name                     PID Session Name        Session# Mem Usage Status          User Name       CPU Time  Window Title
+========================= ======== ================ =========== ============ =============== ============ ============
+msedge.exe                   21256 Console                    6   1,80,832 K Running         DESKTOP\\HP      0:00:32 Google Gemini and 3 more pages - Personal - Microsoft Edge
+msedge.exe                   18140 Console                    6     12,228 K Running         DESKTOP\\HP      0:00:00 N/A
+"""
+
+
+@pytest.mark.asyncio
+async def test_window_titles_are_parsed_from_tasklist_v(
+    ctx: ToolContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The title is the field after CPU time — parsing must not swallow it or keep 'N/A'."""
+    from app.tools import apps as apps_module
+
+    monkeypatch.setattr(apps_module, "_platform_key", lambda: "win32")
+
+    class _Stub:
+        async def run_command(self, command: str, **kwargs):
+            return SimpleNamespace(ok=True, exit_code=0, stdout=_TASKLIST_V, stderr="")
+
+    stub_ctx = ToolContext(settings=ctx.settings, sandbox=_Stub(), task_id="task_test")
+    titles = await apps_module.AppOpenTool._window_titles(stub_ctx, "msedge.exe")
+    assert titles == {"Google Gemini and 3 more pages - Personal - Microsoft Edge"}
+
+
+@pytest.mark.asyncio
+async def test_url_verification_never_claims_success_from_a_process_alone(
+    ctx: ToolContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Edge may already be running; process_running alone is not evidence the page opened.
+
+    With no readable window titles the step must come back *unverifiable*, not verified.
+    """
+    from app.tools import apps as apps_module
+
+    monkeypatch.setattr(apps_module, "_platform_key", lambda: "win32")
+
+    async def _no_titles(*args, **kwargs):
+        return set()
+
+    monkeypatch.setattr(apps_module.AppOpenTool, "_window_titles", staticmethod(_no_titles))
+
+    class _Stub:
+        async def run_command(self, command: str, **kwargs):
+            return SimpleNamespace(ok=True, exit_code=0, stdout="msedge.exe  1", stderr="")
+
+    tool = apps_module.AppOpenTool()
+    stub_ctx = ToolContext(settings=ctx.settings, sandbox=_Stub(), task_id="task_test")
+    result = tool.ok(
+        "app_open",
+        {
+            "process_hint": "msedge.exe",
+            "target_kind": "url",
+            "target": "https://gemini.google.com",
+            "window_titles_before": [],
+        },
+        0.0,
+    )
+    verification = await tool.verify({}, result, stub_ctx)
+    assert verification.verified is False
+    assert verification.skipped_reason, "an inconclusive probe must say so"
+    assert all(check.passed for check in verification.checks), "no check may fail spuriously"
+
+
+@pytest.mark.asyncio
+async def test_url_verification_reports_a_new_window_as_evidence(
+    ctx: ToolContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.tools import apps as apps_module
+
+    monkeypatch.setattr(apps_module, "_platform_key", lambda: "win32")
+
+    async def _titles(*args, **kwargs):
+        return {"Wikipedia and 4 more pages - Personal - Microsoft Edge"}
+
+    monkeypatch.setattr(apps_module.AppOpenTool, "_window_titles", staticmethod(_titles))
+
+    class _Stub:
+        async def run_command(self, command: str, **kwargs):
+            return SimpleNamespace(ok=True, exit_code=0, stdout="msedge.exe  1", stderr="")
+
+    tool = apps_module.AppOpenTool()
+    stub_ctx = ToolContext(settings=ctx.settings, sandbox=_Stub(), task_id="task_test")
+    result = tool.ok(
+        "app_open",
+        {
+            "process_hint": "msedge.exe",
+            "target_kind": "url",
+            "target": "https://wikipedia.org",
+            "window_titles_before": ["Google Gemini and 3 more pages - Personal - Edge"],
+        },
+        0.0,
+    )
+    verification = await tool.verify({}, result, stub_ctx)
+    assert verification.verified is True
+    assert any(check.name == "window_opened_for_target" and check.passed for check in verification.checks)
 
 
 def test_tool_specs_expose_risk_floors() -> None:
