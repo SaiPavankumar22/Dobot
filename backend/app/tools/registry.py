@@ -13,6 +13,12 @@ from app.schemas import RiskLevel
 from app.tools.apps import AppOpenTool
 from app.tools.base import Tool, ToolContext
 from app.tools.browser import BrowserOpenTool, BrowserReadTool, BrowserSubmitTool
+from app.tools.browser_drive import (
+    BrowserClickTool,
+    BrowserNavigateTool,
+    BrowserSnapshotTool,
+    BrowserTypeTool,
+)
 from app.tools.computer import COMPUTER_TOOLS
 from app.tools.deep_research import DeepResearchTool
 from app.tools.filesystem import (
@@ -103,6 +109,10 @@ def default_registry() -> ToolRegistry:
         TerminalRunTool(),
         BrowserOpenTool(),
         BrowserReadTool(),
+        BrowserNavigateTool(),
+        BrowserSnapshotTool(),
+        BrowserClickTool(),
+        BrowserTypeTool(),
         BrowserSubmitTool(),
         ScreenCaptureTool(),
         ScreenAnalyzeTool(),

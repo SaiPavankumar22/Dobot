@@ -695,7 +695,7 @@ These are all genuinely optional — Dobot runs without each of them, with the t
 | MongoDB | set `MONGODB_URI`, install the `mongo` extra | durable structured memory across reinstalls | local file store in `.dobot/` |
 | Zilliz (Milvus) | set `ZILLIZ_URI` + `ZILLIZ_TOKEN`, install the `vectors` extra | scalable semantic recall | local cosine index over the file store |
 | OCR | install the `ocr` extra and Tesseract | reading text out of screenshots | vision model path only |
-| Hermes runtime | set `AGENT_RUNTIME=cli` or `remote`, `HERMES_ENDPOINT` | full browser automation and desktop (GUI) control | Dobot's own guarded local tools; `computer_*` refuses |
+| Hermes runtime | set `AGENT_RUNTIME=cli` or `remote`, `HERMES_ENDPOINT` | desktop (GUI) control (`computer_*`) and prompt delegation | local Playwright browser driver handles all browser interaction; `computer_*` refuses |
 | NemoClaw / OpenShell | run the stack, then set `SANDBOX_PROVIDER=nemoclaw` and `OPENSHIELD_GATEWAY_URL` | kernel-level isolation for executed actions | in-process action firewall only (`isolation: none`) |
 
 The **Security** page shows which of these are actually active, and explicitly flags the ones that are

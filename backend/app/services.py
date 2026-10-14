@@ -311,6 +311,8 @@ class Services:
             await self.consolidator.stop()
         await self.scheduler.stop()
         await self.activity.stop()
+        from app.tools.browser_drive import close_drive
+
         for closer in (
             self.memory.close,
             self.tavily.aclose,
@@ -320,6 +322,7 @@ class Services:
             self.runtime.close,
             self.sandbox.close,
             self.store.close,
+            close_drive,
         ):
             try:
                 await closer()

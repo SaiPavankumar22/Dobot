@@ -24,7 +24,9 @@ behind `app/agents/hermes.py`.
 | `fs_move` | MEDIUM | Move/rename inside allowed paths |
 | `fs_delete` | HIGH | Never runs without approval |
 | `terminal_run` | MEDIUM→HIGH | Allowlisted binaries, hard timeout, cwd restricted |
-| `browser_open` / `browser_read` | LOW/MEDIUM | Navigate + read content |
+| `browser_open` / `browser_read` | LOW | Fetch page text over HTTP (read-only, no window) |
+| `browser_navigate` / `browser_snapshot` | LOW | Open the visible browser, index interactive elements |
+| `browser_click` / `browser_type` | MEDIUM | Drive the visible browser (local Playwright driver) |
 | `computer_*` | MEDIUM | Hermes computer use: click, type, scroll, drag |
 | `screen_capture` / `screen_analyze` | LOW | On-demand capture, OCR + vision |
 | `memory_write` | LOW | Explicit "remember this" |

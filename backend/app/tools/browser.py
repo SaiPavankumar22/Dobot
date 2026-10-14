@@ -1,8 +1,8 @@
 """Browser tools.
 
-Read paths fetch over HTTP through the sandbox's host allowlist. Interactive paths (click, type,
-submit, signed-in sessions) are delegated to Hermes' `browser_exec` toolset, because that is where a
-real browser profile lives — and because the decision engine gates submits behind approval.
+Read paths fetch over HTTP through the sandbox's host allowlist. Interactive work (click, type,
+download) runs on the local Playwright driver in `app.tools.browser_drive` — a real, visible
+window — with Hermes' `browser_exec` toolset as a fallback backend for browser_submit.
 """
 
 from __future__ import annotations
@@ -83,7 +83,12 @@ class BrowserSession:
 
 class BrowserOpenTool(Tool):
     name = "browser_open"
-    description = "Open a web page and return its title and readable text."
+    description = (
+        "Fetch a web page over HTTP and return its title and readable text. This does NOT open a "
+        "visible browser window and cannot interact with the page; to show a page in the user's "
+        "browser, use app_open(app='browser', target='<url>'), and to work inside a page (type, "
+        "click, download), use browser_navigate. Reads only — never submits."
+    )
     risk_floor = RiskLevel.LOW
     proactive_ok = True
     parameters = {
@@ -117,7 +122,10 @@ class BrowserOpenTool(Tool):
 
 class BrowserReadTool(BrowserOpenTool):
     name = "browser_read"
-    description = "Read the readable text of a web page (same as browser_open, read-only intent)."
+    description = (
+        "Read the readable text of a web page over HTTP (same as browser_open, read-only intent). "
+        "Does not open a visible window and cannot click or type."
+    )
     parameters = {
         "type": "object",
         "properties": {"url": {"type": "string"}},
@@ -128,10 +136,13 @@ class BrowserReadTool(BrowserOpenTool):
 class BrowserSubmitTool(Tool):
     name = "browser_submit"
     description = (
-        "Fill in and submit a form on a web page using the Hermes browser session. "
-        "Always requires user approval."
+        "Fill in and submit a whole form on a web page: navigate to the URL, fill every named "
+        "field, and click submit. Runs on the local Playwright driver when available, else the "
+        "Hermes runtime. For single clicks or typing into a live page, prefer browser_click / "
+        "browser_type. Always requires user approval."
     )
     risk_floor = RiskLevel.HIGH
+    session: Any = None
     parameters = {
         "type": "object",
         "properties": {
@@ -147,20 +158,22 @@ class BrowserSubmitTool(Tool):
         started = time.perf_counter()
         ctx.check_cancelled()
         url = self.require(params, "url")
-        if ctx.hermes is None or not getattr(ctx.hermes, "available", False):
+        fields = params.get("fields") or {}
+        selector = str(params.get("submit_selector", ""))
+        # Prefer the local Playwright driver; fall back to Hermes when it is configured.
+        from app.tools.browser_drive import drive_submit, get_drive
+
+        result = await drive_submit(self.session or get_drive(), url, fields, selector)
+        if not result.get("ok") and ctx.hermes is not None and getattr(ctx.hermes, "available", False):
+            result = await ctx.hermes.browser_submit(
+                url=url, fields=fields, submit_selector=selector
+            )
+        if not result.get("ok"):
             return self.fail(
                 self.name,
-                "submitting forms needs the Hermes browser runtime (AGENT_RUNTIME=cli or remote); "
-                "Dobot will not fake a submission",
+                str(result.get("error") or "browser submit failed; Dobot will not fake a submission"),
                 started,
             )
-        result = await ctx.hermes.browser_submit(
-            url=url,
-            fields=params.get("fields") or {},
-            submit_selector=str(params.get("submit_selector", "")),
-        )
-        if not result.get("ok"):
-            return self.fail(self.name, str(result.get("error", "browser submit failed")), started)
         return self.ok(self.name, result, started)
 
     async def verify(

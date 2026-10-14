@@ -16,6 +16,7 @@ dependencies = [
     "langsmith>=0.1",
     # Nebius Sandboxes (ConTree): remote VM execution for SANDBOX_PROVIDER=nebius.
     "contree-sdk>=0.3",
+    "playwright>=1.63.0",
 ]
 
 [project.optional-dependencies]
