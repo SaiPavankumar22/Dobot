@@ -1092,6 +1092,14 @@ class Orchestrator:
             output = (step.result or {}).get("output")
             summary = self._summarise_output(step, output)
             facts.append(f"- {step.action.tool}: {summary}")
+            # Per-step verification notes carry what was *not* proven (e.g. "the URL itself was
+            # not independently confirmed"). summary_line() only counts checks, so without this
+            # the answer pass had room to claim a page loaded when nobody confirmed it.
+            step_verification = step.verification or {}
+            for note_key in ("notes", "skipped_reason"):
+                text = str(step_verification.get(note_key) or "").strip()
+                if text:
+                    facts.append(f"- {step.action.tool} verification {note_key}: {text}")
         if verification is not None:
             facts.append(f"- verification: {verification.summary_line()}")
         if sources:

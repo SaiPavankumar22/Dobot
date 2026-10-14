@@ -37,6 +37,9 @@ class ModelResponse:
     degraded: bool = False
     latency_ms: int = 0
     usage: dict[str, Any] = field(default_factory=dict)
+    #: "length" means the provider stopped mid-output — the caller must not treat a truncated
+    #: document as a complete one.
+    finish_reason: str = ""
 
     def json(self) -> dict[str, Any] | None:
         """Parse the response as JSON, tolerating fenced code blocks."""
@@ -136,6 +139,18 @@ class NemotronClient:
                 # Reasoning models sometimes emit only a reasoning field; keep whatever we got.
                 content = message.get("reasoning_content") or ""
             usage = data.get("usage") or {}
+            choice = (data.get("choices") or [{}])[0]
+            finish_reason = str(choice.get("finish_reason") or "")
+            if finish_reason == "length":
+                # Nemotron's thinking trace shares the max_tokens budget with the answer, so a plan
+                # can be cut off well before the caller's own idea of "enough". Log it: a silently
+                # truncated plan parses into garbage or falls back to the offline rules.
+                logger.warning(
+                    "%s hit max_tokens=%d after %s output tokens; response truncated",
+                    target,
+                    payload["max_tokens"],
+                    usage.get("completion_tokens", "?"),
+                )
             span.record(
                 input_tokens=usage.get("prompt_tokens"),
                 output_tokens=usage.get("completion_tokens"),
@@ -147,6 +162,7 @@ class NemotronClient:
                 tier=tier,
                 latency_ms=int((time.perf_counter() - started) * 1000),
                 usage=usage,
+                finish_reason=finish_reason,
             )
 
     async def health(self) -> bool:

@@ -86,6 +86,90 @@ async def test_scheduling_request_produces_automation(planner: Planner) -> None:
 
 
 @pytest.mark.asyncio
+async def test_offline_open_rule_never_passes_a_sentence_as_target(planner: Planner) -> None:
+    """The regex that pulls a target out of prose used to swallow the rest of it.
+
+    That produced app_open(target="called X in my home directory. Inside it"), which the sandbox
+    then refused — a plan that could never have succeeded.
+    """
+    plan = await planner.plan(
+        "Create a folder called dobot-test in my home directory. Inside it, write report.py, "
+        "then open the folder in the file explorer.",
+        ContextBundle(),
+    )
+    open_steps = [s for s in plan.steps if s.action.tool == "app_open"]
+    for step in open_steps:
+        target = str(step.action.params.get("target", ""))
+        assert ". " not in target, f"prose leaked into target: {target!r}"
+        assert len(target) <= 200
+
+
+def test_looks_like_path_rejects_prose() -> None:
+    from app.core.planner import _looks_like_path
+
+    assert _looks_like_path("~/dobot-test")
+    assert _looks_like_path("Documents")
+    assert _looks_like_path("D:/All/Dobot")
+    assert not _looks_like_path("called dobot-multistep-test in my home directory. Inside it")
+    assert not _looks_like_path("")
+
+
+def test_degenerate_payload_is_not_treated_as_a_valid_plan(planner: Planner) -> None:
+    """`{\"\": \"\"}` parses as JSON but carries no plan.
+
+    Treating it as valid used to yield an empty plan that the final-answer pass then described as
+    if the work had happened.
+    """
+    payload: dict = {"": ""}
+    recognised = {"intent", "summary", "steps", "answer", "reasoning", "research_query"}
+    assert payload and not (recognised & set(payload))
+
+
+@pytest.mark.asyncio
+async def test_degenerate_model_output_falls_back_to_offline_rules(planner: Planner) -> None:
+    from app.agents.nemotron import ModelResponse
+    from app.schemas import ModelTier
+
+    class _DegenerateReasoner:
+        available = True
+
+        async def chat(self, *args, **kwargs):
+            return ModelResponse(content='{"": ""}', model="test", tier=ModelTier.SUPER)
+
+    planner.reasoner = _DegenerateReasoner()  # type: ignore[assignment]
+    plan = await planner.plan("create a file called NOTES.md with the plan", ContextBundle())
+    assert plan.degraded, "a payload with no recognised key must not be treated as a real plan"
+    assert plan.steps, "the offline rules should still have planned something"
+
+
+@pytest.mark.asyncio
+async def test_truncated_model_output_retries_with_a_larger_budget(planner: Planner) -> None:
+    from app.agents.nemotron import ModelResponse
+    from app.schemas import ModelTier
+
+    seen: list[int] = []
+
+    class _TruncatingReasoner:
+        available = True
+
+        async def chat(self, *args, **kwargs):
+            seen.append(int(kwargs.get("max_tokens", 0)))
+            first = len(seen) == 1
+            return ModelResponse(
+                content='{"steps": []}' if not first else '{"": ""}',
+                model="test",
+                tier=ModelTier.SUPER,
+                finish_reason="length" if first else "stop",
+            )
+
+    planner.reasoner = _TruncatingReasoner()  # type: ignore[assignment]
+    plan = await planner.plan("create a file called NOTES.md with the plan", ContextBundle())
+    assert len(seen) == 2, "a truncated response must be retried once"
+    assert seen[1] > seen[0], "the retry must have a larger token budget"
+    assert not plan.degraded
+
+
+@pytest.mark.asyncio
 async def test_unknown_tools_are_dropped(planner: Planner) -> None:
     plan = planner._from_payload(
         {

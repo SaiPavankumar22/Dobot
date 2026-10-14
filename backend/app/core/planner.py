@@ -28,6 +28,26 @@ from app.tools.registry import ToolRegistry
 
 logger = get_logger(__name__)
 
+#: Nemotron's thinking trace is billed against the same max_tokens as the JSON answer, so a plan
+#: needs far more headroom than its rendered size suggests. 1800 cut plans mid-document.
+PLANNER_MAX_TOKENS = 4096
+
+
+def _looks_like_path(value: str) -> bool:
+    """True when a candidate extracted from prose could plausibly be a filesystem path.
+
+    The offline planner pulls targets out of free text, so it has to reject the common case where
+    the regex swallowed the rest of the sentence — "folder called X in my home directory. Inside it".
+    """
+    if not value or len(value) > 200:
+        return False
+    if any(mark in value for mark in (". ", ", ", "! ", "? ", ";")):
+        return False  # sentence punctuation: this is prose
+    if any(char in value for char in "/\\~"):
+        return True
+    # A single word ("Documents") or a short hyphenated name is a plausible relative name.
+    return " " not in value
+
 #: Tools whose effects can be undone by the user without data loss.
 REVERSIBLE_TOOLS = {
     "fs_write",
@@ -57,6 +77,31 @@ Rules:
 6. If the user asks you to remember something durable, include a `remember` step.
 7. If the request is only a question, return no steps and put the full answer in "answer".
 8. Steps that change the machine must state exactly what they will do in "description".
+9. "Open the browser / go to <url>" with no interaction means the user wants to SEE the page:
+   use app_open(app="browser", target="<url>"). browser_open and browser_read only fetch text
+   over HTTP behind the scenes — no window appears. The URL must be passed as target; omitting
+   it opens a blank browser, which is not what was asked for.
+10. To WORK inside a page (type, click, download), drive the visible browser directly:
+    browser_navigate(url) first — its output lists interactive elements with indices — then
+    browser_type(target=..., text=..., press_enter=...) or browser_click(target=...).
+    Prefer the element's numeric INDEX from that list as target; never guess a tag name
+    ("textarea" often does not exist on modern app pages — the composer may be a div whose css
+    contains "rich-textarea"). The snapshot's `input_indices` field lists the text-entry
+    elements: to type, target one of those (the composer/chat box), never index 0 by default.
+    Copy the element's css from the snapshot only if you need a
+    selector. Re-read the page with browser_snapshot after actions; indices refresh after every
+    action. A download triggered by a click is saved and its path appears in the result.
+    Generation is slow: after sending a prompt that creates an image/file, wait with
+    browser_snapshot(wait_seconds=15..30) before clicking a result or download button. If a
+    click fails because the element was not found, the page was probably still loading —
+    snapshot again (with wait_seconds) and retry the same click; do not end the task after the
+    first failed click.
+    Whole forms can use browser_submit (needs approval). Only desktop GUI apps (computer_*)
+    need the Hermes runtime; browser interaction does not. Never invent claims about what a
+    website can or cannot do.
+11. Do the part you can. If a request has several parts and one needs an unavailable runtime,
+    still plan the steps that work (e.g. open the browser at the page), then say plainly which
+    part is blocked and why. Do not skip to a no-steps answer when there are steps you can run.
 
 Reply with ONLY a JSON object:
 {
@@ -172,11 +217,26 @@ class Planner:
             ],
             tier=tier,
             json_mode=True,
-            max_tokens=1800,
+            max_tokens=PLANNER_MAX_TOKENS,
             # The light tier only handles short conversational turns; a thinking trace there is
             # almost the entire response latency. Deep tiers keep the default (think).
             thinking=(tier is not ModelTier.LIGHT),
         )
+        if response.finish_reason == "length" and not response.degraded:
+            # Nemotron's thinking shares the max_tokens budget with the JSON, so the plan can be
+            # cut mid-document. One retry with a larger ceiling is cheaper than executing an
+            # offline rule that misreads the request.
+            logger.warning("planner output truncated; retrying with a larger token budget")
+            response = await self.reasoner.chat(
+                [
+                    {"role": "system", "content": self.system_prompt},
+                    {"role": "user", "content": "\n\n".join(prompt_parts)},
+                ],
+                tier=tier,
+                json_mode=True,
+                max_tokens=PLANNER_MAX_TOKENS * 3,
+                thinking=(tier is not ModelTier.LIGHT),
+            )
         if response.degraded:
             logger.info("planning degraded to offline rules (model unreachable)")
             plan = self._offline_plan(message, bundle)
@@ -184,7 +244,11 @@ class Planner:
             plan.raw = response.content
             return plan
         payload = response.json()
-        if not payload:
+        recognised = {"intent", "summary", "steps", "answer", "reasoning", "research_query"}
+        if not payload or not (recognised & set(payload)):
+            # `response.json()` also accepts a degenerate object like `{"": ""}` — truthy, but it
+            # carries no plan at all. Falling through to _from_payload would yield an empty plan
+            # that the final-answer pass then describes as if the work had happened.
             logger.warning("planner returned unparsable JSON; using offline rules")
             plan = self._offline_plan(message, bundle)
             plan.degraded = True
@@ -362,7 +426,11 @@ class Planner:
             target_match = re.search(r"(?i)(?:project|folder|repo|directory)\s+([\w\-\./\\~ ]+)", text)
             params: dict[str, Any] = {"app": app}
             if target_match:
-                params["target"] = target_match.group(1).strip()
+                candidate = target_match.group(1).strip()
+                # The match is greedy over prose: "folder called X in my home directory. Inside it"
+                # is a sentence fragment, not a path. Only pass a target that can plausibly be one.
+                if _looks_like_path(candidate):
+                    params["target"] = candidate
             add("app_open", params, f"Open {app}", f"{app} appears in the process list")
 
         if re.search(r"(?i)\b(clean|organi[sz]e|tidy)\b.*\b(downloads?|folder|files)\b", lowered):
