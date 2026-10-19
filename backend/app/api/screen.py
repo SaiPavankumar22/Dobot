@@ -17,7 +17,6 @@ from app.schemas import (
     ScreenAnalyzeResponse,
     new_id,
 )
-from app.tools.screen import extract_screen_text, save_ephemeral
 
 router = APIRouter(tags=["screen"])
 
@@ -61,40 +60,6 @@ async def analyze(request: ScreenAnalyzeRequest, services: ServicesDep) -> Scree
         task_id = response.task_id
 
     return ScreenAnalyzeResponse(answer=answer, context_id=context_id, screen=screen, task_id=task_id)
-
-
-@router.post("/screen/context")
-async def context(request: ScreenAnalyzeRequest, services: ServicesDep) -> dict:
-    """Return the extracted screen context without invoking reasoning (cheap preview/dev tool)."""
-    context_request = services.context_request_factory(
-        message=request.question,
-        region=request.region,
-        image_base64=request.image,
-        question=request.question,
-        application=request.application,
-        window_title=request.window_title,
-    )
-    screen = await services.context.build_screen_context(context_request)
-    if screen is None:
-        return {"available": False, "reason": "no image or region supplied"}
-    return {"available": True, "screen": screen.model_dump(mode="json")}
-
-
-@router.post("/screen/ocr")
-async def ocr(request: ScreenAnalyzeRequest, services: ServicesDep) -> dict:
-    """Run OCR/vision on a supplied PNG and return the text and engine used."""
-    import base64
-
-    if not request.image:
-        return {"text": "", "engine": "unavailable", "reason": "no image supplied"}
-    png = base64.b64decode(request.image)
-    text, engine = await extract_screen_text(png, services.settings, request.question)
-    return {
-        "text": text,
-        "engine": engine,
-        "bytes": len(png),
-        "image_ref": str(save_ephemeral(png, services.settings)),
-    }
 
 
 @router.get("/screen/privacy")
