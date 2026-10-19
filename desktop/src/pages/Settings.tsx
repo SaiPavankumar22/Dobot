@@ -12,6 +12,9 @@ import {
   type OperatorKey,
 } from "../services/api";
 import { useDobot } from "../store/dobotStore";
+import { useAuth } from "../store/authStore";
+import { isNative } from "../services/native";
+import { checkForUpdates } from "../services/updater";
 import type { VoiceSummary } from "../types";
 
 interface OnboardingStep {
@@ -79,6 +82,26 @@ export function Settings() {
   const setSpeakAnswers = useDobot((state) => state.setSpeakAnswers);
   const connect = useDobot((state) => state.connect);
   const disconnect = useDobot((state) => state.disconnect);
+  const authUser = useAuth((state) => (state.phase === "signed-in" ? state.user : null));
+  const signOut = useAuth((state) => state.signOut);
+  const [inviteCode, setInviteCode] = useState<string | null>(null);
+  const [inviteBusy, setInviteBusy] = useState(false);
+  const [inviteError, setInviteError] = useState<string | null>(null);
+
+  async function makeInvite() {
+    setInviteBusy(true);
+    setInviteError(null);
+    try {
+      const result = await api.createInvite();
+      setInviteCode(result.invite_code);
+    } catch (error) {
+      setInviteError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setInviteBusy(false);
+    }
+  }
+  const [updateBusy, setUpdateBusy] = useState(false);
+  const [updateNote, setUpdateNote] = useState("");
   const [baseUrl, setBase] = useState(getBaseUrl());
   const [token, setToken] = useState(getApiToken());
   const [connNote, setConnNote] = useState<{ ok: boolean; text: string } | null>(null);
@@ -209,6 +232,103 @@ export function Settings() {
           ? "This backend requires a token."
           : "The connected backend is not asking for a token right now."}
       </p>
+
+      <h2>Account</h2>
+      {authUser ? (
+        <>
+          <div className="row" style={{ alignItems: "center" }}>
+            <div>
+              <strong>{authUser.name}</strong>
+              <span className="subtle">{"  ·  "}{authUser.role}</span>
+            </div>
+            <button
+              className="ghost"
+              onClick={() => {
+                signOut();
+                // The live socket still carries the session token in its handshake: drop it
+                // now (the sign-in gate is about to appear; a fresh login redials).
+                disconnect();
+              }}
+            >
+              Sign out
+            </button>
+          </div>
+          <p className="subtle">
+            Signed in to this backend — your memory, tasks and keys are scoped to this account.
+            The token field above stays untouched by signing in or out.
+          </p>
+          {authUser.role === "owner" && (
+            <div className="notice" style={{ marginTop: 10 }}>
+              <div className="row" style={{ alignItems: "center", justifyContent: "space-between" }}>
+                <span>
+                  <strong>Invite someone</strong>
+                  <div className="subtle" style={{ marginTop: 2 }}>
+                    Accounts are invite-gated. Create a one-time code — the new account gets its own
+                    memory, tasks and keys.
+                  </div>
+                </span>
+                <button className="ghost" disabled={inviteBusy} onClick={() => void makeInvite()}>
+                  {inviteBusy ? "Creating…" : "Create invite code"}
+                </button>
+              </div>
+              {inviteError && (
+                <div className="subtle" style={{ color: "var(--danger)", marginTop: 8 }}>
+                  {inviteError}
+                </div>
+              )}
+              {inviteCode && (
+                <div className="row" style={{ marginTop: 8, alignItems: "center", gap: 8 }}>
+                  <code className="invite-code">{inviteCode}</code>
+                  <button
+                    className="ghost"
+                    onClick={() => {
+                      void navigator.clipboard.writeText(inviteCode).then(() => setInviteCode(null));
+                    }}
+                    title="Copies the code and clears it from this screen"
+                  >
+                    Copy & clear
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+        </>
+      ) : (
+        <p className="subtle">
+          This backend has no account session (single-user, or nobody signed in): access is via
+          the token field above.
+        </p>
+      )}
+
+      <h2>Updates</h2>
+      <div className="row">
+        <button
+          disabled={!isNative || updateBusy}
+          onClick={async () => {
+            setUpdateBusy(true);
+            setUpdateNote("");
+            try {
+              const found = await checkForUpdates();
+              setUpdateNote(
+                found
+                  ? `Dobot ${found.version} is available — the banner offers Update now.`
+                  : "You are on the latest version.",
+              );
+            } catch (caught) {
+              setUpdateNote(caught instanceof Error ? caught.message : String(caught));
+            }
+            setUpdateBusy(false);
+          }}
+        >
+          {updateBusy ? "Checking…" : "Check for updates"}
+        </button>
+        <span className="subtle">
+          {updateNote ||
+            (isNative
+              ? "Updates arrive from GitHub Releases, are signature-checked, and install here."
+              : "Updates only exist in the installed (Tauri) app.")}
+        </span>
+      </div>
 
       <h2>Onboarding</h2>
       {steps.map((step) => (

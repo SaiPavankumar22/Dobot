@@ -37,3 +37,6 @@ vite.config.d.ts
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# Tauri updater signing key — CI holds the private half as TAURI_SIGNING_PRIVATE_KEY
+.tauri-signing/

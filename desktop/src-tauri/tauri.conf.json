@@ -78,6 +78,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "createUpdaterArtifacts": true,
     "category": "Productivity",
     "shortDescription": "An AI that doesn't just answer you. It works for you.",
     "longDescription": "Dobot is an always-on personal AI operating layer: it sees what you're working on, understands your intent, researches the web, remembers what matters, safely operates your computer and verifies its work.",
@@ -88,5 +89,13 @@
       "icons/icon.png",
       "icons/icon.ico"
     ]
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/SaiPavankumar22/Dobot/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDg3QUFEREY4NURCQjMwNkMKUldSc01MdGQrTjJxaDk5NTVhS1U0cXBIQm1YU3JsZ2p6VTZIaGZ5eXQyTCtpODJyMzdRWUtIcHMK"
+    }
   }
 }

@@ -219,6 +219,11 @@ pub fn run() {
         // capability entries are needed for it.
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, None))
+        // In-app updates (frontend: services/updater.ts + components/UpdateBanner.tsx):
+        // check GitHub Releases, download+install, relaunch. process:allow-restart is in
+        // the default capability so the webview may ask Rust to restart after installing.
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, shortcut, event| hotkeys::handle(app, shortcut, event))

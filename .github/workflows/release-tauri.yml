@@ -1,0 +1,100 @@
+name: Release desktop app
+
+# Builds the Windows installer and publishes a GitHub Release with the signed updater
+# artifacts (`latest.json` + signatures), so installed copies get an in-app
+# "update available" banner (Settings → Updates) instead of a manual .exe download.
+#
+#   git tag v0.2.0 && git push --tags    → releases v0.2.0
+#   Actions → Release desktop app → Run  → releases the input version,
+#                                          or patch-bumps the current one if left empty
+#
+# Signing: the private half of the updater key lives ONLY as the repo secrets
+# TAURI_SIGNING_PRIVATE_KEY (contents of .tauri-signing/dobot.key, gitignored) and
+# TAURI_SIGNING_PRIVATE_KEY_PASSWORD (empty for this key). The public half is pinned in
+# desktop/src-tauri/tauri.conf.json (plugins.updater.pubkey); Rust refuses any bundle
+# that does not match it.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release (e.g. 0.2.0). Leave empty to patch-bump the current one."
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-desktop
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: build + publish (windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri
+
+      - name: Install frontend dependencies
+        working-directory: desktop
+        run: npm ci
+
+      - name: Work out the release version
+        id: version
+        shell: bash
+        run: |
+          current=$(jq -r .version desktop/src-tauri/tauri.conf.json)
+          want="${{ github.event.inputs.version }}"
+          if [ -n "$want" ]; then
+            v="$want"
+          elif [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            v="${GITHUB_REF_NAME#v}"
+          else
+            IFS=. read -r major minor patch <<< "$current"
+            v="$major.$minor.$((patch + 1))"
+          fi
+          echo "v=$v" >> "$GITHUB_OUTPUT"
+          echo "Releasing Dobot v$v (configured version was $current)"
+
+      - name: Stamp the version into app + crate
+        shell: bash
+        run: |
+          v="${{ steps.version.outputs.v }}"
+          jq --arg v "$v" '.version = $v' desktop/src-tauri/tauri.conf.json > tauri.conf.json.tmp
+          mv tauri.conf.json.tmp desktop/src-tauri/tauri.conf.json
+          jq --arg v "$v" '.version = $v' desktop/package.json > package.json.tmp
+          mv package.json.tmp desktop/package.json
+          sed -i "s/^version = \".*\"/version = \"$v\"/" desktop/src-tauri/Cargo.toml
+          echo "tauri.conf version: $(jq -r .version desktop/src-tauri/tauri.conf.json)"
+
+      - name: Build, sign and publish
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: desktop
+          tauriScript: npm run tauri --
+          platforms: windows
+          tagName: v${{ steps.version.outputs.v }}
+          releaseName: Dobot v${{ steps.version.outputs.v }}
+          releaseBody: "Windows build of Dobot. Installed copies pick this up in-app: Settings → Updates."
+          releaseDraft: false
+          prerelease: false
+          includeUpdaterJson: true
