@@ -96,10 +96,24 @@ class Settings(BaseSettings):
     zilliz_collection: str = "dobot_memory"
 
     # --- execution runtime: Hermes ------------------------------------------
+    # local = Dobot's guarded in-process tools. cli = the `hermes` CLI. remote/api/hermes =
+    # the real Hermes Agent gateway over HTTP (/v1/runs + SSE). auto = gateway if reachable.
     agent_runtime: str = "local"
     hermes_command: str = "hermes"
     hermes_args: str = "-p"
+    #: Base URL of a running Hermes gateway. Empty means http://127.0.0.1:8642.
     hermes_endpoint: str = ""
+    #: Bearer token for the gateway — the value of the gateway's API_SERVER_KEY.
+    hermes_api_key: str = ""
+    #: Optional fixed conversation id so successive Dobot turns share one Hermes session.
+    hermes_session_id: str = ""
+    #: When the gateway is unreachable, keep serving with Dobot's own guarded tools instead of
+    #: failing every request. Set false for strict "Hermes or nothing" deployments.
+    hermes_fallback_local: bool = True
+    #: How long a health answer is trusted before the next call re-probes the gateway.
+    hermes_health_ttl_seconds: int = 30
+    #: Short timeout for the health probe; a dead gateway must not delay a plan.
+    hermes_probe_timeout_seconds: float = 2.5
     hermes_allowed_tools: str = "browser_exec,computer_use,terminal,filesystem,skills"
     hermes_timeout_seconds: int = 300
 
@@ -262,6 +276,14 @@ class Settings(BaseSettings):
     # require `Authorization: Bearer <token>` on every request except /health. Generate one with
     # `python -m app.selftest --new-token`.
     dobot_api_token: str = ""
+    # --- multi-user (opt-in) --------------------------------------------------
+    # false (default): one person, one `.env`, everything exactly as before.
+    # true: /auth/register + /auth/login issue per-user API tokens; each user's memory, tasks,
+    # approvals, activity and API keys are isolated (see app/core/tenancy.py). The first
+    # registered user becomes the owner; later users need an owner invite unless
+    # multi_user_open_registration is true. DOBOT_API_TOKEN keeps working as the operator gate.
+    multi_user: bool = False
+    multi_user_open_registration: bool = False
 
     # --- screen / ocr --------------------------------------------------------
     screen_capture: str = "on_demand"
@@ -398,7 +420,7 @@ class Settings(BaseSettings):
     @field_validator("agent_runtime")
     @classmethod
     def _known_runtime(cls, value: str) -> str:
-        allowed = {"local", "cli", "remote"}
+        allowed = {"local", "cli", "remote", "api", "hermes", "auto"}
         value = value.lower()
         return value if value in allowed else "local"
 

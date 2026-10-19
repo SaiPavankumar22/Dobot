@@ -21,6 +21,7 @@ from app import __version__
 from app.api import (
     activity,
     approvals,
+    auth,
     automations,
     chat,
     memory,
@@ -45,6 +46,9 @@ logger = get_logger(__name__)
 #: always ask "are you alive?" without holding a credential.
 AUTH_EXEMPT_PATHS = frozenset({"/", "/health", "/docs", "/redoc", "/openapi.json", "/auth/status"})
 
+#: With MULTI_USER=true these are reachable without a token (register/login are the way in).
+MULTI_USER_PUBLIC_PATHS = frozenset({"/auth/register", "/auth/login"})
+
 ALLOWED_ORIGINS = [
     "http://localhost:1420",
     "http://127.0.0.1:1420",
@@ -54,6 +58,20 @@ ALLOWED_ORIGINS = [
     "http://tauri.localhost",
     "https://tauri.localhost",
 ]
+
+
+async def _load_user_key_overrides(services: Any, user_id: str) -> dict[str, str]:
+    """The asking user's own provider keys, stored per user under the settings collection."""
+    if services is None:
+        return {}
+    # Read the user's copy directly through the base store: the scoped wrapper would
+    # prefix with the *ambient* user, which is unset this early in the request.
+    from app.core.tenancy import scoped_name
+
+    base = getattr(services.store, "_base", services.store)
+    doc = await base.get(scoped_name(user_id, "settings"), "user_keys")
+    keys = (doc or {}).get("keys") if isinstance(doc, dict) else None
+    return {str(k): str(v) for k, v in (keys or {}).items() if str(v).strip()}
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -102,6 +120,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         security.router,
         activity.router,
         system.router,
+        auth.router,
         ws.router,
     ):
         app.include_router(router)
@@ -110,25 +129,68 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.middleware("http")
     async def require_token(request: Request, call_next: Any):
-        """Optional bearer-token gate for the loopback API.
+        """Bearer-token gate: the operator token, and (with MULTI_USER=true) user tokens.
 
         Off by default: on a single-user laptop the API is only reachable from this machine, and a
         token nobody sets is security theatre. It is worth turning on the moment this machine shares a
         network, and the Doctor page reports plainly which of those two worlds you are in.
+
+        Multi-user: a ``dobot_u_...`` token identifies a person; their id and their own API keys
+        are attached to the request context, so every store read/write below is theirs alone.
         """
-        token = (settings.dobot_api_token or "").strip()
+        from app.core.tenancy import current_user_id, user_key_overrides
+
         path = request.url.path
-        if (
-            not token
-            or request.method == "OPTIONS"
-            or path in AUTH_EXEMPT_PATHS
-            or path.startswith("/docs")
-        ):
+        if request.method == "OPTIONS" or path in AUTH_EXEMPT_PATHS or path.startswith("/docs"):
             return await call_next(request)
+        token = (settings.dobot_api_token or "").strip()
         header = request.headers.get("authorization", "")
         supplied = header[7:].strip() if header.lower().startswith("bearer ") else ""
         if not supplied:
             supplied = request.headers.get("x-dobot-token", "").strip()
+
+        multi = bool(settings.multi_user)
+        if multi and path in MULTI_USER_PUBLIC_PATHS:
+            return await call_next(request)
+
+        if multi and supplied.startswith("dobot_u_"):
+            services = getattr(request.app.state, "services", None)
+            manager = getattr(services, "user_manager", None) if services else None
+            user = await manager.resolve_token(supplied) if manager else None
+            if user is None:
+                return JSONResponse(
+                    status_code=401,
+                    content={
+                        "success": False,
+                        "error": {"code": "INVALID_USER_TOKEN", "message": "log in again", "recoverable": True},
+                    },
+                )
+            overrides = await _load_user_key_overrides(services, user.id)
+            id_token = current_user_id.set(user.id)
+            key_token = user_key_overrides.set(overrides)
+            try:
+                return await call_next(request)
+            finally:
+                current_user_id.reset(id_token)
+                user_key_overrides.reset(key_token)
+
+        if not token:
+            if multi:
+                # Multi-user on, no operator gate configured: an anonymous request would
+                # fall through unscoped — passthrough reads of every legacy collection.
+                # Accounts are the way in, so refuse instead.
+                return JSONResponse(
+                    status_code=401,
+                    content={
+                        "success": False,
+                        "error": {
+                            "code": "AUTH_REQUIRED",
+                            "message": "log in (POST /auth/login) — this Dobot runs with MULTI_USER=true",
+                            "recoverable": True,
+                        },
+                    },
+                )
+            return await call_next(request)
         if not secrets.compare_digest(supplied, token):
             return JSONResponse(
                 status_code=401,
@@ -227,11 +289,28 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/auth/status", tags=["meta"])
     async def auth_status() -> dict:
-        """Tells the desktop shell whether it needs to send a token. Never reveals the token."""
+        """Tells the desktop shell how to get in. Never reveals any token.
+
+        ``multi_user`` lets the app show its sign-in/sign-up screen instead of the manual
+        token field, and ``accounts`` (null when accounts are off) says whether this
+        deployment has an owner yet — 0 means the first run goes straight to sign-up,
+        where the first account becomes the owner without an invite.
+        """
+        services = getattr(app.state, "services", None)
+        manager = getattr(services, "user_manager", None) if services else None
+        accounts: int | None = None
+        if settings.multi_user and manager is not None:
+            try:
+                accounts = await manager.count()
+            except Exception:  # noqa: BLE001 - a store hiccup must not break the probe
+                accounts = None
         return {
             "required": bool((settings.dobot_api_token or "").strip()),
             "header": "Authorization: Bearer <token>",
             "exempt": sorted(AUTH_EXEMPT_PATHS),
+            "multi_user": bool(settings.multi_user),
+            "open_registration": bool(settings.multi_user_open_registration),
+            "accounts": accounts,
         }
 
     @app.get("/events", tags=["meta"])
@@ -251,7 +330,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if services is None:  # pragma: no cover - startup window
             return {"events": [], "dot_status": "UNKNOWN", "after": -1}
         bus = services.bus
-        recent = bus.history(limit=400)
+        from app.core.tenancy import current_user_id
+
+        viewer = current_user_id.get()
+        # System events go to everyone; user-stamped events only to their owner
+        # (the unscoped operator viewer sees all — same rule as the WebSocket).
+        recent = [e for e in bus.history(limit=400) if not viewer or not e.user_id or e.user_id == viewer]
         latest = recent[-1].sequence if recent else 0
         if after > latest:
             after = -1

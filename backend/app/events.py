@@ -53,6 +53,9 @@ class DobotEvent(BaseModel):
     data: dict[str, Any] = Field(default_factory=dict)
     timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
     sequence: int = 0
+    #: The user whose work produced this event (multi-user); empty for system-wide events.
+    #: Subscribers filter on it so one person's task progress never streams to another.
+    user_id: str = ""
 
 
 class EventBus:
@@ -69,6 +72,12 @@ class EventBus:
         async with self._lock:
             self._sequence += 1
             event.sequence = self._sequence
+            if not event.user_id:
+                # Stamped at publish time so every emitter (request handlers, the scheduler
+                # under as_user, plain background tasks) is attributed in one place.
+                from app.core.tenancy import current_user_id
+
+                event.user_id = current_user_id.get()
         self._history.append(event)
         for queue in list(self._subscribers):
             try:

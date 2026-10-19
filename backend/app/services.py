@@ -82,6 +82,8 @@ class Services:
     voice: Voice
     #: Remembered permissions (allow once / always allow) shared by decision engine and sandbox.
     grants: GrantStore
+    #: Multi-user only (MULTI_USER=true): accounts, tokens, invites. None in single-user mode.
+    user_manager: Any = None
     orchestrator: Any = None
     extras: dict[str, Any] = field(default_factory=dict)
     _started: bool = False
@@ -335,6 +337,19 @@ async def build_services(settings: Settings | None = None, *, bus: EventBus | No
     bus = bus or get_event_bus()
 
     store = await build_record_store(settings)
+    # The scheduler always holds the *base* store: a fired job and the startup restore run
+    # outside any request, where a scoped wrapper would see nothing. Ownership travels on
+    # ``AutomationRecord.user_id`` instead and is enforced at query time (``_visible``).
+    base_store = store
+    user_manager = None
+    if settings.multi_user:
+        # Every collection except users/invites is prefixed per requester (see tenancy.py);
+        # the scheduler re-enters the owner's scope around each fired automation.
+        from app.core.tenancy import UserScopedStore
+        from app.core.users import UserManager
+
+        store = UserScopedStore(store)
+        user_manager = UserManager(store)
     memory = build_memory_manager(store, bus)
     skills = SkillsLibrary(directory=settings.skills_dir)
     skills.load()
@@ -355,6 +370,7 @@ async def build_services(settings: Settings | None = None, *, bus: EventBus | No
         bus=bus,
         settings=settings,
         tokenjuice=tokenjuice,
+        runtime=runtime,
     )
     verifier = Verifier(registry, bus)
     approvals = ApprovalStore(store, bus)
@@ -409,12 +425,13 @@ async def build_services(settings: Settings | None = None, *, bus: EventBus | No
             journal=journal,
         ),
         voice=build_voice(settings),
+        user_manager=user_manager,
     )
 
     orchestrator = Orchestrator(services)
     services.orchestrator = orchestrator
     services.scheduler = Scheduler(
-        store=store,
+        store=base_store,
         runner=orchestrator.run_automation,
         bus=bus,
         settings=settings,

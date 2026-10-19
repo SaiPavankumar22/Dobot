@@ -11,6 +11,7 @@ import asyncio
 import json
 import os
 from collections.abc import Callable, Iterable
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -30,6 +31,10 @@ COLLECTIONS = (
     "canonical",
     "runs",
     "grants",
+    # Identity itself: when MongoDB is configured, accounts and invites must migrate with
+    # everything else — a new database has to receive existing users too.
+    "users",
+    "invites",
 )
 
 
@@ -317,15 +322,46 @@ class FallbackRecordStore:
         return self._degraded
 
 
+def _doc_timestamp(doc: dict[str, Any]) -> float | None:
+    """updated_at/created_at as a comparable instant; None when absent or unparseable."""
+    for key in ("updated_at", "created_at"):
+        raw = doc.get(key)
+        if not raw:
+            continue
+        try:
+            return datetime.fromisoformat(str(raw).replace("Z", "+00:00")).timestamp()
+        except ValueError:
+            continue
+    return None
+
+
 async def migrate_local_into(primary: RecordStore, local: RecordStore) -> int:
-    """Copy documents from the local store into a newly available primary store."""
-    moved = 0
+    """Merge documents from the local store into the primary — without ever clobbering it.
+
+    This runs on *every* startup while a primary is available, so it must be merge-safe in
+    both directions: a local doc the primary has never seen is copied (records created
+    during an outage reach the database), and a local doc only overwrites the primary when
+    its own timestamp is strictly newer (records *updated* during an outage catch up).
+    A stale local snapshot — the normal state of affairs, since the files are never deleted
+    after migration — can therefore never roll live database state backwards.
+    """
+    merged = 0
     for collection in COLLECTIONS:
         for doc in await local.all(collection, limit=10_000):
-            if doc.get("id"):
+            doc_id = str(doc.get("id") or "")
+            if not doc_id:
+                continue
+            existing = await primary.get(collection, doc_id)
+            if existing is None:
                 await primary.insert(collection, doc)
-                moved += 1
-    return moved
+                merged += 1
+                continue
+            local_at = _doc_timestamp(doc)
+            primary_at = _doc_timestamp(existing)
+            if local_at is not None and primary_at is not None and local_at > primary_at:
+                await primary.update(collection, doc_id, {k: v for k, v in doc.items() if k != "_id"})
+                merged += 1
+    return merged
 
 
 async def build_record_store(settings: Settings | None = None) -> RecordStore:
@@ -335,7 +371,12 @@ async def build_record_store(settings: Settings | None = None) -> RecordStore:
         try:
             mongo = MongoRecordStore(settings.mongodb_uri, settings.mongodb_db)
             if await mongo.ping():
-                await migrate_local_into(mongo, local)
+                merged = await migrate_local_into(mongo, local)
+                logger.info(
+                    "record store: mongodb (db=%s; %d local document(s) merged)",
+                    settings.mongodb_db,
+                    merged,
+                )
                 return FallbackRecordStore(mongo, local)
             await mongo.close()
         except Exception as exc:  # noqa: BLE001 - missing motor, bad URI, auth failure
