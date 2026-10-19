@@ -115,17 +115,17 @@ Check it from Dobot: `GET /settings/providers` → `agent_runtime: "hermes-agent
 
 ---
 
-## 4. Two servers in one deployment (Hugging Face Space)
+## 4. Two servers in one deployment (container)
 
-A Space is one container, but nothing stops two servers from living in it: the backend on `:8756`
-and the Hermes gateway sidecar on `127.0.0.1:8642`. `deploy/huggingface/entrypoint.sh` starts the
+A container is one box, but nothing stops two servers from living in it: the backend on `:8756`
+and the Hermes gateway sidecar on `127.0.0.1:8642`. The container entrypoint starts the
 gateway **in the background** and `exec`s the backend immediately — the backend never waits on
 Hermes, so the container is up and serving chat, files, terminal, browser and research whether the
 gateway is booting, crashed, or deliberately off.
 
 | Secret / variable | Needed? | What it does |
 | --- | --- | --- |
-| `HERMES_SIDECAR` | optional (default `1`) | `0` runs the Space with the backend only — Dobot degrades to its own tools |
+| `HERMES_SIDECAR` | optional (default `1`) | `0` runs the container with the backend only — Dobot degrades to its own tools |
 | `NEBIUS_API_KEY` | required for real runs | The gateway runs its **own** model loop; it reads this from its own env, never the keys a user pastes into the app |
 | `API_SERVER_KEY` | optional | The shared bearer key. On first boot the entrypoint generates one and writes it to `HERMES_HOME/.env`; both processes then present the same key |
 | `AGENT_RUNTIME` | default `auto` (baked into the image) | Probes the sidecar on a TTL (`HERMES_HEALTH_TTL_SECONDS`, 30 s) and serves on local tools when it is down |
@@ -133,7 +133,7 @@ gateway is booting, crashed, or deliberately off.
 What runs where:
 
 ```
-Hugging Face proxy ──:8756──▶ Dobot backend (uvicorn, AGENT_RUNTIME=auto)
+host proxy ──:8756──▶ Dobot backend (uvicorn, AGENT_RUNTIME=auto)
                                 │  probe /v1/health (TTL 30 s)
                                 └──127.0.0.1:8642──▶ hermes gateway run  (sidecar, loopback only)
                                                         └─ cua-driver / toolsets
@@ -141,18 +141,18 @@ Hugging Face proxy ──:8756──▶ Dobot backend (uvicorn, AGENT_RUNTIME=au
 
 Two properties are worth stating plainly:
 
-* **The gateway is loopback-only.** HF routes only the declared app port, so `/v1/runs` never
-  faces the internet; the only public surface is the backend behind HF's proxy + token gate.
+* **The gateway is loopback-only.** The platform routes only the declared app port, so `/v1/runs`
+  never faces the internet; the only public surface is the backend behind the proxy + token gate.
 * **Degradation is tested, not hoped for.** With the gateway down, `ResilientRuntime` reports
   `dobot-local-tools`, the planner drops `hermes_run`/`computer_*` steps instead of planning
   gestures that cannot run (and tells the model why), and chat/files/terminal/browser/research
   answer normally. `hermes_fallback_local=false` is the strict "Hermes or nothing" switch.
 
-### If the Space must control **your** desktop
+### If the container must control **your** desktop
 
 The sidecar's `cua-driver` controls the *container*, not your PC — a cloud Linux box has no
 accessible desktop of yours. For real desktop control run the gateway on the machine that has the
-display (§3) and point the Space at it over a tunnel instead of the sidecar:
+display (§3) and point the backend at it over a tunnel instead of the sidecar:
 
 ```bash
 # on your machine, next to the gateway from §3
@@ -160,14 +160,14 @@ cloudflared tunnel --url http://127.0.0.1:8642      # or ngrok http 8642
 ```
 
 ```dotenv
-# Space secrets
+# container environment
 HERMES_SIDECAR=0
 AGENT_RUNTIME=auto
 HERMES_ENDPOINT=https://<tunnel-url>
 HERMES_API_KEY=<the same API_SERVER_KEY>
 ```
 
-Then a single task can genuinely span both servers: Dobot's planner on the Space decides, the
+Then a single task can genuinely span both servers: the planner in the container decides, the
 gateway on your PC does the GUI work, and the tool trace comes back over SSE for the Verifier.
 When the tunnel or the PC is off, the same degradation path applies — Dobot keeps working and
 names the part that is blocked.

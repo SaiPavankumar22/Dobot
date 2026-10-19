@@ -112,31 +112,21 @@ folder (or its `.env`) and the installed app.
 
 ### Way 3 — the installed `.exe`, backend hosted somewhere else
 
-The backend runs where you do not run a terminal: your own server ([§5.5](#55-deploy-one-backend-point-every-device-at-it)),
-your own container, or your own Hugging Face Space ([§5.6](#56-deploy-the-backend-to-a-hugging-face-space)).
-Get that backend up first — one command from the repo root pushes a Space:
-
-```bash
-HF_TOKEN=hf_xxx HF_SPACE=YOUR_SPACE bash scripts/deploy-hf-space.sh
-```
+The backend runs where you do not run a terminal: your own server ([§5.5](#55-deploy-one-backend-point-every-device-at-it))
+or your own container. Get that backend up first.
 
 Then, on the device:
 
 1. **Install and launch** the `.exe`. It starts pointed at this machine
    (`http://127.0.0.1:8756`).
-2. **Settings → Backend** → the URL of your hosted backend (for a Space:
-   `https://YOUR_SPACE.hf.space`) → **Save and reconnect**.
+2. **Settings → Backend** → the URL of your hosted backend → **Save and reconnect**.
 3. If that backend guards itself (`DOBOT_API_TOKEN`) — and a hosted one should — paste the token in
    the token field on the same page → **Save token** → **Test connection**; the note turns into
-   `✓ Connected — backend ok`. For a private Space the token is a **read** token from
-   <https://huggingface.co/settings/tokens>: without it the Space's proxy answers **404** to
-   everything, which is the private Space behaving correctly, not a broken app (the field's own
-   note will read *this backend requires a token*).
+   `✓ Connected — backend ok` (the field's own note will read *this backend requires a token*).
 4. **Settings → Your API keys** → paste `nebius` (required) and `tavily` → **Save**. They land in
    *that* backend's `.env`; `mongodb_uri` and the LangSmith values show read-only under *Managed for
    you*.
-5. Wait out the first wake (a sleeping free backend can take ~30 s) until the sidebar chip reads
-   **backend connected**, then confirm on the Doctor page.
+5. Wait until the sidebar chip reads **backend connected**, then confirm on the Doctor page.
 
 What you are accepting, honestly: `fs_*` and `computer_*` act on **that backend's machine**, not
 your laptop; screen selections and mic audio travel to it; a container's filesystem is usually
@@ -295,7 +285,7 @@ was first tried on. The installed app connects to a backend in this order:
 
 1. **The backend you point it at** — **Settings → Backend** stores a URL (plus the token every call
    carries) per machine. Every build defaults to `http://127.0.0.1:8756`; a backend hosted anywhere
-   else — §5.5 or §5.6 — is a URL pasted there.
+   else (§5.5) is a URL pasted there.
 2. **A backend running on this machine** — the app never searches for one: set **Settings →
    Backend** to `http://127.0.0.1:8756` and it uses that instead ([way 2](#way-2--the-installed-exe-backend-still-on-this-machine);
    you start the backend yourself, §5.1–5.4).
@@ -393,11 +383,10 @@ asks for it. Those values are read-only on the page, listed with where they come
 | `laya_api_key`, `laya_server_url` | same, for the optional Laya judgement server |
 
 `PUT`/`DELETE` of those names returns **403 `OPERATOR_MANAGED`**, so a stale client cannot quietly
-overwrite the operator's configuration either. To change them, edit `.env` (or the Space secrets) and
-restart the backend.
+overwrite the operator's configuration either. To change them, edit `.env` and restart the backend.
 
 > **Which backend are your keys stored on?** Whichever one Settings → Backend points at. Point the
-> app at your own backend — a local one (§5.1–5.4) or your own copy of the Space (§5.6) — and the
+> app at your own backend — a local one (§5.1–5.4) or your own server (§5.5) — and the
 > four keys are yours alone. Point every device at one shared backend and you are sharing one `.env`.
 
 If you prefer the terminal anyway, editing `.env` in the repo root and restarting the backend does
@@ -488,7 +477,7 @@ reports both as live/declined with their fixes.
 ## 5. Keep the backend running (source runs and custom setups)
 
 These matter when you run from source (way 1), keep a backend on your own machine, or customise
-ports. An install pointing at the Hugging Face Space (§5.6) needs none of this.
+ports. An install pointing at a backend hosted elsewhere (way 3) needs none of this.
 
 Pick whichever suits you. All four work; they differ in how much you have to think about them.
 
@@ -573,63 +562,6 @@ also travel to the server. For shared reasoning, research and memory across devi
 setup; for an assistant that operates each device locally, run the backend on that device (§5.1–5.4)
 or opt into the bundled installer (§4).
 
-### 5.6 Deploy the backend to a Hugging Face Space
-
-A hosted backend with no server of your own: the backend runs as a **private Docker Space**,
-secrets live in the Space's environment, and the laptop holds nothing but a token. One command from
-the repo root pushes it — the Space's name comes from `HF_SPACE` (or the git-ignored `.hf-space`
-file at the repo root, so the command stays short on repeat runs):
-
-```bash
-HF_TOKEN=hf_xxx HF_SPACE=YOUR_SPACE bash scripts/deploy-hf-space.sh
-```
-
-The script creates the Space if it does not exist yet (private, Docker SDK), assembles the Space
-repo in a temp directory — `Dockerfile`, the Space README card, `backend/`, `skills/` — and pushes
-it; the push is what triggers the image build. `deploy/huggingface/` holds exactly what lands there.
-
-Once the build is green:
-
-1. **Space → Settings → Variables and secrets** — the operator side. As the person who runs the
-   backend you supply the infrastructure (full table in the Space's README):
-
-   | Secret | Why |
-   | --- | --- |
-   | `DOBOT_API_TOKEN` | **Recommended**: the same value as your HF read token (step 3), so both gates share the app's single token |
-   | `MONGODB_URI` | durable memory that survives a Space rebuild |
-   | `LANGSMITH_API_KEY` (+ `LANGSMITH_API_URL`, `LANGSMITH_PROJECT`) | usage tracing |
-   | `DEEPAGENTS_ENABLED` | multi-search cited research reports |
-   | `TRANSCRIBER_ENABLED=false` | when nobody can plug a microphone into the Space |
-
-   `NEBIUS_API_KEY` and `TAVILY_API_KEY` are *not* required here: each person brings their own in
-   the app (step 5). Setting them in the Space is a fallback for when the Space is a single person's
-   backend — values saved in the Space's `.env` are exactly that fallback, and are also what the
-   container loses on rebuild, which is why `MONGODB_URI` is the one to set as a secret.
-2. Nothing secret is pushed to the repo or baked into the image — the backend reads every one of
-   these as a plain environment variable.
-3. Create a **read** token at <https://huggingface.co/settings/tokens>.
-4. In the app: **Settings → Backend** → the Space URL the deploy script prints at the end → paste
-   that token in the API-token field → **Save and reconnect**.
-5. In the app: **Settings → Your API keys** → paste your own `nebius` (required) and `tavily`,
-   `zilliz_token`, `zilliz_uri`. They land in the Space's `.env` and take effect immediately.
-   `mongodb_uri` and the LangSmith values appear read-only under **Managed for you** — they are the
-   operator's, and the API refuses to overwrite them.
-
-Why this is safe: the Space is private, so Hugging Face's proxy rejects every request that arrives
-without your token, and the backend's bearer gate (step 1) is a second, independent check behind it.
-
-> **Paying for a shared Space.** Every user of one Space writes their keys into that one
-> container's `.env` — the last save wins, and a rebuild clears them. For genuinely separate
-> credentials each person should run their own backend: a local one (§5.1–5.4) or their own copy of
-> the Space (duplicate this one). The Space URL is a Settings field precisely so this is a copy, not
-> a fork.
-
-Honest trade-offs — the same ones as §5.5: `fs_*` and `computer_*` act on the Space's container, not
-your laptop; the container's filesystem is wiped when the Space rebuilds (set `MONGODB_URI` if
-memories must survive); a sleeping free Space takes ~30 s to wake; and the mic/voice extras that
-need a local model are not in the image — the Doctor page says so instead of pretending. Prefer
-your own server: §5.5. Prefer everything on this machine: §5.1–5.4.
-
 ---
 
 ## 6. Autostart for the app itself
@@ -648,10 +580,10 @@ completely, use **Tray → Quit Dobot**, or **Ctrl+Shift+Esc** to stop the curre
 
 | What | Where | Notes |
 | --- | --- | --- |
-| API keys and settings | `<repo>/.env` | Gitignored. Backend-only; the UI never receives a key. On the Hugging Face Space (§5.6) they are Space **secrets** — environment variables, never a file. |
-| Backend state (local record store, vectors, logs) | `<repo>/.dobot/` | `DOBOT_STATE_DIR` in `.env`. Space deploys: `/app/.dobot` inside the container, wiped when the Space rebuilds — set `MONGODB_URI` if memories must survive. |
+| API keys and settings | `<repo>/.env` | Gitignored. Backend-only; the UI never receives a key. |
+| Backend state (local record store, vectors, logs) | `<repo>/.dobot/` | `DOBOT_STATE_DIR` in `.env`. |
 | Primary records in MongoDB | the cluster behind `MONGO_URL` | Set it and the backend stores accounts, tasks, memory, automations, approvals, activity and settings in MongoDB instead of `.dobot/*.json`; unset it and everything falls back to the files. `MULTI_USER=true` requires it (credentials never live in JSON files). |
-| Skills | `<repo>/skills/` | `DOBOT_SKILLS_DIR`. One folder per skill. Space deploys: baked into the image (edits survive until the next rebuild). Bundled installers (`DOBOT_BUNDLE_SIDECAR=1`): a writable `skills\` next to the exe. |
+| Skills | `<repo>/skills/` | `DOBOT_SKILLS_DIR`. One folder per skill. Bundled installers (`DOBOT_BUNDLE_SIDECAR=1`): a writable `skills\` next to the exe. |
 | Floating-dot position and the Always-on choice | `%APPDATA%\com.dobot.desktop\dobot-state.json` | Written by the desktop shell. |
 | Backend address override | browser `localStorage` key `dobot.baseUrl` | Change it in **Settings → Backend**. |
 | Installed app | `%LOCALAPPDATA%\Dobot\` (NSIS) | Or wherever you chose during install. |
@@ -730,8 +662,8 @@ not — so you never have to guess whether isolation is real.
 | Symptom | Cause and fix |
 | --- | --- |
 | Sidebar says *backend offline* | The backend is not running, or it is on another port. Start it, or change the address in **Settings → Backend**. |
-| The app cannot reach `…hf.space` | The Space is asleep or still building (first wake takes ~30 s) — check its logs on huggingface.co. Then confirm your HF read token is pasted in **Settings → Backend**; a private Space rejects every call without it. |
-| Live status stays "reconnecting" | A private Space always refuses the WebSocket upgrade, and the app knows that: it polls `/events` over HTTP instead and shows *live (HTTP polling)* within ~3 s. If it never recovers, the token is missing or stale — re-paste your HF read token in **Settings → Backend**. |
+| The backend refuses every request with 401 | It is guarded by `DOBOT_API_TOKEN` and the token field in **Settings → Backend** is empty or stale — paste the token and save. |
+| Live status stays "reconnecting" | A guarded backend may refuse the WebSocket upgrade, and the app knows that: it polls `/events` over HTTP instead and shows *live (HTTP polling)* within ~3 s. If it never recovers, the token is missing or stale — re-paste it in **Settings → Backend**. |
 | `dobot-backend.exe` is running but Dobot is closed | Only affects installers built with `DOBOT_BUNDLE_SIDECAR=1`: the app was ended forcefully (Task Manager) rather than quit, so it could not stop its bundled backend. It is harmless — quit Dobot normally next time, end that process, or just launch Dobot again (it adopts the running backend instead of starting a second one). |
 | `[Errno 10048] address already in use` | Something already holds :8756. Find it with `netstat -ano \| findstr :8756`, or run the backend on another port and point Settings at it. |
 | Answers arrive but research says offline | `TAVILY_API_KEY` is missing or rejected. Check `/health`. |
@@ -752,8 +684,7 @@ not — so you never have to guess whether isolation is real.
 - The backend binds to `127.0.0.1` and has **no authentication**. Keep it that way on a laptop: do
   not change it to `0.0.0.0` and do not expose port 8756 to your network or the internet. A deployed
   backend is the exception and must not be: on your own server (§5.5) bind wider **and** set
-  `DOBOT_API_TOKEN`, plus a firewall or tunnel; on the private Hugging Face Space (§5.6) HF's proxy
-  and the backend's bearer gate (same token) are both in front of every request.
+  `DOBOT_API_TOKEN`, plus a firewall or tunnel so the bearer gate sits in front of every request.
 - Dobot asks before anything `HIGH` or `CRITICAL` risk. Do not get into the habit of clicking
   **Approve** without reading the preview — the preview is the whole safety mechanism.
 - `SANDBOX_ALLOWED_PATHS` defaults to your home directory. Narrow it in `.env` if you want Dobot

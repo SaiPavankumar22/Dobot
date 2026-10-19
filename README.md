@@ -196,7 +196,7 @@ npm run tauri dev
 3. In **Assist** mode: *"Tidy my Downloads folder"* — see the approval card before anything moves.
 
 > **Want a real installer?** [`docs/install.md`](docs/install.md) covers building the `.exe`, running the
-> backend in the background, hosting it on your own server or Hugging Face Space, and uninstalling.
+> backend in the background, hosting it on your own server, and uninstalling.
 
 <details>
 <summary><b>Run the tests</b></summary>
@@ -229,7 +229,7 @@ Listed plainly, because pretending something works is worse than admitting it do
 
 | Area | Today |
 | --- | --- |
-| **Desktop app control** | Clicking inside other desktop apps needs the real Hermes agent gateway (see [`docs/hermes.md`](docs/hermes.md)). Browser control works without it. The Hugging Face Space runs the gateway as a second server in the same container (loopback-only) — or, for *your* desktop, point `HERMES_ENDPOINT` at a tunnel to the gateway on your PC; when it is down, Dobot serves on its own tools and says which part is blocked. |
+| **Desktop app control** | Clicking inside other desktop apps needs the real Hermes agent gateway (see [`docs/hermes.md`](docs/hermes.md)). Browser control works without it. For *your* desktop, point `HERMES_ENDPOINT` at a tunnel to the gateway running on your PC; when it is down, Dobot serves on its own tools and says which part is blocked. |
 | **Browser logins** | Dobot uses its own browser profile, so you sign in once inside its window; existing Chrome logins do not carry over. |
 | **Isolation** | By default commands run on your PC behind Dobot's own rules. Full sandboxing needs NemoClaw or a Nebius sandbox. |
 | **Email and messages** | Dobot writes drafts but never sends anything. |

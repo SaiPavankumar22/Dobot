@@ -2,9 +2,6 @@
 .env
 .env.*
 !.env.example
-# this machine's Hugging Face Space name (scripts/deploy-hf-space.sh reads it)
-.hf-space
-
 # runtime state
 .dobot/
 *.log

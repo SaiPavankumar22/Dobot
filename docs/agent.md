@@ -10,7 +10,7 @@ behind `app/agents/hermes.py`.
 | `local` (default) | Dobot's own guarded tool implementations. No external runtime, no install. |
 | `cli` | Shell out to the Hermes CLI (`HERMES_COMMAND`, `HERMES_ARGS`) for a planned prompt. |
 | `remote` / `api` / `hermes` | Drive the real Hermes gateway over HTTP: `POST /v1/runs`, then the SSE event stream (`HERMES_ENDPOINT`, `HERMES_API_KEY`). |
-| `auto` | The API runtime, probed on a TTL first — what the Hugging Face Space image runs. |
+| `auto` | The API runtime, probed on a TTL first — the sensible default for a containerized deployment. |
 
 With `HERMES_FALLBACK_LOCAL=true` (default) the HTTP modes are wrapped in `ResilientRuntime`:
 gateway reachable → desktop delegation (`hermes_run`, `computer_*`) works; unreachable → those
