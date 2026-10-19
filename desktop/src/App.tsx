@@ -11,11 +11,14 @@
 
 import { useEffect, useState } from "react";
 import { ChatPanel } from "./components/ChatPanel";
+import { Confetti } from "./components/Confetti";
 import { DobotDot } from "./components/DobotDot";
 import { ScreenSelector } from "./components/ScreenSelector";
 import { Toast } from "./components/Toast";
 import { Chat } from "./pages/Chat";
+import { AuthGate } from "./pages/Auth";
 import { Dashboard } from "./pages/Dashboard";
+import { UpdateBanner } from "./components/UpdateBanner";
 import { native } from "./services/native";
 import { resolvePendingSelection } from "./services/screen";
 import { useDobot } from "./store/dobotStore";
@@ -148,28 +151,32 @@ export default function App() {
         />
       )}
       {windowKind === "chat" && (
-        <>
+        <AuthGate>
+          <UpdateBanner />
           <Chat />
           <Toast placement="top-right" />
+          <Confetti />
           {capturing && (
             <ScreenSelector
               onDone={(selection) => finishBrowserSelection(selection as never)}
               onCancel={() => useDobot.setState({ capturing: false })}
             />
           )}
-        </>
+        </AuthGate>
       )}
       {windowKind === "dashboard" && (
-        <>
+        <AuthGate>
+          <UpdateBanner />
           <Dashboard />
           <Toast />
+          <Confetti />
           {capturing && (
             <ScreenSelector
               onDone={(selection) => finishBrowserSelection(selection as never)}
               onCancel={() => useDobot.setState({ capturing: false })}
             />
           )}
-        </>
+        </AuthGate>
       )}
     </>
   );

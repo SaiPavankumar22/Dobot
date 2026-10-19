@@ -69,16 +69,40 @@ export function setApiToken(token: string): void {
 }
 
 /**
+ * The signed-in session on a multi-user backend (`dobot_u_...` from /auth/login or
+ * /auth/register), kept separate from `dobot.apiToken` so signing in never clobbers the
+ * operator/HF token pasted in Settings — and signing out restores exactly that setup.
+ */
+let userToken = localStorage.getItem("dobot.userToken") || "";
+
+export function getUserToken(): string {
+  return userToken;
+}
+
+export function setUserToken(token: string): void {
+  userToken = token.trim();
+  if (userToken) localStorage.setItem("dobot.userToken", userToken);
+  else localStorage.removeItem("dobot.userToken");
+}
+
+/** The token every call actually sends: a signed-in session wins over the pasted token. */
+export function getBearerToken(): string {
+  return userToken || apiToken;
+}
+
+/**
  * The bearer header alone, for raw `fetch`es that do not go through `request()` (voice, onboarding).
  * A private Hugging Face Space rejects every call without it.
  */
 export function authHeader(): Record<string, string> {
-  return apiToken ? { Authorization: `Bearer ${apiToken}` } : {};
+  const token = getBearerToken();
+  return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
 function headers(extra?: Record<string, string>): Record<string, string> {
   const base: Record<string, string> = { "Content-Type": "application/json", ...extra };
-  if (apiToken) base.Authorization = `Bearer ${apiToken}`;
+  const token = getBearerToken();
+  if (token) base.Authorization = `Bearer ${token}`;
   return base;
 }
 
@@ -212,6 +236,16 @@ export const api = {
       "/research",
       { method: "POST", body: JSON.stringify({ query, depth }) },
     ),
+  researchSources: () =>
+    request<{
+      events: { type: string; message: string; task_id: string; timestamp: string; data: Record<string, unknown> }[];
+    }>("/research/sources"),
+  chatTools: () =>
+    request<{ count: number; tools: { name: string; description: string; risk_floor: string }[] }>("/chat/tools"),
+  screenPrivacy: () =>
+    request<{ mode: string; continuous_monitoring: boolean; captures_on: string[]; retention: string }>(
+      "/screen/privacy",
+    ),
 
   tasks: (status?: string) => request<TaskRecord[]>(`/tasks${status ? `?status=${status}` : ""}`),
   task: (id: string) => request<TaskRecord>(`/tasks/${id}`),
@@ -295,7 +329,28 @@ export const api = {
       `/system/journal/${taskId}`,
     ),
 
-  authStatus: () => request<{ required: boolean; header: string }>("/auth/status"),
+  authStatus: () =>
+    request<{
+      required: boolean;
+      header: string;
+      multi_user?: boolean;
+      open_registration?: boolean;
+      accounts?: number | null;
+    }>("/auth/status"),
+
+  // ------------------------------------------------------------------ accounts
+  login: (name: string, password: string) =>
+    request<{ user: { id: string; name: string; role: string }; token: string }>("/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ name, password }),
+    }),
+  register: (name: string, password: string, inviteCode = "") =>
+    request<{ user: { id: string; name: string; role: string }; token: string }>("/auth/register", {
+      method: "POST",
+      body: JSON.stringify({ name, password, invite_code: inviteCode }),
+    }),
+  me: () => request<{ user: { id: string; name: string; role: string } | null; multi_user: boolean }>("/auth/me"),
+  createInvite: () => request<{ invite_code: string }>("/auth/invites", { method: "POST" }),
 
   // ------------------------------------------------------------------ identity
 
