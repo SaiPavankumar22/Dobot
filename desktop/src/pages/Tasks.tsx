@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Record, Stats, Toolbar } from "../components/PageBits";
 import { api } from "../services/api";
+import { celebrate, useProgress } from "../services/gamification";
 import type { TaskRecord } from "../types";
 
 type Filter = "all" | "active" | "waiting" | "done" | "failed";
@@ -37,9 +38,24 @@ export function Tasks() {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<Filter>("all");
 
+  // Poll watcher: the first load only records statuses (history earns nothing); every
+  // later transition into COMPLETED is real progress — XP and a confetti burst.
+  const seenStatuses = useRef<Map<string, string>>(new Map());
+  const primed = useRef(false);
+
   async function load() {
     try {
-      setTasks(await api.tasks());
+      const next = await api.tasks();
+      for (const task of next) {
+        const before = seenStatuses.current.get(task.id);
+        if (primed.current && before && before !== "COMPLETED" && task.status === "COMPLETED") {
+          useProgress.getState().award("taskCompleted");
+          celebrate();
+        }
+        seenStatuses.current.set(task.id, task.status);
+      }
+      primed.current = true;
+      setTasks(next);
       setError(null);
     } catch (loadError) {
       setError(String(loadError));

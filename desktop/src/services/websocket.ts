@@ -1,7 +1,7 @@
 // Event stream client. The dot's state, approvals, notifications and activity all come from here, so
 // reconnection has to be automatic and non-destructive: the backend replays recent events on connect.
 
-import { authHeader, getApiToken, getBaseUrl } from "./api";
+import { authHeader, getBearerToken, getBaseUrl } from "./api";
 import type { DobotEvent } from "../types";
 
 type Handler = (event: DobotEvent) => void;
@@ -33,7 +33,8 @@ export class DobotSocket {
     // the backend's gate reads `access_token`, and it is also how a private Hugging Face Space
     // authenticates the upgrade if its proxy asks for one.
     let url = getBaseUrl().replace(/^http/, "ws") + "/ws";
-    const token = getApiToken();
+    // A signed-in user session takes precedence, same rule as every HTTP call.
+    const token = getBearerToken();
     if (token) url += `?access_token=${encodeURIComponent(token)}`;
     try {
       this.socket = new WebSocket(url);

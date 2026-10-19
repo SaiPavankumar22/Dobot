@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { ActivityTimeline } from "../components/ActivityTimeline";
+import { LevelCard } from "../components/LevelCard";
 import { Record, Stats } from "../components/PageBits";
 import { useDobot } from "../store/dobotStore";
 
@@ -24,6 +25,8 @@ export function Overview() {
     <>
       <h1>Dobot</h1>
       <p className="subtle">An AI that doesn't just answer you. It works for you.</p>
+
+      <LevelCard />
 
       <Stats
         items={[

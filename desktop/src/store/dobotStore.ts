@@ -5,6 +5,7 @@ import { create } from "zustand";
 import { ApiError, api } from "../services/api";
 import { native } from "../services/native";
 import { socket } from "../services/websocket";
+import { useProgress } from "../services/gamification";
 import { captureSelection, type Selection } from "../services/screen";
 import type {
   ApprovalRecord,
@@ -104,6 +105,8 @@ interface DobotStore {
     text: string,
     options?: { shadow?: boolean; useSelection?: boolean; attachments?: ChatAttachment[] },
   ) => Promise<void>;
+  /** Web research outside the chat loop: Tavily search + synthesis, answered with sources. */
+  research: (text: string) => Promise<void>;
   captureScreen: () => Promise<void>;
   /** One chord, one picture: the window the user is in, as ready-to-send selection. */
   captureActiveWindow: () => Promise<void>;
@@ -309,6 +312,52 @@ export const useDobot = create<DobotStore>((set, get) => ({
                 plan: response.plan ?? item.plan,
                 sources: response.sources,
                 approvals: response.approvals,
+              }
+            : item,
+        ),
+      }));
+    } catch (error) {
+      const message = error instanceof ApiError ? error.message : String(error);
+      set((state) => ({
+        busy: false,
+        lastError: message,
+        messages: state.messages.map((item) =>
+          item.id === placeholder.id ? { ...item, text: message, status: "FAILED" as const } : item,
+        ),
+      }));
+    }
+  },
+
+  research: async (text) => {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    const userMessage: ChatMessage = {
+      id: makeId(),
+      role: "user",
+      text: trimmed,
+      createdAt: Date.now(),
+    };
+    const placeholder: ChatMessage = {
+      id: makeId(),
+      role: "dobot",
+      text: "Researching the web…",
+      status: "PLANNING",
+      createdAt: Date.now(),
+    };
+    set((state) => ({ messages: [...state.messages, userMessage, placeholder], busy: true, lastError: null }));
+
+    try {
+      const result = await api.research(trimmed, "quick");
+      useProgress.getState().award("researchRun");
+      set((state) => ({
+        busy: false,
+        messages: state.messages.map((item) =>
+          item.id === placeholder.id
+            ? {
+                ...item,
+                text: result.summary || "Research finished — no summary came back.",
+                status: "COMPLETED" as const,
+                sources: result.sources,
               }
             : item,
         ),
