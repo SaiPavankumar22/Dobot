@@ -47,6 +47,9 @@ the app (**Settings → Your API keys**) and are written to the container's `.en
 | `TRANSCRIBER_ENABLED` | optional | `false` when nothing can reach a microphone from inside the container |
 | `NEBIUS_API_KEY`, `TAVILY_API_KEY`, `ZILLIZ_URI`, `ZILLIZ_TOKEN` | optional | Fallbacks for a single-person Space. Normally each user supplies their own in the app; the API refuses `PUT /settings/keys/{mongodb_uri,langsmith*,dobot_api_token,laya*}` with **403 `OPERATOR_MANAGED`**, so user keys and operator config cannot collide. |
 | `EXECUTION_MODE` / `SHADOW_MODE` / `REQUIRE_WRITE_APPROVAL` | optional | Behaviour tuning — see `.env.example` in the repo |
+| `NEBIUS_API_KEY` | needed for Hermes runs | **Two servers, one container:** the image runs the Hermes gateway as a sidecar (`127.0.0.1:8642`, loopback only) beside the backend. The gateway has its *own* model loop, so it needs a provider key in the container env — keys pasted into the app never reach it. Without it the gateway still boots and Dobot still works; runs fail with "not connected to any AI provider". |
+| `HERMES_SIDECAR` | optional (default `1`) | `0` starts the backend only. Either way `AGENT_RUNTIME=auto` probes the gateway and Dobot serves on its own tools when the sidecar is down. |
+| `API_SERVER_KEY` | optional | Shared bearer key between the two servers. Auto-generated into `HERMES_HOME/.env` on first boot when unset. |
 
 Without `MONGODB_URI`, memory lives in the container's filesystem and is lost when the Space
 rebuilds — set it if you care about memories surviving. The same applies to anything a user saves
@@ -67,6 +70,12 @@ curl http://127.0.0.1:8756/health
 - A sleeping Space wakes on the first request (the first call can take ~30 s).
 - Voice transcription and local OCR are not in this image — the app degrades those features
   honestly and explains why on the Doctor page.
+- **Two servers by design:** `entrypoint.sh` boots `hermes gateway run` in the background and
+  execs the backend immediately, so the Space serves even while the gateway is starting — or
+  when it never starts at all. The gateway binds loopback inside the container (HF routes only
+  this card's port), so `/v1/runs` is never internet-reachable. To drive *your* Windows desktop
+  instead of the container, set `HERMES_SIDECAR=0` and point `HERMES_ENDPOINT` at a tunnel to the
+  gateway on your PC — `docs/hermes.md` §4 has the exact secrets.
 - Chat attachments ride on the vision model in the same Nebius account as everything else: up to 4
   images (5 MB each) and 4 text files (256 KB each) per message, ~6 000 characters of file text and
   a 24 MB request in total. `GET /chat/attachments` publishes those numbers so the composer and the

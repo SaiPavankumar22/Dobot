@@ -67,6 +67,9 @@ substitute() {
 }
 cp "$REPO_ROOT/deploy/huggingface/Dockerfile" "$SPACE_DIR/Dockerfile"
 cp "$REPO_ROOT/deploy/huggingface/.dockerignore" "$SPACE_DIR/.dockerignore"
+# The two-server entrypoint (Hermes gateway sidecar + backend). The Dockerfile COPYs it from
+# the build context root, so it must land in the assembled Space repo too.
+cp "$REPO_ROOT/deploy/huggingface/entrypoint.sh" "$SPACE_DIR/entrypoint.sh"
 substitute "$REPO_ROOT/deploy/huggingface/README.md" "$SPACE_DIR/README.md"
 substitute "$REPO_ROOT/docs/install.md" "$SPACE_DIR/install.md"
 substitute "$REPO_ROOT/deployment.md" "$SPACE_DIR/deployment.md"
