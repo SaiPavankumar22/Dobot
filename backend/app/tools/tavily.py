@@ -49,6 +49,13 @@ class TavilyClient:
             )
         return self._client
 
+    def _auth_headers(self) -> dict[str, str]:
+        """Multi-user: the asking person's key wins; single-user resolves to the process key."""
+        from app.core.tenancy import override_key
+
+        key = override_key("tavily_api_key", self.settings.tavily_api_key)
+        return {"Authorization": f"Bearer {key}"} if key else {}
+
     async def search(
         self,
         query: str,
@@ -66,12 +73,15 @@ class TavilyClient:
                 "include_answer": include_answer,
                 "include_raw_content": False,
             },
+            headers=self._auth_headers(),
         )
         response.raise_for_status()
         return response.json()
 
     async def extract(self, urls: list[str]) -> dict[str, Any]:
-        response = await self._http().post("/extract", json={"urls": urls})
+        response = await self._http().post(
+            "/extract", json={"urls": urls}, headers=self._auth_headers()
+        )
         response.raise_for_status()
         return response.json()
 

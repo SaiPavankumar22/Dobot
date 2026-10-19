@@ -21,6 +21,15 @@ def planner(settings) -> Planner:
     return Planner(reasoner=Reasoner(settings), registry=default_registry(), settings=settings)
 
 
+class _DeadRuntime:
+    """Answers the probe the way a stopped Hermes gateway does."""
+
+    available = True
+
+    async def probe(self, *, force: bool = False) -> bool:
+        return False
+
+
 def test_greeting_uses_light_model(router: ModelRouter) -> None:
     assert router.route("hi there").tier is ModelTier.LIGHT
 
@@ -183,6 +192,28 @@ async def test_unknown_tools_are_dropped(planner: Planner) -> None:
     validated = planner._validate(plan, ContextBundle())
     assert [step.action.tool for step in validated.steps] == ["fs_read"]
     assert "launch_missiles" in validated.reasoning
+
+
+@pytest.mark.asyncio
+async def test_hermes_dependent_steps_are_dropped_when_runtime_is_down(planner: Planner) -> None:
+    """A plan built against a dead gateway must not ship gestures that cannot run.
+
+    The rest of the plan still executes: Dobot's own tools do not need Hermes.
+    """
+    planner.runtime = _DeadRuntime()
+    planner._runtime_up = await planner._runtime_available()
+    assert planner._runtime_up is False
+    plan = planner._from_payload(
+        {
+            "steps": [
+                {"tool": "hermes_run", "params": {"goal": "chart column B"}},
+                {"tool": "computer_click", "params": {"target": "Save"}},
+                {"tool": "fs_read", "params": {"path": "~/notes.md"}},
+            ]
+        }
+    )
+    validated = planner._validate(plan, ContextBundle())
+    assert [step.action.tool for step in validated.steps] == ["fs_read"]
 
 
 @pytest.mark.asyncio

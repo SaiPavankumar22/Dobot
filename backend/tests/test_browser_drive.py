@@ -22,6 +22,7 @@ from app.tools.browser_drive import (
     BrowserTypeTool,
     DriveSession,
     _clone_chrome_profile,
+    _evidence,
     _state_output,
     drive_submit,
 )
@@ -559,3 +560,351 @@ async def test_browser_snapshot_tool_passes_wait_seconds(ctx: ToolContext) -> No
     assert result.ok
     assert drive.snapshot_waits == [7]
     assert "wait_seconds" in tool.parameters["properties"]
+
+
+# ------------------------------------------- identity-pinned resolution (no wrong clicks)
+
+
+class RecordingHandle:
+    """A locator handle that remembers which selector produced it."""
+
+    def __init__(self, log: list[str], key: str, *, visible: bool = True,
+                 live_name: str = "", click_error: str = "") -> None:
+        self.log = log
+        self.key = key
+        self.visible = visible
+        self.live_name = live_name
+        self.click_error = click_error
+        self.filled: str | None = None
+
+    @property
+    def first(self) -> RecordingHandle:
+        return self
+
+    async def wait_for(self, **_: Any) -> None:
+        if not self.visible:
+            raise RuntimeError("not visible")
+        self.log.append(f"visible:{self.key}")
+
+    async def evaluate(self, _js: str) -> str:
+        return self.live_name
+
+    async def click(self, **_: Any) -> None:
+        if self.click_error:
+            raise RuntimeError(self.click_error)
+        self.log.append(f"click:{self.key}")
+
+    async def fill(self, text: str, **_: Any) -> None:
+        self.filled = text
+        self.log.append(f"fill:{text}")
+
+    async def input_value(self, **_: Any) -> str:
+        return self.filled or ""
+
+    async def inner_text(self, **_: Any) -> str:
+        return self.filled or ""
+
+
+async def test_locate_index_resolves_by_identity_stamp_before_css() -> None:
+    """The stamp is the node the snapshot saw — CSS (which can drift) is never consulted."""
+    log: list[str] = []
+    stamp, css, role = (RecordingHandle(log, "stamp"), RecordingHandle(log, "css-path"),
+                        RecordingHandle(log, "role"))
+
+    class Page:
+        def locator(self, selector: str) -> RecordingHandle:
+            return stamp if "data-dobot-uid" in selector else css
+
+        def get_by_role(self, *_a: Any, **_k: Any) -> RecordingHandle:
+            return role
+
+    session = DriveSession()
+    session._page = Page()
+    session._elements = [{"i": 0, "uid": "7", "role": "button", "name": "Send",
+                          "text": "Send", "css": "nav > button"}]
+    locator = await session._resolve_entry(session._elements[0])
+    assert locator is stamp
+    assert log == ["visible:stamp"]  # neither css nor role was even attempted
+
+
+async def test_locate_index_falls_back_to_role_and_name_when_stamp_gone() -> None:
+    """A re-render replaced the node: the same role+accessible name still means the target."""
+    log: list[str] = []
+    absent = RecordingHandle(log, "absent", visible=False)
+    named = RecordingHandle(log, "named")
+    recorded: dict[str, Any] = {}
+
+    class Page:
+        def locator(self, _selector: str) -> RecordingHandle:
+            return absent  # the stamped node no longer exists
+
+        def get_by_role(self, role: str, name: str) -> RecordingHandle:
+            recorded.update(role=role, name=name)
+            return named
+
+    session = DriveSession()
+    session._page = Page()
+    session._elements = [{"i": 0, "uid": "7", "role": "button", "name": "Send",
+                          "text": "Send", "css": "nav > button"}]
+    locator = await session._resolve_entry(session._elements[0])
+    assert locator is named
+    assert recorded == {"role": "button", "name": "Send"}
+
+
+async def test_locate_refuses_css_that_now_describes_a_different_element() -> None:
+    """Last-resort CSS resolves, but to the wrong thing: refuse loudly instead of clicking it."""
+    log: list[str] = []
+    wrong = RecordingHandle(log, "wrong", live_name="Delete account")
+
+    class Page:
+        def locator(self, _selector: str) -> RecordingHandle:
+            return wrong  # same path, different content than the snapshot recorded
+
+        def get_by_role(self, *_a: Any, **_k: Any) -> RecordingHandle:
+            raise AssertionError("role path must be skipped without a recorded role")
+
+    session = DriveSession()
+    session._page = Page()
+    # No uid and no role: snapshots recorded before identity stamping existed still get
+    # the identity check.
+    session._elements = [{"i": 0, "role": "", "name": "Save", "text": "Save",
+                          "css": "form > button"}]
+    with pytest.raises(ValueError, match="stale handle"):
+        await session._resolve_entry(session._elements[0])
+
+
+async def test_locate_reports_gone_target_as_page_change() -> None:
+    log: list[str] = []
+
+    class Page:
+        def locator(self, _selector: str) -> RecordingHandle:
+            return RecordingHandle(log, "gone", visible=False)
+
+        def get_by_role(self, *_a: Any, **_k: Any) -> RecordingHandle:
+            return RecordingHandle(log, "gone", visible=False)
+
+    session = DriveSession()
+    session._page = Page()
+    session._elements = [{"i": 0, "uid": "7", "role": "button", "name": "Send",
+                          "text": "Send", "css": "nav > button"}]
+    with pytest.raises(ValueError, match="no longer on the page"):
+        await session._resolve_entry(session._elements[0])
+
+
+def test_state_output_surfaces_marks_and_hides_the_stamp() -> None:
+    state = _state(elements=[{
+        "i": 0, "tag": "button", "type": "", "text": "Send", "css": "nav > button",
+        "uid": "7", "role": "button", "name": "Send message", "disabled": True,
+        "obscured": True,
+    }])
+    element = _state_output(state)["elements"][0]
+    assert "uid" not in element, "identity stamps are server plumbing, not agent handles"
+    assert element["role"] == "button" and element["name"] == "Send message"
+    assert element["disabled"] is True and element["obscured"] is True
+    assert "evidence" in _state_output(state)
+
+
+def test_state_output_indexes_text_entry_elements_by_role() -> None:
+    elements = [
+        {"i": 0, "tag": "div", "type": "", "text": "", "css": "main > div", "role": "textbox",
+         "name": "Message"},  # contenteditable composer: no input/textarea tag at all
+        {"i": 1, "tag": "a", "type": "", "text": "Home", "css": "nav > a", "role": "link",
+         "name": "Home"},
+    ]
+    assert _state_output(_state(elements=elements))["input_indices"] == [0]
+
+
+# ------------------------------------------------- patient click/type + honest evidence
+
+
+async def test_click_pins_the_original_element_across_a_rerender() -> None:
+    """A fresh snapshot reorders the list; the agent's index must keep its element."""
+    log: list[str] = []
+    send = RecordingHandle(log, "send")
+    decoy = RecordingHandle(log, "decoy")
+    snapshots = [
+        # 1: disabled, so the first attempt waits instead of clicking
+        {"url": "u", "title": "t", "text": "page",
+         "elements": [{"i": 0, "uid": "7", "role": "button", "name": "Send", "text": "Send",
+                       "css": "nav > button", "disabled": True}]},
+        # 2: re-rendered — a NEW element sits at index 0, the target moved to index 1
+        {"url": "u", "title": "t", "text": "page",
+         "elements": [
+             {"i": 0, "uid": "9", "role": "button", "name": "Cancel", "text": "Cancel",
+              "css": "nav > button"},
+             {"i": 1, "uid": "7", "role": "button", "name": "Send", "text": "Send",
+              "css": "nav > button"},
+         ]},
+    ]
+
+    class Page:
+        def __init__(self) -> None:
+            self.reads = 0
+            self.waits: list[int] = []
+
+        def is_closed(self) -> bool:
+            return False
+
+        async def wait_for_timeout(self, ms: int) -> None:
+            self.waits.append(ms)
+
+        async def evaluate(self, _js: Any) -> dict[str, Any]:
+            snapshot = snapshots[min(self.reads, len(snapshots) - 1)]
+            self.reads += 1
+            return snapshot
+
+        def locator(self, selector: str) -> RecordingHandle:
+            if 'data-dobot-uid="7"' in selector:
+                return send
+            if 'data-dobot-uid="9"' in selector:
+                return decoy
+            return RecordingHandle(log, selector)
+
+        def get_by_role(self, _role: str, name: str) -> RecordingHandle:
+            return send if name == "Send" else decoy
+
+    page = Page()
+    session = DriveSession()
+    session._page = page
+    session._elements = list(snapshots[0]["elements"])
+    state = await session.click("0")
+    assert 2500 in page.waits  # it waited for enablement instead of clicking blindly
+    assert "click:send" in log and "click:decoy" not in log, (
+        "the index was rebound to the decoy that now sits at position 0"
+    )
+    assert state["clicked"] == "0"
+    assert state["evidence"]["url_changed"] is False  # observed, not asserted optimistically
+
+
+async def test_type_text_waits_for_a_field_that_renders_late() -> None:
+    """Type gets the same patience as click: one miss used to be a hard failure."""
+    log: list[str] = []
+    box = RecordingHandle(log, "box")
+
+    class LateField:
+        def __init__(self) -> None:
+            self.reads = 0
+            self.waits: list[int] = []
+
+        def is_closed(self) -> bool:
+            return False
+
+        async def wait_for_timeout(self, ms: int) -> None:
+            self.waits.append(ms)
+
+        async def evaluate(self, _js: Any) -> dict[str, Any]:
+            self.reads += 1
+            elements = (
+                [{"i": i, "uid": str(10 + i), "role": "link", "name": f"Nav {i}",
+                  "text": f"Nav {i}", "css": f"nav > a:nth-of-type({i + 1})"} for i in range(3)]
+                + [{"i": 3, "uid": "13", "role": "textbox", "name": "Message", "text": "",
+                    "css": "main > div > textarea"}]
+                if self.reads >= 2
+                else []
+            )
+            return {"url": "u", "title": "t", "text": "page", "elements": elements}
+
+        def locator(self, selector: str) -> RecordingHandle:
+            return box if "data-dobot-uid=\"13\"" in selector else RecordingHandle(log, selector)
+
+        def get_by_role(self, _role: str, name: str) -> RecordingHandle:
+            return box if name == "Message" else RecordingHandle(log, f"role:{name}")
+
+    page = LateField()
+    session = DriveSession()
+    session._page = page
+    session._elements = []  # field index 3 does not exist in the (empty) first snapshot
+    state = await session.type_text("3", "hello there")
+    assert 2500 in page.waits
+    assert box.filled == "hello there"
+    assert state["confirmed"] is True
+    assert state["target"] == "3"
+
+
+def test_evidence_reports_observed_deltas() -> None:
+    pre = {"url": "https://a.test", "title": "A", "text": "one", "element_count": 3}
+    post = {"url": "https://b.test", "title": "A", "text": "two", "element_count": 5}
+    assert _evidence(pre, post, 2) == {
+        "url_changed": True,
+        "title_changed": False,
+        "text_changed": True,
+        "elements_delta": 2,
+        "downloads": 2,
+    }
+    same = _evidence(pre, dict(pre), 0)
+    assert not any(value for value in same.values() if isinstance(value, bool))
+    assert same["downloads"] == 0 and same["elements_delta"] == 0
+
+
+def test_click_diagnosis_explains_disabled_obscured_and_bare_failures() -> None:
+    disabled = DriveSession._click_diagnosis("5", {"disabled": True}, RuntimeError("Timeout 3000ms"))
+    assert "disabled" in disabled and "wait for it to enable" in disabled
+    obscured = DriveSession._click_diagnosis(
+        "5", {"obscured": True}, RuntimeError("element intercepts pointer events")
+    )
+    assert "covers" in obscured
+    bare = DriveSession._click_diagnosis("5", None, RuntimeError("boom"))
+    assert bare == "click on '5' failed: boom"
+
+
+async def test_click_wraps_raw_playwright_failures_with_the_target() -> None:
+    log: list[str] = []
+
+    class Page:
+        def is_closed(self) -> bool:
+            return False
+
+        async def wait_for_timeout(self, _ms: int) -> None:
+            pass
+
+        async def evaluate(self, _js: Any) -> dict[str, Any]:
+            return {"url": "u", "title": "t", "text": "page",
+                    "elements": [{"i": 0, "uid": "1", "role": "button", "name": "Go",
+                                  "text": "Go", "css": "body > button"}]}
+
+        def locator(self, selector: str) -> RecordingHandle:
+            return RecordingHandle(log, selector, click_error="element is not enabled")
+
+        def get_by_role(self, _role: str, name: str) -> RecordingHandle:
+            return RecordingHandle(log, name, click_error="element is not enabled")
+
+    session = DriveSession()
+    session._page = Page()
+    session._elements = [{"i": 0, "uid": "1", "role": "button", "name": "Go", "text": "Go",
+                          "css": "body > button"}]
+    with pytest.raises(RuntimeError, match="click on '0' failed"):
+        await session.click("0")
+
+
+# ------------------------------------------------------- evidence-aware verification
+
+
+async def test_click_verify_treats_a_download_as_a_response_without_change(ctx: ToolContext) -> None:
+    tool = BrowserClickTool()
+    tool.session = FakeDrive(state=_state(
+        changed=False,  # url/title/text identical: the download IS the page response
+        downloads=[{"file": "report.pdf", "path": "/downloads/report.pdf"}],
+        evidence={"downloads": 1},
+    ))
+    result = await tool.run({"target": "12"}, ctx)
+    verification = await tool.verify({"target": "12"}, result, ctx)
+    assert verification.verified
+    assert "report.pdf" in verification.notes
+
+
+async def test_click_verify_explains_a_click_that_landed_but_did_nothing(ctx: ToolContext) -> None:
+    tool = BrowserClickTool()
+    tool.session = FakeDrive(state=_state(changed=False))
+    result = await tool.run({"target": "12"}, ctx)
+    verification = await tool.verify({"target": "12"}, result, ctx)
+    assert not verification.verified
+    assert "nothing changed" in verification.notes
+    assert "browser_snapshot" in verification.notes  # says what to do next, not just what failed
+
+
+async def test_type_result_carries_evidence_block(ctx: ToolContext) -> None:
+    tool = BrowserTypeTool()
+    tool.session = FakeDrive(state=_state(evidence={"url_changed": False, "downloads": 0}))
+    result = await tool.run({"target": "2", "text": "hi"}, ctx)
+    assert result.ok
+    assert result.output["evidence"] == {"url_changed": False, "downloads": 0}

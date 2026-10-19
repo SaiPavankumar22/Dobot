@@ -372,7 +372,17 @@ class FsMoveTool(Tool):
                     candidates.append(path)
 
         if not candidates:
-            return self.fail(self.name, f"nothing matched {', '.join(raw_sources)}", started)
+            # A wildcard that matches nothing is "nothing to move", not a failure: a
+            # downloads-cleanup must not abort because there were no screenshots.
+            # A literal path the user named that does not exist IS an error — say so.
+            literals = [pattern for pattern in raw_sources if not any(ch in pattern for ch in "*?[")]
+            if literals:
+                return self.fail(self.name, f"nothing matched {', '.join(literals)}", started)
+            return self.ok(
+                self.name,
+                {"moved": [], "skipped": [], "note": "no files matched the patterns; nothing to move"},
+                started,
+            )
 
         destination.mkdir(parents=True, exist_ok=True)
         moved: list[str] = []
@@ -406,10 +416,19 @@ class FsMoveTool(Tool):
     ) -> VerificationResult:
         output = result.output or {}
         moved = [Path(path) for path in output.get("moved", [])]
+        nothing_to_move = bool(output.get("note"))  # wildcard matched zero files: honest no-op
         checks = [
             CheckResult(name="destinations_exist", passed=all(path.exists() for path in moved),
                         detail=f"{len(moved)} moved"),
-            CheckResult(name="files_moved", passed=bool(moved), detail=f"{len(output.get('skipped', []))} skipped"),
+            CheckResult(
+                name="files_moved",
+                passed=bool(moved) or nothing_to_move,
+                detail=(
+                    "nothing matched; no-op is the correct outcome"
+                    if nothing_to_move
+                    else f"{len(output.get('skipped', []))} skipped"
+                ),
+            ),
         ]
         return VerificationResult(verified=all(check.passed for check in checks), checks=checks)
 

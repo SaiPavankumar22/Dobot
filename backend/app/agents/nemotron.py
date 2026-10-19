@@ -123,10 +123,18 @@ class NemotronClient:
         if json_mode:
             payload["response_format"] = {"type": "json_object"}
         started = time.perf_counter()
+        # Multi-user: the asking person's own key wins over the process setting. Single-user
+        # (no scoped identity) resolves to exactly the process value — no behaviour change.
+        from app.core.tenancy import override_key
+
+        auth_key = override_key("nebius_api_key", self.settings.nebius_api_key)
         # Traced when LangSmith is configured; a null span otherwise. The call's behaviour is
         # identical either way — observability never becomes load-bearing.
         with get_tracer().span("nemotron.chat", model=target, tier=tier.value) as span:
-            response = await self._http().post("/chat/completions", json=payload)
+            response = await self._http().post(
+                "/chat/completions", json=payload,
+                headers={"Authorization": f"Bearer {auth_key}"},
+            )
             response.raise_for_status()
             data = response.json()
             message = (data.get("choices") or [{}])[0].get("message", {})

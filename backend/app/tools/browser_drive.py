@@ -6,6 +6,20 @@ index (or text/selector). This module is Dobot's implementation of that pattern 
 external runtime: a visible Edge/Chrome window controlled through Playwright, shared across
 tool calls. Downloads triggered by clicks are saved and their path is reported.
 
+Brittleness is fought at three seams, each observable in the outputs:
+
+* **Identity-pinned handles.** Every element is stamped with an inert ``data-dobot-uid``
+  attribute (monotonic per page load) and carries its ARIA role + accessible name. An index
+  re-resolves stamp → role+name → identity-checked CSS, so a re-rendered page yields either
+  the same element, a same-role/same-name replacement, or a loud "stale handle" refusal —
+  never a silent click on a same-path sibling.
+* **Patient, honest actions.** click *and* type wait/retry for late content, wait for
+  enablement of disabled targets, and diagnose failures (``disabled`` / ``obscured`` marks
+  recorded by the snapshot).
+* **Observed evidence.** Actions snapshot before and after: ``changed`` compares real states
+  (fresh-digests used to make it unconditionally true) and ``evidence`` reports url/title/
+  text/delta/downloads as measured, so "nothing happened" is a fact the verifier can act on.
+
 Hermes' `browser_exec` toolset stays supported in BrowserSubmitTool as an alternative backend;
 this driver is the local path that always works.
 """
@@ -27,6 +41,9 @@ from app.schemas import CheckResult, ExecutionResult, RiskLevel, VerificationRes
 from app.tools.base import Tool, ToolContext
 
 # Collect visible interactive elements, each with a reproducible CSS path used as its handle.
+# Every kept element is also stamped with an inert `data-dobot-uid` attribute whose counter is
+# monotonic per page lifetime: re-resolution after a re-render finds *that node* or reports
+# "not found" (a safe retry) — never a same-path sibling (a wrong click).
 _SNAPSHOT_JS = """
 () => {
   const SEL = 'a, button, input, textarea, select, [role=button], [role=link], [role=tab], ' +
@@ -46,6 +63,57 @@ _SNAPSHOT_JS = """
     }
     return parts.join(' > ');
   };
+  // Condensed accessible name (ARIA AccName): aria-label > aria-labelledby > native
+  // label > submit-button value > alt > title > text > placeholder > icon alt.
+  const accName = (el) => {
+    const clean = (s) => (s || '').trim().replace(/\\s+/g, ' ').slice(0, 120);
+    const aria = clean(el.getAttribute('aria-label'));
+    if (aria) return aria;
+    const ids = el.getAttribute('aria-labelledby');
+    if (ids) {
+      let out = '';
+      for (const id of ids.split(/\\s+/)) {
+        const ref = document.getElementById(id);
+        if (ref) out += ' ' + (ref.innerText || ref.value || '');
+      }
+      const byId = clean(out);
+      if (byId) return byId;
+    }
+    if (el.labels && el.labels.length) { const l = clean(el.labels[0].innerText); if (l) return l; }
+    if (el.tagName === 'INPUT' && ['button', 'submit', 'reset'].includes(el.type)) {
+      const v = clean(el.value); if (v) return v;
+    }
+    const alt = clean(el.getAttribute('alt')); if (alt) return alt;
+    const title = clean(el.getAttribute('title')); if (title) return title;
+    const text = clean(el.innerText || el.value); if (text) return text;
+    const ph = clean(el.getAttribute('placeholder')); if (ph) return ph;
+    const icon = el.querySelector && el.querySelector('img[alt]');
+    if (icon) return clean(icon.getAttribute('alt'));
+    return '';
+  };
+  const roleOf = (el) => {
+    const explicit = (el.getAttribute('role') || '').trim();
+    if (explicit) return explicit;
+    const tag = el.tagName;
+    if (tag === 'A') return 'link';
+    if (tag === 'BUTTON' || tag === 'SUMMARY') return 'button';
+    if (tag === 'TEXTAREA') return 'textbox';
+    if (tag === 'SELECT') return 'combobox';
+    if (tag === 'INPUT') {
+      const t = (el.type || 'text').toLowerCase();
+      if (['button', 'submit', 'reset'].includes(t)) return 'button';
+      if (t === 'checkbox') return 'checkbox';
+      if (t === 'radio') return 'radio';
+      if (t === 'range') return 'slider';
+      if (t === 'number') return 'spinbutton';
+      if (t === 'search') return 'searchbox';
+      if (t === 'hidden') return '';
+      return 'textbox';
+    }
+    if (el.isContentEditable) return 'textbox';
+    return '';
+  };
+  if (!window.__dobotUidSeq) window.__dobotUidSeq = 0;
   const elements = [];
   const seen = new Set();
   for (const el of document.querySelectorAll(SEL)) {
@@ -61,13 +129,32 @@ _SNAPSHOT_JS = """
     const key = css + '|' + text;
     if (seen.has(key)) continue;
     seen.add(key);
-    elements.push({
+    let uid = el.getAttribute('data-dobot-uid');
+    if (!uid) {
+      window.__dobotUidSeq += 1;
+      uid = String(window.__dobotUidSeq);
+      el.setAttribute('data-dobot-uid', uid);
+    }
+    let obscured = false;
+    try {
+      const cx = Math.min(Math.max(r.left + r.width / 2, 0), Math.max(window.innerWidth - 1, 0));
+      const cy = Math.min(Math.max(r.top + r.height / 2, 0), Math.max(window.innerHeight - 1, 0));
+      const hit = document.elementFromPoint(cx, cy);
+      obscured = !!hit && hit !== el && !el.contains(hit) && !hit.contains(el);
+    } catch (e) {}
+    const entry = {
       i: elements.length,
       tag: el.tagName.toLowerCase(),
       type: (el.getAttribute('type') || '').slice(0, 24),
       text: text,
       css: css,
-    });
+      uid: uid,
+      role: roleOf(el),
+      name: accName(el),
+    };
+    if (el.disabled === true || el.getAttribute('aria-disabled') === 'true') entry.disabled = true;
+    if (obscured) entry.obscured = true;
+    elements.push(entry);
   }
   const body = document.body;
   const text = body ? body.innerText.replace(/\\n{3,}/g, '\\n\\n').slice(0, 4000) : '';
@@ -176,6 +263,22 @@ def _digest(payload: dict[str, Any]) -> str:
     return "|".join(
         str(payload.get(key, "")) for key in ("url", "title")
     ) + "|" + str(payload.get("text", ""))[:500]
+
+
+def _norm_name(value: Any) -> str:
+    """Comparable form of an accessible name/label (whitespace- and case-insensitive)."""
+    return re.sub(r"\s+", " ", str(value or "")).strip().lower()
+
+
+def _evidence(pre: dict[str, Any], post: dict[str, Any], new_downloads: int = 0) -> dict[str, Any]:
+    """What the action demonstrably did: observed pre/post state, never inferred."""
+    return {
+        "url_changed": str(pre.get("url", "")) != str(post.get("url", "")),
+        "title_changed": str(pre.get("title", "")) != str(post.get("title", "")),
+        "text_changed": str(pre.get("text", "")) != str(post.get("text", "")),
+        "elements_delta": int(post.get("element_count") or 0) - int(pre.get("element_count") or 0),
+        "downloads": int(new_downloads),
+    }
 
 
 class DriveSession:
@@ -418,20 +521,103 @@ class DriveSession:
             state["downloads"] = list(self._downloads)
         return state
 
+    def _entry_for(self, target: str) -> dict[str, Any]:
+        """The snapshot record an index points at (digit targets only)."""
+        index = int(str(target).strip())
+        if index >= len(self._elements):
+            raise ValueError(
+                f"element #{index} is not in the last snapshot "
+                f"({len(self._elements)} elements) — call browser_navigate or browser_snapshot first"
+            )
+        return self._elements[index]
+
+    def _find_entry(self, wanted: dict[str, Any]) -> dict[str, Any] | None:
+        """Locate the *same* element inside the current snapshot.
+
+        Identity stamp first (same node), then role+name (a re-rendered replacement that
+        still plays the same role with the same accessible name). None means the element
+        is gone from the page as it stands now.
+        """
+        uid = str(wanted.get("uid") or "")
+        if uid:
+            for element in self._elements:
+                if str(element.get("uid") or "") == uid:
+                    return element
+        name = _norm_name(wanted.get("name") or wanted.get("text"))
+        role = str(wanted.get("role") or "")
+        if name and role:
+            for element in self._elements:
+                if str(element.get("role") or "") == role and _norm_name(
+                    element.get("name") or element.get("text")
+                ) == name:
+                    return element
+        return None
+
+    async def _resolve_entry(self, entry: dict[str, Any]) -> Any:
+        """Re-find the element an index pointed at, in an order that cannot drift.
+
+        1. the identity stamp — the exact node the snapshot saw;
+        2. role + accessible name — survives a re-render that replaced the node;
+        3. the recorded CSS path, identity-checked against the live accessible name —
+           if it now resolves to a different-looking element, refuse loudly (stale)
+           instead of clicking a same-path sibling.
+        """
+        page = self._page
+        uid = str(entry.get("uid") or "")
+        if uid:
+            try:
+                locator = page.locator(f'[data-dobot-uid="{uid}"]').first
+                await locator.wait_for(state="visible", timeout=1500)
+                return locator
+            except Exception:  # noqa: BLE001 - node replaced by a re-render; fall through
+                pass
+        name = str(entry.get("name") or entry.get("text") or "").strip()
+        role = str(entry.get("role") or "")
+        if name and role:
+            try:
+                locator = page.get_by_role(role, name=name).first
+                await locator.wait_for(state="visible", timeout=1500)
+                return locator
+            except Exception:  # noqa: BLE001 - not re-resolvable by name; try the CSS path
+                pass
+        css = str(entry.get("css") or "")
+        if not css:
+            raise ValueError(
+                f"'{name or 'element'}' has no usable handle — re-read the page with "
+                "browser_snapshot and use an index from the new list"
+            )
+        locator = page.locator(css).first
+        try:
+            await locator.wait_for(state="visible", timeout=1500)
+        except Exception as exc:  # noqa: BLE001
+            raise ValueError(
+                f"element '{name or css}' is no longer on the page (its recorded selector "
+                f"'{css}' did not appear) — the page changed; re-read it with browser_snapshot "
+                "and use a fresh index"
+            ) from exc
+        if name:
+            try:
+                live = await locator.evaluate(
+                    "el => ((el.getAttribute('aria-label') || el.innerText || el.value || '') + '')"
+                    ".trim().slice(0, 120)"
+                )
+            except Exception:  # noqa: BLE001 - no evaluate on a lightweight handle
+                live = ""
+            live_norm, name_norm = _norm_name(live), _norm_name(name)
+            if live_norm and name_norm and name_norm not in live_norm and live_norm not in name_norm:
+                raise ValueError(
+                    f"stale handle: index now resolves to '{str(live)[:60]}' but the snapshot "
+                    f"recorded '{name[:60]}' — the page re-rendered; re-read it with "
+                    "browser_snapshot before acting again"
+                )
+        return locator
+
     async def _locate(self, target: str) -> Any:
         """Resolve an element index from the last snapshot, a CSS selector, or visible text."""
         page = self._page
         target = str(target).strip()
         if _DIGITS.match(target):
-            index = int(target)
-            if index >= len(self._elements):
-                raise ValueError(
-                    f"element #{index} is not in the last snapshot "
-                    f"({len(self._elements)} elements) — call browser_navigate or browser_snapshot first"
-                )
-            locator = page.locator(self._elements[index]["css"]).first
-            await locator.wait_for(state="visible", timeout=3000)
-            return locator
+            return await self._resolve_entry(self._entry_for(target))
         strategies = [
             ("css selector", lambda: page.locator(target).first),
             ("visible text", lambda: page.get_by_text(target, exact=False).first),
@@ -469,40 +655,106 @@ class DriveSession:
         err = await self.ensure()
         if err:
             raise RuntimeError(err)
-        # The element may not exist YET (AI reply or image still generating, lazy result list):
-        # refresh the page state and try again before declaring the target missing.
+        # The element may not exist YET (AI reply still generating, lazy result list), and the
+        # page may re-render between snapshot and action. For index targets the ORIGINAL record
+        # is pinned across retries: a fresh snapshot must never silently rebind the agent's index
+        # to a different node — re-resolution goes stamp → role+name → identity-checked CSS, and
+        # a disabled target waits for enablement instead of failing on the first click.
         locator: Any = None
+        entry: dict[str, Any] | None = None
         last_error: Exception | None = None
         for delay_ms in (0, 2500, 4000):
             if delay_ms:
                 await self._page.wait_for_timeout(delay_ms)
                 await self.snapshot(fresh=True)
             try:
-                locator = await self._locate(target)
+                if _DIGITS.match(str(target).strip()):
+                    if entry is None:
+                        entry = self._entry_for(target)
+                    else:
+                        entry = self._find_entry(entry) or entry
+                    locator = await self._resolve_entry(entry)
+                    if entry.get("disabled"):
+                        raise ValueError(f"element #{target} is disabled — waiting for it to enable")
+                else:
+                    locator = await self._locate(target)
                 last_error = None
                 break
             except ValueError as exc:
                 last_error = exc
         if last_error is not None or locator is None:
             raise last_error or ValueError(f"could not locate '{target}'")
-        await locator.click(timeout=3000)
+
+        # Pre-action baseline: post-action `changed` compares against THIS state, so
+        # "nothing happened" is an observation rather than a fresh-digest artefact
+        # (fresh snapshots used to make changed=True unconditionally).
+        pre = await self.snapshot()
+        downloads_before = len(self._downloads)
+        try:
+            await locator.click(timeout=3000)
+        except Exception as exc:
+            raise RuntimeError(self._click_diagnosis(target, entry, exc)) from exc
         await self._page.wait_for_timeout(600)
         # Downloads report their saved path asynchronously — wait briefly so the path can be
         # included in this step's output instead of surfacing only in a later snapshot.
-        downloads_before = len(self._downloads)
         for _ in range(3):
             if len(self._downloads) > downloads_before:
                 break
             await self._page.wait_for_timeout(500)
-        state = await self.snapshot(fresh=True)
+        state = await self.snapshot()
         state["clicked"] = str(target)
+        state["evidence"] = _evidence(pre, state, len(self._downloads) - downloads_before)
         return state
+
+    @staticmethod
+    def _click_diagnosis(target: str, entry: dict[str, Any] | None, exc: Exception) -> str:
+        """Turn a raw Playwright click failure into an actionable, honest sentence."""
+        first_line = (str(exc) or exc.__class__.__name__).splitlines()[0][:200]
+        message = f"click on '{target}' failed: {first_line}"
+        if entry:
+            if entry.get("disabled"):
+                message += (
+                    " — the element is disabled (snapshots mark it `disabled`); "
+                    "wait for it to enable, then retry"
+                )
+            elif entry.get("obscured"):
+                message += (
+                    " — another element covers it (snapshots mark it `obscured`); "
+                    "re-read the page and click the covering element or its parent"
+                )
+        return message
 
     async def type_text(self, target: str, text: str, press_enter: bool = False) -> dict[str, Any]:
         err = await self.ensure()
         if err:
             raise RuntimeError(err)
-        locator = await self._locate(target)
+        # Fields appear late too (chat composers render after the surrounding chrome): the same
+        # patient, identity-pinned resolution as click, instead of one shot then a hard failure.
+        locator: Any = None
+        entry: dict[str, Any] | None = None
+        last_error: Exception | None = None
+        for delay_ms in (0, 2500, 4000):
+            if delay_ms:
+                await self._page.wait_for_timeout(delay_ms)
+                await self.snapshot(fresh=True)
+            try:
+                if _DIGITS.match(str(target).strip()):
+                    if entry is None:
+                        entry = self._entry_for(target)
+                    else:
+                        entry = self._find_entry(entry) or entry
+                    locator = await self._resolve_entry(entry)
+                    if entry.get("disabled"):
+                        raise ValueError(f"element #{target} is disabled — waiting for it to enable")
+                else:
+                    locator = await self._locate(target)
+                last_error = None
+                break
+            except ValueError as exc:
+                last_error = exc
+        if last_error is not None or locator is None:
+            raise last_error or ValueError(f"could not locate '{target}'")
+        pre = await self.snapshot()
         await locator.click(timeout=3000)
         try:
             await locator.fill(text, timeout=2000)
@@ -512,7 +764,8 @@ class DriveSession:
         if press_enter:
             await self._page.keyboard.press("Enter")
             await self._page.wait_for_timeout(600)
-        state = await self.snapshot(fresh=True)
+        state = await self.snapshot()
+        state["evidence"] = _evidence(pre, state)
         state["typed"] = text[:400]
         state["target"] = str(target)
         state["confirmed"] = confirmed
@@ -585,14 +838,25 @@ async def close_drive() -> None:
 
 
 def _state_output(state: dict[str, Any]) -> dict[str, Any]:
-    """Trim a snapshot down to what the planner and answer need."""
-    elements = state.get("elements", [])
+    """Trim a snapshot down to what the planner and answer need.
+
+    Identity stamps (``uid``) are internal plumbing — the agent never acts on them — but
+    role, accessible name, and the ``disabled``/``obscured`` marks are decision-relevant
+    and are surfaced verbatim.
+    """
+    elements = [
+        {key: value for key, value in element.items() if key != "uid"}
+        for element in state.get("elements", [])
+    ]
+    text_entry_roles = {"textbox", "searchbox", "combobox", "spinbutton"}
     # The planner historically guessed "textarea" or index 0; naming the text-entry elements
-    # makes the right target the obvious choice.
+    # makes the right target the obvious choice. Role (incl. contenteditable divs) plus the
+    # legacy tag/css heuristics for snapshots recorded before roles existed.
     input_indices = [
         int(element.get("i", -1))
         for element in elements
-        if element.get("tag") in {"input", "textarea", "select"}
+        if element.get("role") in text_entry_roles
+        or element.get("tag") in {"input", "textarea", "select"}
         or "textarea" in str(element.get("css", "")).lower()
         or "textbox" in str(element.get("css", "")).lower()
     ]
@@ -604,6 +868,7 @@ def _state_output(state: dict[str, Any]) -> dict[str, Any]:
         "element_count": state.get("element_count", 0),
         "input_indices": input_indices,
         "changed": bool(state.get("changed")),
+        "evidence": state.get("evidence") or {},
         "downloads": state.get("downloads", []),
         "login_note": str(state.get("login_note", "")),
     }
@@ -677,10 +942,11 @@ class BrowserSnapshotTool(_DriveTool):
     name = "browser_snapshot"
     description = (
         "Re-read the current page in the visible browser: title, text, and a fresh indexed list of "
-        "interactive elements. Use after clicks, navigation, or when a page has finished loading "
-        "something new; element indices from older snapshots may be stale. Pass wait_seconds when "
-        "the page is waiting on slow content (image generation, an AI reply) before you need the "
-        "result."
+        "interactive elements with their role and accessible name — plus `disabled`/`obscured` "
+        "marks when an element cannot be acted on. Use after clicks, navigation, or when a page "
+        "has finished loading something new; element indices from older snapshots may be stale. "
+        "Pass wait_seconds when the page is waiting on slow content (image generation, an AI "
+        "reply) before you need the result."
     )
     risk_floor = RiskLevel.LOW
     proactive_ok = True
@@ -711,10 +977,13 @@ class BrowserClickTool(_DriveTool):
     name = "browser_click"
     description = (
         "Click an element in the visible browser by index (from the latest browser_navigate / "
-        "browser_snapshot output), CSS selector, or visible text. If the target is not on the page "
-        "yet (content still loading/generating), the click waits and retries before failing — and "
-        "when it does fail, wait with browser_snapshot(wait_seconds=...) and retry instead of "
-        "giving up. Returns the page state after the click; if the click triggers a file download, "
+        "browser_snapshot output), its accessible name, CSS selector, or visible text. An index "
+        "keeps pointing at the same element across page re-renders (resolved by identity, then "
+        "role+name), and if the target is not on the page yet (content still loading/generating), "
+        "the click waits and retries before failing — when it does fail, wait with "
+        "browser_snapshot(wait_seconds=...) and retry instead of giving up. Returns the page state "
+        "after the click with an `evidence` block (what actually changed); snapshots mark elements "
+        "`disabled` or `obscured`, and failures say which. If the click triggers a file download, "
         "its saved path is included."
     )
     risk_floor = RiskLevel.MEDIUM
@@ -741,16 +1010,34 @@ class BrowserClickTool(_DriveTool):
         self, params: dict[str, Any], result: ExecutionResult, ctx: ToolContext
     ) -> VerificationResult:
         output = result.output or {}
+        evidence = output.get("evidence") or {}
+        new_downloads = int(evidence.get("downloads") or 0)
+        # A download IS a page response even when url/title/text stayed identical.
+        responded = bool(output.get("changed")) or new_downloads > 0
         checks = [
             CheckResult(name="click_delivered", passed=result.ok),
-            CheckResult(name="page_responded", passed=bool(output.get("changed")),
-                        detail="url/title/text changed" if output.get("changed") else "no visible page change"),
+            CheckResult(
+                name="page_responded",
+                passed=responded,
+                detail=(
+                    "url/title/text changed"
+                    if output.get("changed")
+                    else f"{new_downloads} download(s)" if new_downloads
+                    else "no visible page change"
+                ),
+            ),
         ]
         downloads = output.get("downloads") or []
         notes = ""
         if downloads:
             latest = downloads[-1]
             notes = f"download: {latest.get('path') or latest.get('error', 'unknown')}"
+        elif not responded:
+            notes = (
+                "the click landed but nothing changed — the target may be covered (snapshots "
+                "mark elements `obscured`) or the action opened a new tab; re-read with "
+                "browser_snapshot and retry"
+            )
         return VerificationResult(
             verified=all(check.passed for check in checks), checks=checks, notes=notes
         )
@@ -760,9 +1047,10 @@ class BrowserTypeTool(_DriveTool):
     name = "browser_type"
     description = (
         "Type text into an input, textarea, or contenteditable element in the visible browser, by "
-        "index (from the latest snapshot), CSS selector, or visible text. Optionally press Enter "
-        "afterwards (for chat/search boxes). The output's `confirmed` field means the text was "
-        "read back from the field, not just written."
+        "index (from the latest snapshot), accessible name, CSS selector, or visible text — with "
+        "the same wait-and-retry as browser_click when the field has not rendered yet. Optionally "
+        "press Enter afterwards (for chat/search boxes). The output's `confirmed` field means the "
+        "text was read back from the field, not just written."
     )
     risk_floor = RiskLevel.MEDIUM
     parameters = {

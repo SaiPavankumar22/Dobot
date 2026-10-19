@@ -29,6 +29,7 @@ from app.tools.filesystem import (
     FsReadTool,
     FsWriteTool,
 )
+from app.tools.hermes_task import HERMES_TASK_TOOLS
 from app.tools.productivity import (
     AutomationCreateTool,
     MessageSendTool,
@@ -124,6 +125,7 @@ def default_registry() -> ToolRegistry:
         SkillRunTool(),
         MessageSendTool(),
         *COMPUTER_TOOLS,
+        *HERMES_TASK_TOOLS,
     ]
     return ToolRegistry(tools)
 

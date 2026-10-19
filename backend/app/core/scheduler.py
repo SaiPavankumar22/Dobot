@@ -27,6 +27,13 @@ logger = get_logger(__name__)
 
 Runner = Callable[[str, str], Awaitable[Any]]  # (prompt, automation_id) -> anything
 
+
+def _current_user() -> str:
+    """The requesting user's id (multi-user), else the legacy single-user marker."""
+    from app.core.tenancy import current_user_id
+
+    return current_user_id.get() or "local"
+
 _DURATION = re.compile(r"^(\d+)\s*(s|sec|secs|seconds|m|min|mins|minutes|h|hr|hrs|hours|d|day|days)$", re.I)
 _FIELD_COUNT = 5
 
@@ -141,6 +148,7 @@ class Scheduler:
             prompt=prompt.strip(),
             kind=AutomationKind.CRON,
             status="active",
+            user_id=_current_user(),
         )
         self._schedule_record(record)
         await self._persist(record)
@@ -155,6 +163,7 @@ class Scheduler:
             schedule=fire_at.isoformat(),
             status="active",
             next_run_at=fire_at,
+            user_id=_current_user(),
         )
         self._scheduler.add_job(
             self._fire,
@@ -195,25 +204,38 @@ class Scheduler:
             logger.info("automation %s is already running; skipping overlap", automation_id)
             return
         self._running.add(automation_id)
+        # Multi-user: the job fires outside any request, so re-enter the owner's scope —
+        # their memory, approvals and tools, never "nobody's". Single-user: user_id is
+        # "local", and as_user("local") still isolates nothing because scoping is keyed
+        # on a non-empty id that no request ever sets in single-user mode.
+        from app.core.tenancy import as_user
+
         record = await self.get(automation_id)
-        await self.bus.emit(
-            EventType.AUTOMATION_RUN,
-            message=f"Scheduled task started: {(record.name if record else prompt)[:80]}",
-            automation_id=automation_id,
-            prompt=prompt,
-        )
+        owner = (record.user_id if record else "") or ""
+        owner = "" if owner == "local" else owner
         try:
-            await self.runner(prompt, automation_id)
+            with as_user(owner):
+                # Emitted inside the owner's scope so the event is stamped theirs —
+                # subscribers only ever see their own automation runs.
+                await self.bus.emit(
+                    EventType.AUTOMATION_RUN,
+                    message=f"Scheduled task started: {(record.name if record else prompt)[:80]}",
+                    automation_id=automation_id,
+                    prompt=prompt,
+                )
+                await self.runner(prompt, automation_id)
         except Exception as exc:  # noqa: BLE001 - a failing automation must not kill the scheduler
             logger.warning("automation %s failed (%s)", automation_id, exc)
-            await self.bus.emit(
-                EventType.FAILED,
-                message=f"Scheduled task failed: {exc}",
-                automation_id=automation_id,
-            )
+            with as_user(owner):
+                await self.bus.emit(
+                    EventType.FAILED,
+                    message=f"Scheduled task failed: {exc}",
+                    automation_id=automation_id,
+                )
         finally:
             self._running.discard(automation_id)
-            await self._touch(automation_id)
+            with as_user(owner):
+                await self._touch(automation_id)
 
     async def _touch(self, automation_id: str) -> None:
         record = await self.get(automation_id)
@@ -233,9 +255,20 @@ class Scheduler:
         job = self._scheduler.get_job(automation_id)
         if job is None or job.next_run_time is None:
             return None
-        return job.next_run_time
+        return job.next_run_time    # ------------------------------------------------------------------ queries
+    def _visible(self, record: AutomationRecord) -> bool:
+        """Owner filter for API reads.
 
-    # ------------------------------------------------------------------ queries
+        Empty context (single-user mode, or background ``_restore``/``_fire``) sees everything.
+        An authenticated request sees its own automations plus ``local`` — the legacy records that
+        predate accounts, which are shared by the deployment rather than owned by nobody.
+        """
+        from app.core.tenancy import current_user_id
+
+        uid = current_user_id.get()
+        if not uid:
+            return True
+        return record.user_id == uid or record.user_id == "local"
 
     async def _persist(self, record: AutomationRecord) -> None:
         next_run = self.next_run_at(record.id)
@@ -248,6 +281,8 @@ class Scheduler:
         if not doc:
             return None
         record = AutomationRecord.model_validate(doc)
+        if not self._visible(record):
+            return None
         next_run = self.next_run_at(automation_id)
         if next_run:
             record.next_run_at = next_run
@@ -260,6 +295,8 @@ class Scheduler:
             try:
                 record = AutomationRecord.model_validate(doc)
             except Exception:  # noqa: BLE001
+                continue
+            if not self._visible(record):
                 continue
             next_run = self.next_run_at(record.id)
             if next_run:
@@ -282,6 +319,8 @@ class Scheduler:
         return await self.get(automation_id)
 
     async def delete(self, automation_id: str) -> bool:
+        if await self.get(automation_id) is None:
+            return False  # not found, or not this caller's to delete
         job = self._scheduler.get_job(automation_id)
         if job is not None:
             self._scheduler.remove_job(automation_id)

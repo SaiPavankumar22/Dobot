@@ -33,6 +33,12 @@ logger = get_logger(__name__)
 PLANNER_MAX_TOKENS = 4096
 
 
+#: Tools that exist only because the Hermes agent is behind them. When its gateway is down they are
+#: dropped from a plan rather than executed into a guaranteed failure.
+def HERMES_DEPENDENT_TOOLS(name: str) -> bool:
+    return name == "hermes_run" or name.startswith("computer_")
+
+
 def _looks_like_path(value: str) -> bool:
     """True when a candidate extracted from prose could plausibly be a filesystem path.
 
@@ -88,9 +94,12 @@ Rules:
     ("textarea" often does not exist on modern app pages — the composer may be a div whose css
     contains "rich-textarea"). The snapshot's `input_indices` field lists the text-entry
     elements: to type, target one of those (the composer/chat box), never index 0 by default.
+    Each element also carries its `role` and accessible `name` — using name as target is
+    allowed — and is marked `disabled`/`obscured` when it cannot be acted on.
     Copy the element's css from the snapshot only if you need a
     selector. Re-read the page with browser_snapshot after actions; indices refresh after every
-    action. A download triggered by a click is saved and its path appears in the result.
+    action. A download triggered by a click is saved and its path appears in the result;
+    `evidence` in a click result says exactly what changed (or that nothing did).
     Generation is slow: after sending a prompt that creates an image/file, wait with
     browser_snapshot(wait_seconds=15..30) before clicking a result or download button. If a
     click fails because the element was not found, the page was probably still loading —
@@ -99,6 +108,10 @@ Rules:
     Whole forms can use browser_submit (needs approval). Only desktop GUI apps (computer_*)
     need the Hermes runtime; browser interaction does not. Never invent claims about what a
     website can or cannot do.
+    For a desktop job that needs several GUI steps, screen reading, or recovery from a wrong
+    click (editing a spreadsheet, using a native app, a long multi-window workflow), do not
+    hand-write a chain of computer_* gestures: use one hermes_run step whose goal states the
+    app and the observable end state. computer_* is for a single known gesture only.
 11. Do the part you can. If a request has several parts and one needs an unavailable runtime,
     still plan the steps that work (e.g. open the browser at the page), then say plainly which
     part is blocked and why. Do not skip to a no-steps answer when there are steps you can run.
@@ -139,9 +152,15 @@ class Planner:
         bus: EventBus | None = None,
         settings: Settings | None = None,
         tokenjuice: TokenJuice | None = None,
+        runtime: Any = None,
     ) -> None:
         self.reasoner = reasoner
         self.registry = registry
+        #: The execution runtime, when known. Its reachability decides whether desktop steps can
+        #: be planned at all — planning them against a dead gateway only produces failure.
+        self.runtime = runtime
+        #: Whether the runtime answered last time we looked (True when no runtime is wired).
+        self._runtime_up = True
         self.settings = settings or get_settings()
         self.bus = bus or get_event_bus()
         self.tokenjuice = tokenjuice or TokenJuice(
@@ -168,6 +187,15 @@ class Planner:
             task_id=task_id,
             tier=tier.value,
         )
+        self._runtime_up = await self._runtime_available()
+        if not self._runtime_up:
+            # Tell the model the truth instead of letting it plan gestures that cannot run.
+            unavailable = (
+                "The Hermes desktop runtime is NOT reachable right now. Do not plan hermes_run or "
+                "computer_* steps. Accomplish what you can with filesystem, terminal, browser, web "
+                "research and memory, and say plainly which part needs the Hermes agent."
+            )
+            extra_instruction = f"{unavailable}\n{extra_instruction}".strip()
         plan: Plan
         if self.reasoner.available:
             plan = await self._model_plan(
@@ -298,6 +326,19 @@ class Planner:
             confidence=float(payload.get("confidence", 0.6) or 0.6),
         )
 
+    async def _runtime_available(self) -> bool:
+        """Probe the runtime when it can be probed; an absent runtime means "nothing to gate"."""
+        if self.runtime is None:
+            return True
+        probe = getattr(self.runtime, "probe", None)
+        if probe is None:
+            return bool(getattr(self.runtime, "available", True))
+        try:
+            return bool(await probe())
+        except Exception:  # noqa: BLE001 - a broken probe must not break planning
+            logger.debug("runtime probe failed", exc_info=True)
+            return True
+
     def _validate(self, plan: Plan, bundle: ContextBundle) -> Plan:
         """Drop steps the registry cannot serve, and dedupe research/memory steps."""
         kept: list[PlanStep] = []
@@ -305,7 +346,7 @@ class Planner:
         seen: set[tuple[str, str]] = set()
         for step in plan.steps:
             tool = self.registry.get(step.action.tool)
-            if tool is None:
+            if tool is None or (not self._runtime_up and HERMES_DEPENDENT_TOOLS(step.action.tool)):
                 dropped.append(step.action.tool)
                 continue
             key = (step.action.tool, json.dumps(step.action.params, sort_keys=True, default=str))
@@ -501,13 +542,37 @@ class Planner:
                 "I will show you exactly what would be removed."
             )
 
-        if not steps and re.search(r"(?i)\b(create|write|make|save)\b.*\b(file|todo|readme|\.md|\.txt|\.py)\b", lowered):
+        # Folder creation. "Create a folder called X" — the name is one token so prose
+        # ("... in my home directory. Inside it ...") can never leak into it.
+        folder_match = re.search(
+            r"(?i)\b(?:create|make|mkdir|new)\b[^\n]*?\b(?:folder|directory|dir)\b[^\n]*?\b(?:called|named)\s+([\w\-.]+)",
+            text,
+        )
+        folder_path = ""
+        if folder_match:
+            folder_path = f"~/{folder_match.group(1)}"
+            add(
+                "fs_mkdir",
+                {"path": folder_path},
+                f"Create the folder {folder_match.group(1)}",
+                "folder exists",
+            )
+
+        if (not steps or folder_path) and re.search(
+            r"(?i)\b(create|write|make|save)\b.*\b(file|todo|readme|\.md|\.txt|\.py)\b", lowered
+        ):
             name_match = re.search(r"(?i)([\w\-]+\.(?:md|txt|py|json|ts|js|csv))", text)
             filename = name_match.group(1) if name_match else "TODO.md"
             body = f"# {filename.rsplit('.', 1)[0]}\n\nCreated by Dobot.\n"
+            # "Inside it, write a file" refers to the folder just planned: honour that
+            # instead of dropping the file at ~/ and silently ignoring the user's structure.
+            in_folder = folder_path and re.search(
+                r"(?i)\b(inside|in) (?:it|that|the)(?: (?:folder|directory|dir))?\b", text
+            )
+            target_path = f"{folder_path}/{filename}" if in_folder else f"~/{filename}"
             add(
                 "fs_write",
-                {"path": f"~/{filename}", "content": body, "overwrite": False},
+                {"path": target_path, "content": body, "overwrite": False},
                 f"Create {filename}",
                 "file exists with matching content",
             )
