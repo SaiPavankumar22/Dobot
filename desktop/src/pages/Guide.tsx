@@ -4,8 +4,9 @@
 // not know what "JEV", "approvals" or "doctor" mean. Each entry answers three questions in the same
 // order every time: what it is, where to find it, how to use it.
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { IconBook, IconClose } from "../components/Icons";
+import { api } from "../services/api";
 
 interface Topic {
   id: string;
@@ -188,6 +189,47 @@ const TOPICS: Topic[] = [
   },
 ];
 
+/** The backend's live tool surface — what the planner can actually call right now. */
+function ToolSurface() {
+  const [tools, setTools] = useState<{ name: string; description: string; risk_floor: string }[]>([]);
+
+  useEffect(() => {
+    void api
+      .chatTools()
+      .then((result) => setTools(result.tools))
+      .catch(() => undefined);
+  }, []);
+
+  if (tools.length === 0) return null;
+  // Risk floors arrive uppercase ("LOW"); normalise before matching the chip tones.
+  const tone = (risk: string) => {
+    const level = risk.toLowerCase();
+    return level === "none" || level === "low"
+      ? "chip--ok"
+      : level === "medium"
+        ? "chip--warn"
+        : "chip--danger";
+  };
+
+  return (
+    <section className="guide__tools">
+      <h3>
+        Live tool surface · {tools.length} tools
+      </h3>
+      <p className="subtle" style={{ margin: "2px 0 10px" }}>
+        What this backend's planner can call at this moment, with each tool's declared risk floor.
+      </p>
+      <div className="chip-row">
+        {tools.map((tool) => (
+          <span key={tool.name} className={`chip ${tone(tool.risk_floor)}`} title={tool.description}>
+            {tool.name} · {tool.risk_floor}
+          </span>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 export function Guide() {
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState<string | null>("chat");
@@ -226,6 +268,8 @@ export function Guide() {
           spellCheck={false}
         />
       </header>
+
+      {showingAll && <ToolSurface />}
 
       {showingAll && (
         <section className="guide__quick">

@@ -33,6 +33,14 @@ export function Security() {
   const setDotEnabled = useDobot((state) => state.setDotEnabled);
   const kill = useDobot((state) => state.kill);
   const [autostart, setAutostart] = useState(false);
+  const [privacy, setPrivacy] = useState<{ captures_on: string[]; retention: string } | null>(null);
+
+  useEffect(() => {
+    void api
+      .screenPrivacy()
+      .then(setPrivacy)
+      .catch(() => setPrivacy(null));
+  }, []);
 
   const [matrix, setMatrix] = useState<PermissionMatrix | null>(null);
   const [grants, setGrants] = useState<PermissionGrant[]>([]);
@@ -89,6 +97,18 @@ export function Security() {
           },
         ]}
       />
+
+      {privacy && (
+        <div className="notice" style={{ marginTop: 12 }}>
+          <strong>What Dobot actually captures</strong>
+          <ul className="privacy-list">
+            {privacy.captures_on.map((item) => (
+              <li key={item}>{item}</li>
+            ))}
+          </ul>
+          <div className="subtle">{privacy.retention}</div>
+        </div>
+      )}
 
       {status && status.sandbox.isolation === "none" && (
         <div className="notice notice--warn" style={{ marginTop: 12 }}>

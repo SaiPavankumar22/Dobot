@@ -18,6 +18,7 @@ import {
   IconMoon,
   IconPaperclip,
   IconScreen,
+  IconSearch,
   IconSend,
   IconStopCircle,
 } from "../components/Icons";
@@ -155,6 +156,8 @@ export function Chat() {
   const lastError = useDobot((state) => state.lastError);
   const capturing = useDobot((state) => state.capturing);
   const send = useDobot((state) => state.send);
+  const research = useDobot((state) => state.research);
+  const [researchMode, setResearchMode] = useState(false);
   const captureScreen = useDobot((state) => state.captureScreen);
   const captureActiveWindow = useDobot((state) => state.captureActiveWindow);
   const clearSelection = useDobot((state) => state.clearSelection);
@@ -229,6 +232,10 @@ export function Chat() {
     setDraft("");
     setAttachments([]);
     setRejections([]);
+    if (researchMode && sending.length === 0) {
+      await research(text);
+      return;
+    }
     await send(text, {
       shadow: shadowMode,
       useSelection: includeSelection && Boolean(selection),
@@ -523,6 +530,14 @@ export function Chat() {
             >
               <IconMoon size={14} />
               Shadow {shadowMode ? "on" : "off"}
+            </button>
+            <button
+              className={`tool-chip ${researchMode ? "tool-chip--on" : ""}`}
+              onClick={() => setResearchMode(!researchMode)}
+              title="Skip the agent loop: search the web, collect sources, answer with citations"
+            >
+              <IconSearch size={14} />
+              Research {researchMode ? "on" : "off"}
             </button>
             <button
               className={`tool-chip ${selection ? "tool-chip--on" : ""}`}
