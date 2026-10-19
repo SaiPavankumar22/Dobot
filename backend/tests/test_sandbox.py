@@ -7,6 +7,7 @@ Nothing here touches the network: ``NebiusSandbox`` is exercised through its sea
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -223,7 +224,8 @@ async def test_local_run_command_expands_home_cwd(settings) -> None:
     unexpanded ``~`` arrives as a directory named "~" that Windows rejects (WinError 267).
     """
     sandbox = LocalSandbox(settings)
-    result = await sandbox.run_command("cd", cwd="~")
+    # Windows' `cd` prints the cwd; a bare `cd` in a POSIX shell prints nothing, so ask `pwd`.
+    result = await sandbox.run_command("cd" if os.name == "nt" else "pwd", cwd="~")
     assert result.ok, result.stderr
     assert "~" not in result.stdout.strip()
     assert Path(result.stdout.strip()).resolve() == Path.home().resolve()

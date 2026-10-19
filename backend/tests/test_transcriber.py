@@ -10,7 +10,10 @@ Whisper small (a native CT2 build, MIT), with CrisperWhisper checkpoints still o
 from __future__ import annotations
 
 import os
+import sys
+import types
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -55,11 +58,29 @@ class _GpuLoadsButCannotRun(_FakeWhisperModel):
         return super().transcribe(path, **kwargs)
 
 
+def _patch_whisper_model(monkeypatch: pytest.MonkeyPatch, model: Any) -> None:
+    """Point faster_whisper.WhisperModel at a stand-in.
+
+    faster-whisper is the optional voice extra — CI installs only `dev` — so when the package is
+    absent a bare module is registered in sys.modules first: the transcriber only does
+    `from faster_whisper import WhisperModel`, which this satisfies exactly. With the real
+    package installed the attribute is patched in place, as before.
+    """
+    try:
+        import faster_whisper
+    except ModuleNotFoundError:
+        faster_whisper = types.ModuleType("faster_whisper")
+        # monkeypatch.setattr requires the attribute to pre-exist; the real package has it.
+        faster_whisper.WhisperModel = object  # stand-in for the absent package
+        monkeypatch.setitem(sys.modules, "faster_whisper", faster_whisper)
+    monkeypatch.setattr(faster_whisper, "WhisperModel", model)
+
+
 @pytest.fixture()
 def fake_whisper(monkeypatch: pytest.MonkeyPatch) -> type[_FakeWhisperModel]:
     _FakeWhisperModel.calls = []
     monkeypatch.setattr(Transcriber, "package_available", property(lambda self: True))
-    monkeypatch.setattr("faster_whisper.WhisperModel", _FakeWhisperModel)
+    _patch_whisper_model(monkeypatch, _FakeWhisperModel)
     return _FakeWhisperModel
 
 
@@ -108,7 +129,7 @@ async def test_load_failure_is_reported_not_swallowed(
     def explode(model_name: str, **kwargs: object) -> None:
         raise RuntimeError("Unable to open file 'model.bin'")
 
-    monkeypatch.setattr("faster_whisper.WhisperModel", explode)
+    _patch_whisper_model(monkeypatch, explode)
     audio = tmp_path / "clip.wav"
     audio.write_bytes(b"RIFF....")
     transcriber = Transcriber(settings)
@@ -176,7 +197,7 @@ async def test_gpu_that_cannot_run_demotes_to_cpu(
     """A CUDA inference failure must cost one retry, not the whole feature."""
     _FakeWhisperModel.calls = []
     monkeypatch.setattr(Transcriber, "package_available", property(lambda self: True))
-    monkeypatch.setattr("faster_whisper.WhisperModel", _GpuLoadsButCannotRun)
+    _patch_whisper_model(monkeypatch, _GpuLoadsButCannotRun)
     audio = tmp_path / "clip.wav"
     audio.write_bytes(b"RIFF....")
     transcriber = Transcriber(settings)
@@ -224,7 +245,7 @@ async def test_crisper_checkpoint_gets_the_boundary_dot_pass(
 
     reset_settings_cache()
     monkeypatch.setattr(Transcriber, "package_available", property(lambda self: True))
-    monkeypatch.setattr("faster_whisper.WhisperModel", _FakeWhisperModel)
+    _patch_whisper_model(monkeypatch, _FakeWhisperModel)
     _FakeWhisperModel.calls = []
     _FakeWhisperModel.segments = ["[UM].", "Reminded.Me.Tomorrow.", "At.Five."]
     audio = tmp_path / "clip.wav"
@@ -237,6 +258,9 @@ async def test_crisper_checkpoint_gets_the_boundary_dot_pass(
 
 
 def test_probe_states(settings: Settings, monkeypatch: pytest.MonkeyPatch) -> None:
+    # "live" means the state machine reports it — whether the voice extra happens to be
+    # installed in this environment is the not_configured branch's assertion, below.
+    monkeypatch.setattr(Transcriber, "package_available", property(lambda self: True))
     assert Transcriber(settings).probe()["state"] == "live"
 
     monkeypatch.setenv("TRANSCRIBER_ENABLED", "false")

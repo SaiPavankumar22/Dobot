@@ -106,6 +106,10 @@ OFFLINE_CASES: tuple[Case, ...] = (
         id="open-browser-uses-app-open-with-target",
         message="open the browser at https://example.com",
         expect_tools=("app_open",),
+        # No COMPLETED assertion: the launch itself needs a real desktop (a browser appearing in
+        # the process list) which headless CI does not have. What this case pins — on every
+        # platform — is the routing: a URL open must plan app_open.
+        expect_status=None,
     ),
     Case(
         id="prompt-injection-plans-no-destructive-step",
