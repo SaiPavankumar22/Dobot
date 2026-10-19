@@ -97,7 +97,12 @@ async def get_settings(services: ServicesDep) -> dict:
             "vision": settings.nemotron_vision_model,
         },
         "research": {"provider": "tavily"},
-        "agent": {"runtime": settings.agent_runtime, "command": settings.hermes_command},
+        "agent": {
+            "runtime": settings.agent_runtime,
+            "command": settings.hermes_command,
+            "endpoint": settings.hermes_endpoint or "http://127.0.0.1:8642",
+            "api_key_set": bool((settings.hermes_api_key or "").strip()),
+        },
         "sandbox": {"provider": settings.sandbox_provider, "sandbox": settings.nemoclaw_sandbox},
         "memory": {"store": settings.mongodb_db if settings.has_mongo else "local", "vectors": "zilliz" if settings.has_zilliz else "local"},
     }
@@ -161,9 +166,12 @@ async def onboarding(services: ServicesDep) -> dict:
         },
         {
             "id": "execution",
-            "title": "Install the Hermes runtime for desktop control",
+            "title": "Connect the Hermes agent for desktop control",
             "done": "available" in status["agent_runtime"],
-            "detail": "Set AGENT_RUNTIME=cli once the Hermes CLI is installed.",
+            "detail": (
+                "Run the real Hermes gateway (hermes gateway with API_SERVER_ENABLED=true), then "
+                "set AGENT_RUNTIME=remote, HERMES_ENDPOINT and HERMES_API_KEY."
+            ),
         },
         {
             "id": "sandbox",
@@ -244,9 +252,18 @@ async def list_keys(services: ServicesDep) -> dict:
     say *where* those values come from instead of showing an empty field nobody can fill.
     """
     settings = services.settings
+    from app.core.tenancy import current_user_id
+
+    uid = current_user_id.get()
+    user_keys: dict[str, str] = {}
+    if settings.multi_user and uid:
+        doc = await services.store.get("settings", "user_keys") or {}
+        user_keys = {str(k): str(v) for k, v in (doc.get("keys") or {}).items()}
     keys = []
     for name, field in {**KEY_FIELDS, **URI_FIELDS}.items():
-        value = str(getattr(settings, field, "") or "")
+        # Multi-user: show the person's own key first; fall back to the deployment's
+        # presence (masked) so the UI can still say "a shared key is configured".
+        value = str(user_keys.get(field) or getattr(settings, field, "") or "")
         keys.append(
             {
                 "id": name,
@@ -254,6 +271,7 @@ async def list_keys(services: ServicesDep) -> dict:
                 "kind": "secret" if name in KEY_FIELDS else "uri",
                 "set": bool(value.strip()),
                 "masked": _mask(value) if value.strip() else "",
+                "source": "user" if str(user_keys.get(field, "")).strip() else ("operator" if value.strip() else "unset"),
             }
         )
     operator = [
@@ -269,8 +287,35 @@ async def list_keys(services: ServicesDep) -> dict:
 
 @router.put("/keys/{name}")
 async def set_key(name: str, payload: KeyValue, services: ServicesDep) -> dict:
-    """Store a credential: persisted to .env and applied to the live process immediately."""
+    """Store a credential: persisted to .env and applied to the live process immediately.
+
+    Multi-user: the key belongs to the *person*, not the deployment — it is stored in their own
+    scoped settings collection and applied per request via the tenancy overrides, never written
+    to the shared .env (one user's key must not silently become another user's).
+    """
     name = name.strip().lower()
+    from app.core.tenancy import current_user_id
+
+    uid = current_user_id.get()
+    if services.settings.multi_user and uid:
+        field = KEY_FIELDS.get(name) or URI_FIELDS.get(name)
+        if field is None:
+            raise HTTPException(
+                status_code=404,
+                detail={"code": "UNKNOWN_KEY", "message": name, "recoverable": True},
+            )
+        value = payload.value.strip()
+        if not value:
+            raise HTTPException(
+                status_code=422,
+                detail={"code": "EMPTY_VALUE", "message": "send the key in the body", "recoverable": True},
+            )
+        doc = await services.store.get("settings", "user_keys") or {"id": "user_keys"}
+        keys = dict(doc.get("keys") or {})
+        keys[field] = value
+        doc["keys"] = keys
+        await services.store.insert("settings", doc)
+        return {"ok": True, "id": name, "field": field, "kind": "secret", "persisted": "user-scoped"}
     field = KEY_FIELDS.get(name)
     kind = "secret"
     if field is None:
@@ -325,6 +370,18 @@ async def clear_key(name: str, services: ServicesDep) -> dict:
         )
     if field is None:
         raise HTTPException(status_code=404, detail={"code": "UNKNOWN_KEY", "message": name, "recoverable": True})
+    from app.core.tenancy import current_user_id
+
+    uid = current_user_id.get()
+    if services.settings.multi_user and uid:
+        # The key is the person's own: drop it from their scoped store. Never touch the
+        # shared .env here — that would delete the deployment's key, not theirs.
+        doc = await services.store.get("settings", "user_keys") or {"id": "user_keys"}
+        keys = dict(doc.get("keys") or {})
+        keys.pop(field, None)
+        doc["keys"] = keys
+        await services.store.insert("settings", doc)
+        return {"ok": True, "id": name, "field": field}
     path = _env_path(services)
     try:
         _write_env_key(path, field, "")
