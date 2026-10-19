@@ -26,9 +26,31 @@ uv run uvicorn app.main:app --host 127.0.0.1 --port 8756 --reload
 Useful checks:
 
 ```bash
-uv run pytest -q                       # unit + integration tests
+uv run pytest -q                       # unit + integration tests (incl. every eval case)
 uv run python -m app.selftest          # end-to-end loop against whatever providers are configured
+uv run python -m evals.runner          # offline eval harness — report + baseline diff, zero API keys
 ```
+
+### Evaluation harness
+
+`backend/evals/` drives the **real HTTP surface** (FastAPI `TestClient`, providers
+cleared, throwaway HOME/state per case) and scores outcomes mechanically: files that
+must exist, approvals that must gate, plans that must name the right tool, answers that
+must not contain injected instructions. No judge model and no paid API is involved —
+that is the deliberate difference from promptfoo/DeepEval judge flows.
+
+```bash
+uv run python -m evals.runner                # 11 offline cases + baseline comparison
+uv run python -m evals.runner --json r.json  # machine-readable results
+uv run python -m evals.runner --live         # model-planned cases (needs NEBIUS_API_KEY)
+uv run python -m evals.runner --write-baseline  # accept an intentional behaviour change
+uv run pytest tests/test_eval_suite.py       # same cases as pytest, one test per case
+```
+
+The runner diffs against `evals/baseline.json`: a case that passed before but fails
+now — or disappears from the suite entirely — is a hard regression by name. Tool-plan
+drift is reported as a note (the planner legitimately evolves). Rewrite the baseline
+only when the change in behaviour is deliberate.
 
 ## Desktop
 

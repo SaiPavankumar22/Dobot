@@ -14,6 +14,42 @@ Dobot performs real actions on a real computer. Security is a product feature, n
 7. Kill switch    global cancellation of the active task and its pending tool calls
 ```
 
+## Accounts and multi-user (`MULTI_USER=true`)
+
+Off by default — a personal-laptop Dobot is one person's tool and a login screen would be
+security theatre. Turn it on the moment one deployment serves more than one person:
+
+- **Accounts are invite-gated.** The first registered account becomes the owner; later
+  accounts need an invite the owner creates (Settings → Account → **Create invite code**,
+  or `POST /auth/invites`), unless `MULTI_USER_OPEN_REGISTRATION=true`. Passwords are
+  pbkdf2-hmac-sha256 (390k iterations)
+  and login tokens are stored only as SHA-256 hashes — a leaked store has no usable
+  credentials.
+- **Data is scoped per person.** An authenticated request only reads and writes
+  `u__<id>__*` collections: memory, tasks, approvals, activity, grants, journal and
+  automations. Ownership is enforced at query time, so a foreign id is a 404 or a
+  `deleted: false`, never a silent success on someone else's record. Legacy records that
+  predate accounts (`user_id: local`) stay visible to every user — they belong to the
+  deployment, not a person.
+- **The event stream is carved too.** Every event is stamped with its owner at publish
+  time; the WebSocket and `/events` deliver only the caller's events plus system-wide
+  ones. Anonymous sockets are refused (4401) instead of upgraded to an all-seeing viewer.
+- **Scheduled jobs run as their owner.** The scheduler fires outside any request and
+  re-enters the owner's context — their memory, their approvals, their API keys.
+- **Keys are per person.** In multi-user mode `PUT /settings/keys/...` stores the key in
+  the asking user's own scope and applies it per request; the shared `.env` is never
+  written by that path (and deleting your key never blanks the deployment's). One
+  person's key never becomes another person's credential.
+- **Anonymous requests are refused** (401) on every non-public route. `DOBOT_API_TOKEN`
+  keeps working as the operator gate, and with `MULTI_USER` unset the behaviour is the
+  single-user one, unchanged.
+
+Not isolated, by design: provider health, the kill switch and operator-only settings are
+process-wide. The desktop shell probes `/auth/status` at startup and shows a sign-in /
+sign-up screen on its own when the backend is multi-user; both windows stay gated until a
+session exists, and the session token is kept separate from the pasted operator/HF token in
+Settings. A single-user backend behaves exactly as before (no login screen).
+
 ## Risk levels
 
 | Level | Examples | Behaviour |

@@ -9,10 +9,20 @@ behind `app/agents/hermes.py`.
 | --- | --- |
 | `local` (default) | Dobot's own guarded tool implementations. No external runtime, no install. |
 | `cli` | Shell out to the Hermes CLI (`HERMES_COMMAND`, `HERMES_ARGS`) for a planned prompt. |
-| `remote` | POST the plan to a Hermes / MCP HTTP endpoint (`HERMES_ENDPOINT`). |
+| `remote` / `api` / `hermes` | Drive the real Hermes gateway over HTTP: `POST /v1/runs`, then the SSE event stream (`HERMES_ENDPOINT`, `HERMES_API_KEY`). |
+| `auto` | The API runtime, probed on a TTL first — what the Hugging Face Space image runs. |
 
-`local` exists so Dobot never depends on a third-party install being healthy; `cli` and
-`remote` are how Dobot hands real work to Hermes in a deployment.
+With `HERMES_FALLBACK_LOCAL=true` (default) the HTTP modes are wrapped in `ResilientRuntime`:
+gateway reachable → desktop delegation (`hermes_run`, `computer_*`) works; unreachable → those
+tools fail with the reason, the planner drops them instead of planning gestures that cannot run,
+and everything else (files, terminal, browser, research, memory) keeps working. Set it `false`
+for a strict "Hermes or nothing" deployment.
+
+`local` exists so Dobot never depends on a third-party install being healthy; `remote` is how Dobot
+hands real work — including desktop control — to the upstream Hermes agent. The HF Space runs
+**both servers in one container** (gateway sidecar on loopback beside the backend) — see
+[`docs/hermes.md`](hermes.md) §4 for that topology and the tunnel alternative for a real desktop.
+See [`docs/hermes.md`](hermes.md) for the wire contract, setup and verification evidence.
 
 ## Tool surface
 
@@ -25,9 +35,10 @@ behind `app/agents/hermes.py`.
 | `fs_delete` | HIGH | Never runs without approval |
 | `terminal_run` | MEDIUM→HIGH | Allowlisted binaries, hard timeout, cwd restricted |
 | `browser_open` / `browser_read` | LOW | Fetch page text over HTTP (read-only, no window) |
-| `browser_navigate` / `browser_snapshot` | LOW | Open the visible browser, index interactive elements |
-| `browser_click` / `browser_type` | MEDIUM | Drive the visible browser (local Playwright driver) |
-| `computer_*` | MEDIUM | Hermes computer use: click, type, scroll, drag |
+| `browser_navigate` / `browser_snapshot` | LOW | Open the visible browser, index interactive elements (role, accessible name, `disabled`/`obscured` marks) |
+| `browser_click` / `browser_type` | MEDIUM | Drive the visible browser (local Playwright driver: identity-pinned handles, wait-and-retry, post-action `evidence`) |
+| `computer_*` | MEDIUM | Single gesture via Hermes computer use: click, type, scroll, drag |
+| `hermes_run` | MEDIUM | Whole desktop job delegated to the Hermes agent (multi-step GUI work) |
 | `screen_capture` / `screen_analyze` | LOW | On-demand capture, OCR + vision |
 | `memory_write` | LOW | Explicit "remember this" |
 | `app_open` | LOW | Launch an application |
@@ -38,14 +49,19 @@ implementation so the Verifier knows how to check the result.
 
 ## Hermes integration detail
 
-Hermes exposes its toolsets (`computer_use`, `browser_exec`, `terminal`, `filesystem`, `skills`) and
+Hermes exposes toolsets (`computer_use`, `browser`, `terminal`, `file`, `web`, `skills`, …) and
 speaks MCP over stdio to `cua-driver` for background desktop control. Dobot's adapter:
 
 1. Builds the prompt from the approved plan (including the constraint list produced by the decision
    engine, so the runtime cannot exceed what the user approved).
-2. Runs it with the configured toolset allowlist (`HERMES_ALLOWED_TOOLS`).
-3. Streams stdout into `tool_completed` events and a hard timeout into `tool_failed`.
+2. Creates a run (`POST /v1/runs`) and consumes its SSE stream, keeping the `tool.started` /
+   `tool.completed` trace as evidence.
+3. Turns a timeout into a server-side `/stop`, and a failed run into a typed error — a run is never
+   reported as success because the HTTP call returned.
 4. Hands the result back to the Verifier, which checks the *system state*, not the runtime's claim.
+
+Earlier versions of this adapter called `/run`, `/computer` and `/browser/submit`. Those routes never
+existed upstream, so `remote` mode could not work; the real contract is in [`hermes.md`](hermes.md).
 
 Approval grants are passed as explicit capability envelopes: if the user approved "move 54 files",
 the envelope names those files, and anything outside it is re-evaluated by the decision engine rather

@@ -650,6 +650,7 @@ completely, use **Tray → Quit Dobot**, or **Ctrl+Shift+Esc** to stop the curre
 | --- | --- | --- |
 | API keys and settings | `<repo>/.env` | Gitignored. Backend-only; the UI never receives a key. On the Hugging Face Space (§5.6) they are Space **secrets** — environment variables, never a file. |
 | Backend state (local record store, vectors, logs) | `<repo>/.dobot/` | `DOBOT_STATE_DIR` in `.env`. Space deploys: `/app/.dobot` inside the container, wiped when the Space rebuilds — set `MONGODB_URI` if memories must survive. |
+| Primary records in MongoDB | the cluster behind `MONGO_URL` | Set it and the backend stores accounts, tasks, memory, automations, approvals, activity and settings in MongoDB instead of `.dobot/*.json`; unset it and everything falls back to the files. `MULTI_USER=true` requires it (credentials never live in JSON files). |
 | Skills | `<repo>/skills/` | `DOBOT_SKILLS_DIR`. One folder per skill. Space deploys: baked into the image (edits survive until the next rebuild). Bundled installers (`DOBOT_BUNDLE_SIDECAR=1`): a writable `skills\` next to the exe. |
 | Floating-dot position and the Always-on choice | `%APPDATA%\com.dobot.desktop\dobot-state.json` | Written by the desktop shell. |
 | Backend address override | browser `localStorage` key `dobot.baseUrl` | Change it in **Settings → Backend**. |
@@ -662,7 +663,28 @@ again. Memory and task history reset; your `.env` and skills are untouched.
 
 ## 8. Updating
 
-From source:
+### Installed app: in-app updates
+
+Installed builds check GitHub Releases for a newer version and show it in the app — a banner at the
+top of the window, plus **Settings → Updates** with *Restart to update*. The new version is
+downloaded, verified against the pinned signing key and installed in place; no manual `.exe`
+download.
+
+Publishing a release (maintainers):
+
+- **Tag it:** `git tag v0.2.0 && git push origin v0.2.0` — or run the *Release desktop app*
+  workflow from the Actions tab (empty version field = patch bump of `tauri.conf.json`).
+  `.github/workflows/release-tauri.yml` builds the Windows MSI + NSIS bundles, signs the updater
+  artifacts and publishes the GitHub Release with `latest.json`.
+- **Two repository secrets, set once:** `TAURI_SIGNING_PRIVATE_KEY` (the contents of the
+  gitignored `.tauri-signing/dobot.key`) and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` (empty for this
+  key). The public half is pinned in `tauri.conf.json`; installed copies refuse any bundle that
+  does not match it. Keep the private file safe — without it new releases cannot be signed and
+  existing installs will reject them.
+
+Builds from source report version `dev` and never offer an update.
+
+### From source
 
 ```bash
 git pull

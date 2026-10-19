@@ -141,6 +141,8 @@ becomes a searchable run with inputs, outputs, token counts, latency and errors 
 | `PROTECTED_PATHS` | ssh/aws/gpg/kube… | Locations no tool may ever read or write, even with approval. **Add your own** (comma-separated) |
 | `SKILL_SCAN_MODE` | `block` | Skills are scanned for injection/secrets/exfiltration before the planner sees them |
 | `DOBOT_API_TOKEN` | *(empty)* | Set it and every API call except `/health` needs `Authorization: Bearer <token>`. Generate one: `cd backend && uv run python -m app.selftest --new-token` |
+| `MULTI_USER` | `false` | `1` = accounts instead of one shared store: per-user memory, tasks, automations and API keys, invite-gated registration (first account is the owner), per-user event streams. Anonymous requests are refused. See [Security](security.md#accounts-and-multi-user-multi_usertrue). |
+| `MULTI_USER_OPEN_REGISTRATION` | `false` | Only meaningful with `MULTI_USER=1`: lets anyone register without an owner invite. |
 | `SHADOW_MODE` | `false` | `1` = run everything in preview: plans are judged and previewed but nothing executes |
 
 ## 8. Optional — everything else

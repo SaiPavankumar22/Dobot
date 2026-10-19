@@ -43,11 +43,13 @@ then go and do it yourself. Dobot closes that loop.
 - **See your screen.** Select a region (`Ctrl+Shift+S`) or share the window you are in (`Ctrl+Alt+L`) and ask about it.
 - **Listen.** Hold `Ctrl+Shift+Space`, speak, let go. Transcribed locally with Whisper.
 - **Read your files.** Drop in images, logs or code files and ask about them.
-- **Research the web.** Searches with Tavily and answers with sources.
+- **Research the web.** Flip the **Research** chip in the composer: Tavily search plus synthesis, answered with sources — no full agent loop needed.
 - **Use your browser.** Opens a visible browser window and clicks, types and downloads like a person would.
 - **Run skills.** Ten built-in workflows, such as *tidy downloads*, *weekly report*, *CI autopsy*, *release checklist* and *disk report*.
 - **Remember.** Preferences, projects and past tasks come back as context later.
 - **Automate.** Schedule recurring tasks and reminders.
+- **Progress you can see.** Finished tasks and completed research earn XP: a level badge, a shimmering XP bar and a daily streak on Overview — completion pops confetti.
+- **Updates itself.** New releases show an in-app banner and install from **Settings → Updates**, no `.exe` hunt.
 - **Stop instantly.** `Ctrl+Shift+Esc` cancels whatever is running.
 
 ### You choose how much freedom it gets
@@ -166,6 +168,10 @@ cp .env.example .env
 Set `NEBIUS_API_KEY` (required for real answers) and `TAVILY_API_KEY` (for web research).
 You can also paste them later in the app under **Settings → Your API keys**.
 
+Running MongoDB? Set `MONGO_URL` and the backend stores accounts, tasks, memory, automations and
+settings in it instead of local JSON files. `MULTI_USER=true` turns on accounts (invite-gated) — the
+desktop app then shows a sign-in / sign-up screen automatically.
+
 **2. Start the backend**
 
 ```bash
@@ -223,12 +229,14 @@ Listed plainly, because pretending something works is worse than admitting it do
 
 | Area | Today |
 | --- | --- |
-| **Desktop app control** | Clicking inside other desktop apps needs the optional Hermes runtime. Browser control works without it. |
+| **Desktop app control** | Clicking inside other desktop apps needs the real Hermes agent gateway (see [`docs/hermes.md`](docs/hermes.md)). Browser control works without it. The Hugging Face Space runs the gateway as a second server in the same container (loopback-only) — or, for *your* desktop, point `HERMES_ENDPOINT` at a tunnel to the gateway on your PC; when it is down, Dobot serves on its own tools and says which part is blocked. |
 | **Browser logins** | Dobot uses its own browser profile, so you sign in once inside its window; existing Chrome logins do not carry over. |
 | **Isolation** | By default commands run on your PC behind Dobot's own rules. Full sandboxing needs NemoClaw or a Nebius sandbox. |
 | **Email and messages** | Dobot writes drafts but never sends anything. |
 | **Voice** | Needs a ~484 MB speech model and ffmpeg on your machine. |
 | **Backend autostart** | The app does not start the backend for you by default — see [`docs/install.md`](docs/install.md). |
+| **Multi-user** | Opt-in on the backend (`MULTI_USER=true` + `MONGO_URL`): accounts with invite codes, per-user memory/tasks/automations/API keys, per-user event streams. On a multi-user backend the desktop shell shows a sign-in / sign-up screen on its own and gates both windows until you're signed in; **Settings → Account** shows who you are and signs you out. See [`docs/security.md`](docs/security.md#accounts-and-multi-user-multi_usertrue). |
+| **Updates** | Installed builds check GitHub Releases and show an in-app banner + **Settings → Updates** with one-click install. Maintainers publish a release by pushing a version tag (`.github/workflows/release-tauri.yml`). |
 
 ---
 
@@ -242,7 +250,8 @@ Listed plainly, because pretending something works is worse than admitting it do
 | [Security](docs/security.md) | Risk levels, approvals, sandboxes and what is not enforced |
 | [Memory](docs/memory.md) | What Dobot remembers and how it recalls it |
 | [Agent and skills](docs/agent.md) | Tools, runtimes and writing your own skills |
-| [Development](docs/development.md) | Setup and conventions for contributors |
+| [Hermes agent](docs/hermes.md) | The real Hermes gateway, its API contract, setup and verification |
+| [Development](docs/development.md) | Setup, conventions, and the offline eval harness for contributors |
 | [Screenshots](docs/screenshots/README.md) | Every page of the app |
 
 ---
