@@ -19,10 +19,16 @@ user data), and §9 for the honest list of what has *not* been verified.
 | **V3** | *proposed* | Not built. See §13. | — |
 
 > **Version strings are still `0.1.0`** in `backend/app/__init__.py`, `desktop/package.json`,
-> `desktop/src-tauri/Cargo.toml` and `desktop/src-tauri/tauri.conf.json`. V2 is a behavioural version,
-> not a declared one: the shipped installers are named `Dobot_0.1.0_*`. Bumping to `0.2.0` is a
-> four-file change plus a rebuild — deliberately not done here, because a source tree that says
-> `0.2.0` next to `0.1.0` artefacts is a worse inconsistency than a stale number.
+> `desktop/src-tauri/Cargo.toml` and `desktop/src-tauri/tauri.conf.json`. V2/V2.5 are behavioural
+> versions, not declared ones: the shipped installers are named `Dobot_0.1.0_*`, and the release
+> build (§4) stamps the same number. Bumping to `0.2.0` is a four-file change plus a rebuild —
+> deliberately deferred (§13 item 7) because a source tree that says `0.2.0` next to `0.1.0`
+> artefacts is a worse inconsistency than a stale number.
+>
+> **Post-V2.5 work recorded here:** the desktop gained a Grok/Meta-style sign-in / sign-up screen
+> with per-account chat persistence (commit `682306c`), and a signed auto-updater wired to GitHub
+> Releases (commit `c117b0e`). Both are live and verified in the browser against a
+> `MULTI_USER=true` backend; see §9 for what remains unproven about them.
 
 ---
 
@@ -172,10 +178,22 @@ The bundler fetched WiX and NSIS on first use (`wix311`, `nsis-3.11`, `nsis_taur
 validated their hashes, then ran `candle`/`light` for the MSI and `makensis` for the NSIS installer.
 This is documented in `docs/install.md` with the exact paths and sizes so nobody has to discover it.
 
-**Not done:** a `--release` build. `[profile.release]` uses `lto = true, codegen-units = 1,
-opt-level = "s"`, so the first release build is long; `--debug` was chosen to verify the *pipeline*
-quickly. The pipeline is therefore proven, and the release profile is not. Also not done: installing
-the bundle and running it natively (see §9).
+**Update — the release profile is now built and signed.** `npm run tauri build` (with
+`TAURI_SIGNING_PRIVATE_KEY` from `.tauri-signing/`) finished in ~6 minutes and produced all four
+artefacts plus both updater signatures:
+
+```
+Finished `release` profile [optimized] target(s) in 5m 54s
+    Dobot_0.1.0_x64-setup.exe            (NSIS, 3,304,601 bytes)
+    Dobot_0.1.0_x64_en-US.msi            (MSI,  4,837,376 bytes)
+    Dobot_0.1.0_x64-setup.exe.sig        (updater signature)
+    Dobot_0.1.0_x64_en-US.msi.sig        (updater signature)
+    dobot-desktop.exe                    (raw release binary, 11,405,824 bytes)
+```
+
+The signatures verify against the pubkey pinned in `tauri.conf.json`, so these are valid updater
+sources, not throwaway builds. Still **not done:** installing the bundle and running it natively
+(see §9), and the code-signing certificate that removes the SmartScreen warning (§13 item 12).
 
 ---
 
@@ -358,8 +376,9 @@ Not "it looks fine" — assertions:
 
 ### Layer 7 — Packaging
 
-`npx tauri build --debug` (§4) — the only test that proves the app can become something a person
-installs.
+`npm run tauri build` (release profile, §4) — the only test that proves the app can become something
+a person installs. Builds the app, both installers and both updater signatures; signing with the
+local `.tauri-signing/` key so the artifacts match the pinned pubkey.
 
 ### Cross-validation worth noting
 
@@ -450,12 +469,14 @@ Stated plainly, because a false green is worse than a red.
 | Global hotkeys fire on a real desktop | **Unverified** | Registration is exercised at startup; the chords were not pressed natively. |
 | Tray menu actions | **Unverified** | Compiled; not clicked. |
 | Native region capture (`xcap`) on this display | **Unverified** | The browser fallback path was exercised; the Rust capture path was not. |
-| Release-profile build and installer | **Unverified** | Only `--debug` was built (§4). |
+| Release-profile build and installer | **Built, not installed** | `npm run tauri build` (release) succeeded on 2026-10-22: app exe, NSIS, MSI and both updater signatures (§4). The artefacts exist and are signed; installing and launching them natively is still untested (row 1). |
 | Behaviour after a genuine Windows reboot (autostart + dot restore) | **Unverified** | Requires a reboot. |
 | Memory recall over a large corpus | **Unverified** | Verified only at small scale with the local store. |
 | MongoDB / Zilliz paths | **Unverified** | Neither service was configured; the local fallbacks are what ran. |
 | NemoClaw / OpenShell isolation | **Unverified** | Not installed — `isolation: none` is the honest current state. |
 | Hermes CLI / remote runtime and `computer_*` tools | **Unverified** | Hermes is not installed; those tools refuse rather than simulate, which is the designed behaviour but was not observed. |
+| The sign-in / sign-up screen and per-account chat restore | **Verified in browser** | Registered an account, sent a marker message, confirmed a cold reload restored the thread into the UI (not just storage), and completed a full sign-out → sign-in round trip that brought the thread back. Single-user backends still fall through the gate untouched (`off` phase). |
+| The signed auto-updater (fetch → verify → install → relaunch) | **Built, never exercised end-to-end** | No `v*` tag has been published, so `latest.json` does not exist in the wild and no installed copy has ever fetched an update. The signature verification path is exercised only by the build that produced the `.sig` files (§4). CI secret `TAURI_SIGNING_PRIVATE_KEY` must match `.tauri-signing/dobot.key` or CI-built updates will fail to verify. |
 | The V2.5 guards against a *real* evasion attempt | **Partly verified** | The rules are unit-tested against real payload strings (encoded commands, reverse shells, download-and-execute, webhooks, private keys) and against ordinary commands for false positives. No adversarial red-team pass was run, and no obfuscation beyond the coded patterns was attempted. |
 | The skill scanner against a real malicious skill | **Unverified** | Tested against synthetic payloads in `tmp_path`. No third-party skill was downloaded and scanned. |
 | The mode control clicked in the running UI | **Unverified** | Backend behaviour is covered by orchestrator tests; the segmented control is `tsc`-clean but was not clicked against a live backend in this round. |
@@ -483,7 +504,9 @@ curl -s http://127.0.0.1:8756/security/status        # inspect the posture
 cd desktop && npm run dev                            # UI at http://127.0.0.1:1420
 
 # 4. packaging
-cd desktop && npx tauri build --debug                # expect 2 bundles
+cd desktop && npm run tauri build                    # release: exe + 2 installers + 2 signatures
+#   sign the updater artifacts too:
+#   export TAURI_SIGNING_PRIVATE_KEY="$(cat ../.tauri-signing/dobot.key)"
 
 # 5. native shell (the gap V3 should close)
 cd desktop && npm run tauri dev
@@ -741,8 +764,9 @@ Ordered by value, not effort.
 11. **Adversarial testing of the new guards.** The evasion rules were written from a mental list of
     attack shapes. They deserve a red-team pass with obfuscation the authors did not think of, and a
     real third-party skill scanned end to end.
-12. **Release build with signing.** `npm run tauri build` plus a certificate, to remove the SmartScreen
-    warning documented in `docs/install.md`.
+12. **Code-sign the release build.** The release build and the *updater* minisign signatures are done
+    (§4); what remains is an Authenticode certificate, to remove the SmartScreen warning documented
+    in `docs/install.md`.
 13. **Voice**, the optional-specification item, as an input surface on top of the existing composer.
 14. **Test isolation hardening.** Make the fixture fail loudly if it picks up *any* value from the
     developer's `.env`, rather than pinning keys one at a time. B8 is the second occurrence of exactly
