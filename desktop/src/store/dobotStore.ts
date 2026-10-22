@@ -2,7 +2,7 @@
 // updates, approvals and notifications, so the UI is a projection of what the agent actually did.
 
 import { create } from "zustand";
-import { ApiError, api } from "../services/api";
+import { ApiError, api, getUserToken } from "../services/api";
 import { native } from "../services/native";
 import { socket } from "../services/websocket";
 import { useProgress } from "../services/gamification";
@@ -22,6 +22,45 @@ import type {
 const MAX_EVENTS = 250;
 const MODE_KEY = "dobot.mode";
 const SPEAK_KEY = "dobot.speakAnswers";
+const THREAD_PREFIX = "dobot.thread.";
+/** Enough history to feel continuous; small enough to stay inside the localStorage quota. */
+const THREAD_LIMIT = 60;
+
+/**
+ * The conversation is per account, on purpose: signing out must never show one person's
+ * chat to the next, and signing back in must continue where that person left off.
+ *
+ * `activeThreadKey` is the storage slot the live thread writes to. It is set by
+ * ``loadThread`` (sign-in / app start) and detached by ``clearThread`` (sign-out), so the
+ * wipe that hides the thread behind the login card cannot erase the saved copy.
+ */
+let activeThreadKey: string | null = null;
+
+function threadKeyForCurrentUser(): string {
+  const token = getUserToken();
+  // The backend mints `dobot_u_<user_id>_<random>` where the user id is `user_` plus
+  // exactly 12 hex chars (users.py). Anchor on that — the trailing random segment is
+  // token_urlsafe and can itself contain `_`, so a bare split would cut the id short
+  // and make every account share one slot.
+  const match = /^dobot_u_(user_[0-9a-f]{12})_/.exec(token);
+  return `${THREAD_PREFIX}${match?.[1] ?? "local"}`;
+}
+
+/** Persist the thread, minus anything too heavy for localStorage (base64 attachments). */
+function persistThread(messages: ChatMessage[]): void {
+  if (!activeThreadKey) return;
+  try {
+    const slim = messages
+      .slice(-THREAD_LIMIT)
+      // Attachments carry base64 payloads that would blow the quota; names stay if present
+      // through the message text itself.
+      .map(({ attachments: _dropped, ...rest }) => rest);
+    localStorage.setItem(activeThreadKey, JSON.stringify(slim));
+  } catch {
+    // Quota exceeded or private mode: the chat simply isn't saved this time — the live
+    // thread is unaffected, which is the honest trade.
+  }
+}
 
 /**
  * Read a finished answer aloud, if the user asked for that.
@@ -519,6 +558,62 @@ export const useDobot = create<DobotStore>((set, get) => ({
 
   reset: () => set({ messages: [], events: [], approvals: [], lastError: null }),
 }));
+
+/**
+ * Restore this account's saved conversation and point persistence at its slot.
+ *
+ * Called by the auth gate when a session exists (sign-in or app start). Messages left
+ * mid-flight by a restart are shown as cancelled rather than as eternal spinners — the
+ * backend task is gone; pretending otherwise would be a lie in the thread.
+ */
+export function loadThread(): void {
+  activeThreadKey = threadKeyForCurrentUser();
+  let messages: ChatMessage[] = [];
+  try {
+    const raw = localStorage.getItem(activeThreadKey);
+    if (raw) messages = JSON.parse(raw) as ChatMessage[];
+  } catch {
+    messages = [];
+  }
+  const interrupted = new Set(["PENDING", "PLANNING", "IN_PROGRESS", "WAITING_APPROVAL", "WAITING_USER"]);
+  messages = messages.map((message) =>
+    message.status && interrupted.has(message.status)
+      ? {
+          ...message,
+          status: "CANCELLED" as const,
+          text: message.text || "Stopped — Dobot was closed while this was running.",
+          plan: message.plan
+            ? {
+                ...message.plan,
+                steps: message.plan.steps.map((step) =>
+                  step.status === "PENDING" ? { ...step, status: "SKIPPED" as const } : step,
+                ),
+              }
+            : message.plan,
+        }
+      : message,
+  );
+  useDobot.setState({ messages, busy: false, activeTaskId: null, lastError: null });
+}
+
+/**
+ * Detach persistence, then blank the thread — in that order. Signing out hides the
+ * conversation behind the login card without erasing the saved copy, so the next sign-in
+ * (by anyone) starts clean and the owner finds theirs intact.
+ */
+export function clearThread(): void {
+  activeThreadKey = null;
+  useDobot.setState({ messages: [], busy: false, activeTaskId: null, lastError: null });
+}
+
+// The thread saves itself as it grows. Only the chat window writes: every Tauri window has
+// its own store instance, and the dashboard/dot windows hold an empty `messages` array that
+// would silently overwrite the real conversation if they persisted too.
+if (!native.isNative || native.label() === "chat") {
+  useDobot.subscribe((state, previous) => {
+    if (state.messages !== previous.messages) persistThread(state.messages);
+  });
+}
 
 async function finaliseTask(
   taskId: string,
