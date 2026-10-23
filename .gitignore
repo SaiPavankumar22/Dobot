@@ -44,3 +44,6 @@ desktop.ini
 /Dobot_*_x64_en-US.msi
 *.exe.sig
 *.msi.sig
+
+# final hand-off drop (release build output, never source)
+/final/
