@@ -17,7 +17,7 @@ interface SecurityStatus {
   execution_mode: string;
   protected_paths: string[];
   skill_scan: { mode: string; flagged: string[]; blocked: string[] };
-  jev: { enabled: boolean; mode: string };
+  jev: { enabled: boolean; mode: string; judge?: string; screen_check?: boolean };
   kill_switch_hotkey: string;
   active_tasks: string[];
   allowed_paths: string[];
@@ -310,7 +310,12 @@ export function Security() {
         <div className="mono">allowed network: {(status?.allowed_networks ?? []).join(", ") || "—"}</div>
         <div className="mono">toolsets: {(status?.agent_runtime.toolsets ?? []).join(", ") || "—"}</div>
         <div className="mono">
-          JEV: {status?.jev.enabled ? `enabled (${status.jev.mode})` : "disabled"}
+          JEV:{" "}
+          {status?.jev.enabled
+            ? status.jev.judge && status.jev.judge !== "none"
+              ? `enabled — ${status.jev.judge}` + (status.jev.screen_check ? " (screen check on)" : "")
+              : `enabled (${status.jev.mode}) — no judgement model key yet`
+            : "disabled"}
         </div>
       </div>
 

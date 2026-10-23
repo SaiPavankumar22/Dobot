@@ -47,6 +47,12 @@ const KEY_COPY: Record<string, { label: string; hint: string; placeholder: strin
     placeholder: "tvly-…",
     href: "https://app.tavily.com/home",
   },
+  novita: {
+    label: "Novita API key",
+    hint: "Runs JEV-27B-VL, the judgement model: every proposed action is scored for risk, untrusted on-screen text is checked for prompt injection, and the captured screen is checked for visible credentials.",
+    placeholder: "sk_…",
+    href: "https://novita.ai/settings/key-management",
+  },
   zilliz_token: {
     label: "Zilliz token",
     hint: "Vector memory: recall across past conversations and documents. Needs the URL below too.",
@@ -67,8 +73,6 @@ const OPERATOR_COPY: Record<string, string> = {
   langsmith_api_url: "LangSmith host",
   langsmith_project: "LangSmith project",
   dobot_api_token: "Backend access token",
-  laya_api_key: "Laya agreement server key",
-  laya_server_url: "Laya agreement server URL",
 };
 
 export function Settings() {

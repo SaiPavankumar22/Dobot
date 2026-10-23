@@ -20,6 +20,10 @@ def settings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Settings:
     # The developer's .env carries a real project id; never let it reach the sandbox backend in tests.
     monkeypatch.setenv("NEBIUS_PROJECT_ID", "")
     monkeypatch.setenv("TAVILY_API_KEY", "")
+    # The developer's real Novita key must never reach the judgement layer in tests: every JEV
+    # assertion injects a stub client, and without this pin a live .env key would put a real model
+    # call (and a real bill) inside the suite.
+    monkeypatch.setenv("NOVITA_API_KEY", "")
     monkeypatch.setenv("MONGODB_URI", "")
     monkeypatch.setenv("ZILLIZ_URI", "")
     monkeypatch.setenv("SANDBOX_PROVIDER", "local")
@@ -86,6 +90,14 @@ def _clean_env() -> None:
     """Keep the developer's real .env, and any earlier test's environment, out of each test."""
     for key in ("HERMES_ENDPOINT", "OPENSHIELD_GATEWAY_URL"):
         os.environ.pop(key, None)
+    # A frozen install exports SSL_CERT_FILE pointing inside its extraction directory, which is
+    # gone the moment it exits. An inherited stale path makes every TLS client in the process
+    # (httpx trusts the environment) fail at creation — including app startup. Drop *invalid*
+    # values only; a valid override stays respected.
+    for key in ("SSL_CERT_FILE", "SSL_CERT_DIR"):
+        value = os.environ.get(key, "")
+        if value and not os.path.exists(value):
+            os.environ.pop(key, None)
     yield
     # `get_settings()` is lru_cached. Without this, a test that ran with a redirected state directory
     # leaves that cached Settings behind and the *next* test silently inherits it, which is how a suite

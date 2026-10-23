@@ -29,7 +29,7 @@ def test_keys_are_listed_masked(client) -> None:
     body = test_client.get("/settings/keys").json()
     ids = {key["id"] for key in body["keys"]}
     # Exactly the keys a person brings for themselves — nothing infrastructure-shaped.
-    assert ids == {"nebius", "tavily", "zilliz_token", "zilliz_uri"}
+    assert ids == {"nebius", "tavily", "novita", "zilliz_token", "zilliz_uri"}
     for key in body["keys"]:
         assert "value" not in key  # raw secrets never cross the boundary
         assert isinstance(key["set"], bool)
@@ -39,8 +39,10 @@ def test_operator_managed_values_are_reported_but_not_writable(client) -> None:
     test_client, _env = client
     reasons = {item["id"]: item["why"] for item in test_client.get("/settings/keys").json()["operator"]}
     assert "mongodb_uri" in reasons and "langsmith_api_key" in reasons
+    # The judgement key belongs to the person, not the operator — Laya's old operator entries are gone.
+    assert "laya_api_key" not in reasons and "laya_server_url" not in reasons
     assert all("value" not in item for item in test_client.get("/settings/keys").json()["operator"])
-    for name in ("mongodb_uri", "langsmith", "dobot_api_token", "laya"):
+    for name in ("mongodb_uri", "langsmith", "dobot_api_token"):
         response = test_client.put(f"/settings/keys/{name}", json={"value": "x"})
         assert response.status_code == 403, name
         assert response.json()["error"]["code"] == "OPERATOR_MANAGED"
@@ -67,6 +69,23 @@ def test_setting_a_key_updates_live_settings(client) -> None:
     test_client.put("/settings/keys/nebius", json={"value": "nkey-live"})
     text = Path(env_path).read_text(encoding="utf-8")
     assert "NEBIUS_API_KEY=nkey-live" in text
+
+
+def test_novita_key_persists_and_reaches_the_judgement_layer(client) -> None:
+    """The judgement key is a first-class user key: persisted, masked, and applied to the live
+    JEV client so the next judgement re-reads credentials without a restart."""
+    test_client, env_path = client
+    response = test_client.put("/settings/keys/novita", json={"value": "sk-novita-123"})
+    assert response.status_code == 200
+    assert response.json()["field"] == "novita_api_key"
+    assert "NOVITA_API_KEY=sk-novita-123" in Path(env_path).read_text(encoding="utf-8")
+    listing = test_client.get("/settings/keys").json()["keys"]
+    novita = next(key for key in listing if key["id"] == "novita")
+    assert novita["set"] is True and "sk-novita-123" not in novita["masked"]
+    # The live process picked it up: the JEV engine's client sees the key immediately.
+    services = test_client.app.state.services
+    assert services.settings.novita_api_key == "sk-novita-123"
+    assert services.decision.jev.client.available is True
 
 
 def test_setting_an_existing_key_overwrites_the_line(client) -> None:

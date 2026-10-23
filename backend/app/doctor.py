@@ -108,7 +108,7 @@ class Doctor:
             self._budgets,
             self._api_auth,
             self._kill_switch,
-            self._laya,
+            self._autotrust,
             self._harness,
             self._langsmith,
             self._deep_research,
@@ -711,61 +711,64 @@ class Doctor:
             )
         ]
 
-    async def _laya(self) -> list[Capability]:
-        """The judgement model behind JEV. Heuristic-only is honest but worth knowing about."""
-        laya = getattr(self.s.decision.jev, "laya", None)
-        if laya is None:
+    async def _autotrust(self) -> list[Capability]:
+        """The judgement model behind JEV: AutoTrust JEV-27B-VL on Novita.
+
+        A real probe, not a key-presence check: a saved key can be revoked and an account can run
+        out of balance, and both answer the same way at task time — with a missing judgement. The
+        probe is one tiny decide call (a handful of input tokens), so the Doctor pays for the truth.
+        """
+        client = getattr(self.s.decision.jev, "client", None)
+        if client is None:
             return []
-        health = await self._check(laya.health(), {})
-        mode = str(health.get("mode", "heuristic"))
-        if mode == "server":
-            reachable = bool(health.get("reachable"))
+        health = await self._check(client.health(), {})
+        if not health.get("configured"):
             return [
                 Capability(
-                    id="laya",
-                    label="Judgement model (Laya server)",
-                    state="live" if reachable else "broken",
+                    id="autotrust",
+                    label="Judgement model (AutoTrust JEV)",
+                    state="not_configured",
                     detail=(
-                        f"laya-serve reachable at {health.get('server_url')} — calibrated, model-backed JEV."
-                        if reachable
-                        else f"{health.get('server_url')} did not answer, so JEV falls back to heuristics per action."
+                        "No Novita key — JEV has no model judgement and the deterministic policies "
+                        "decide alone. The model adds calibrated probabilities for action risk, "
+                        "prompt-injection detection and a vision check for on-screen credentials."
                     ),
-                    fix="" if reachable else "Start laya-serve, or clear LAYA_SERVER_URL to silence this check.",
-                    env="LAYA_SERVER_URL",
+                    fix=(
+                        "Paste your Novita key under Settings → Your API keys (or set "
+                        "NOVITA_API_KEY) and restart."
+                    ),
+                    env="NOVITA_API_KEY",
                     meta=health,
                 )
             ]
-        if mode == "inprocess":
-            loaded = bool(health.get("reachable"))
+        if health.get("ok"):
             return [
                 Capability(
-                    id="laya",
-                    label="Judgement model (Laya in-process)",
-                    state="live" if loaded else "broken",
+                    id="autotrust",
+                    label="Judgement model (AutoTrust JEV)",
+                    state="live",
                     detail=(
-                        "The laya package is loaded in this process."
-                        if loaded
-                        else "LAYA_INPROCESS is set but the laya package is not installed."
+                        f"{health.get('model') or self.settings.jev_model} answered the probe in "
+                        f"{health.get('latency_ms', '?')} ms — model-backed judgement is live."
                     ),
-                    fix="" if loaded else "Run `uv add laya` (or `pip install laya`) and restart.",
-                    env="LAYA_INPROCESS",
                     meta=health,
                 )
             ]
+        reason = str(health.get("reason") or "")
+        fix = {
+            "NOT_ENOUGH_BALANCE": "Top up the Novita account — the key is valid but the balance is empty.",
+            "NOT_ENOUGH_KEY_BUDGET": "Raise the API key's budget in Novita's key management.",
+            "MISSING_API_KEY": "Re-paste the Novita key under Settings → Your API keys.",
+            "UNREACHABLE": "Check the backend's network access to api.novita.ai.",
+        }.get(reason, "Check the key under Settings → Your API keys, and the account's balance.")
         return [
             Capability(
-                id="laya",
-                label="Judgement model (Laya)",
-                state="not_configured",
-                detail=(
-                    "JEV is judging with deterministic heuristics only. The open Laya model adds "
-                    "calibrated probabilities for risk, urgency and sensitivity."
-                ),
-                fix=(
-                    'Run `pip install "laya[serve]" && laya-serve`, set LAYA_SERVER_URL=http://127.0.0.1:8000, '
-                    "and restart — or set LAYA_INPROCESS=1 with the laya package installed."
-                ),
-                env="LAYA_SERVER_URL",
+                id="autotrust",
+                label="Judgement model (AutoTrust JEV)",
+                state="broken",
+                detail=f"A key is saved but the model did not answer: {health.get('error', 'unknown error')}",
+                fix=fix,
+                env="NOVITA_API_KEY",
                 meta=health,
             )
         ]

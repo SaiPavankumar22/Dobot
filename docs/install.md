@@ -204,24 +204,23 @@ curl http://127.0.0.1:8756/health
 `"degraded":[]` means every configured provider answered. `"degraded":["tavily"]` means Dobot is
 running fine but research is offline — that is a normal, supported state.
 
-### Optional: turn on Laya (model-backed risk judgement)
+### Optional: turn on the JEV judgement model (AutoTrust JEV-27B-VL)
 
-By default the decision engine uses deterministic heuristics only. To add **Laya** — the open
-System-1 judgement model behind JEV — pick one of:
+JEV judges every proposed action with **AutoTrust JEV-27B-VL** on Novita's decision-evaluation
+endpoint: risk as calibrated probabilities (it thinks only when unsure), prompt-injection detection
+over untrusted on-screen/web text, and a vision check of the captured screenshot for visible
+credentials. It needs a Novita API key — get one at
+[novita.ai/settings/key-management](https://novita.ai/settings/key-management), then either paste it
+under **Settings → Your API keys → Novita** in the app (applies immediately, no restart) or add to
+`.env`:
 
 ```bash
-# Option A: a small sidecar server (recommended)
-pip install "laya[serve]"
-laya-serve                          # listens on 127.0.0.1:8000
-# then add to .env:  LAYA_SERVER_URL=http://127.0.0.1:8000
-
-# Option B: in-process with the backend
-pip install laya
-# then add to .env:  LAYA_INPROCESS=1
+NOVITA_API_KEY=sk_…
 ```
 
-With neither, Dobot still runs — JEV just uses its built-in heuristics. Check which mode is live via
-the Doctor page in the app or `curl http://127.0.0.1:8756/doctor`.
+Without a key Dobot still runs — the deterministic policies and risk floors decide on their own,
+and the Doctor reports the missing judgement model rather than pretending. Verify via the Doctor
+page or `curl http://127.0.0.1:8756/doctor`.
 
 ---
 
@@ -380,7 +379,7 @@ asks for it. Those values are read-only on the page, listed with where they come
 | `mongodb_uri` | whoever runs the backend — its `.env`, or a Space secret when it is hosted for you |
 | `langsmith_api_key`, `langsmith_api_url`, `langsmith_project` | same, for usage tracing |
 | `dobot_api_token` | same — the backend's own access gate |
-| `laya_api_key`, `laya_server_url` | same, for the optional Laya judgement server |
+
 
 `PUT`/`DELETE` of those names returns **403 `OPERATOR_MANAGED`**, so a stale client cannot quietly
 overwrite the operator's configuration either. To change them, edit `.env` and restart the backend.

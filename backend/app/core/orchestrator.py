@@ -309,6 +309,14 @@ class Orchestrator:
         )
         return {"plan": plan, "route_tier": route.tier}
 
+    @staticmethod
+    def _screen_image_from_state(state: DobotGraphState) -> str:
+        """The screenshot SEE captured, when it has one. The VL judgement pass reads it."""
+        bundle: ContextBundle | None = state.get("bundle")
+        if bundle is None or bundle.screen is None or not bundle.screen.image_available:
+            return ""
+        return bundle.screen.image_ref or ""
+
     async def _jev_signals_for(self, state: DobotGraphState) -> JEVSignals:
         bundle: ContextBundle = state["bundle"]
         return JEVSignals(
@@ -323,6 +331,7 @@ class Orchestrator:
             ),
             user_message=state["message"],
             autonomy="autonomous" if state.get("automation_id") else "assisted",
+            screen_image=self._screen_image_from_state(state),
         )
 
     async def stage_decide(self, state: DobotGraphState) -> dict[str, Any]:
@@ -449,7 +458,12 @@ class Orchestrator:
             decision = state.decisions.get(step.id)
             if decision is None:
                 decision = await s.decision.evaluate_step(
-                    step, self._policy_context(state.message, state.mode), JEVSignals(user_message=state.message)
+                    step,
+                    self._policy_context(state.message, state.mode),
+                    JEVSignals(
+                        user_message=state.message,
+                        screen_image=self._screen_image_from_state(state),
+                    ),
                 )
                 state.decisions[step.id] = decision
 
@@ -893,6 +907,7 @@ class Orchestrator:
             signals=JEVSignals(
                 untrusted_content=self._untrusted_from_state(state),
                 user_message=state["message"],
+                screen_image=self._screen_image_from_state(state),
             ),
             task_id=task.id,
         )

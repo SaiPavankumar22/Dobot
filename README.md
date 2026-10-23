@@ -130,7 +130,7 @@ Full details: [`docs/security.md`](docs/security.md).
 | Browser control | **Playwright** (built in) |
 | Desktop control | **Hermes** agent runtime (optional) |
 | Isolation | **NVIDIA NemoClaw / OpenShell** or **Nebius Sandboxes** (optional) |
-| Risk signals | **Laya** judgement model (optional) |
+| Risk signals | **AutoTrust JEV-27B-VL** decision model on Novita (optional, bring your own key) |
 | Backend | Python · FastAPI · LangGraph |
 | Desktop app | Tauri 2 · React · TypeScript |
 | Memory | Local by default · MongoDB and Zilliz optional |

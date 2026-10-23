@@ -167,7 +167,7 @@ class DecisionEngine:
             jev_notes = advice.notes
             if advice.escalate_to and advice.escalate_to.rank > risk.rank:
                 risk = advice.escalate_to
-                judge_label = "Laya" if advice.judge == "laya" else "JEV heuristics"
+                judge_label = "AutoTrust JEV" if advice.judge == "autotrust" else "JEV"
                 reasons.append(
                     f"{judge_label} escalated to {risk.value} (score {advice.score}): "
                     f"{', '.join(advice.notes)}"

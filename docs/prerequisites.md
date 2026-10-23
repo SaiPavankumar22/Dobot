@@ -11,7 +11,7 @@ The short version:
 | A chat assistant that answers questions | `NEBIUS_API_KEY` | optional |
 | …that can also research the web | + `TAVILY_API_KEY` | optional |
 | Memory that survives restarts and is shared | + `MONGODB_URI`, `ZILLIZ_URI` | optional |
-| Model-backed risk judgement (Laya) | + one Laya setting (below) | optional |
+| Model-backed risk judgement (AutoTrust JEV-27B-VL) | + `NOVITA_API_KEY` (below) | optional |
 | Usage monitoring in LangSmith | + `LANGSMITH_API_KEY` | optional |
 
 **With only `NEBIUS_API_KEY` set, Dobot is fully usable.** Every other subsystem degrades to a
@@ -69,34 +69,31 @@ the same `NEBIUS_API_KEY` — there is no separate key.
 
 ---
 
-## 4. Optional — Laya (the model behind JEV risk judgement)
+## 4. Optional — AutoTrust JEV-27B-VL (the model behind JEV)
 
 **Clearing up a common confusion:** there are two different things here, and only one of them can
 cost money.
 
-- **JEV** is Dobot's *own* judgement module — deterministic heuristics (blast radius, credential
-  patterns, injection markers). It is part of the codebase. It is free, always on, and never talks
-  to the network.
-- **Laya** ([convaiinnovations/laya](https://huggingface.co/convaiinnovations/laya)) is an *open*
-  model (open weights, free to run) that gives JEV model-calibrated probabilities instead of pure
-  regex signals. Because it is open, running it costs compute, not licence fees.
+- **JEV** is Dobot's judgement layer — the code that decides *which questions to ask* about a
+  proposed action and how their answers may change its risk. It is part of the codebase, and its
+  hard rules (a policy BLOCK outranks everything; JEV can only escalate, never de-escalate) are
+  deterministic and enforced in code.
+- **AutoTrust JEV-27B-VL** is the hosted model that answers those questions on
+  [Novita](https://novita.ai) — a decision-evaluation model, not a chat model: each request submits
+  one question and gets back a *probability distribution over options*, so there is no free text to
+  parse and nothing to hallucinate. JEV asks it three things: how risky is this action (it thinks
+  only when its first answer is unsure), is this untrusted on-screen/web content a prompt-injection
+  attempt, and — it is a vision model — is a credential visible in the captured screenshot.
 
-Laya runs in three modes — set **exactly one**:
+Get a key at [novita.ai/settings/key-management](https://novita.ai/settings/key-management), then
+paste it under **Settings → Your API keys → Novita** (applies immediately) or set
+`NOVITA_API_KEY` in `.env`. Only input tokens are billed, and a judgement call is a handful of
+tokens answering in ~0.2 s.
 
-| Mode | Setup | Env |
-| --- | --- | --- |
-| **Server** (recommended) | `pip install "laya[serve]"` then `laya-serve` | `LAYA_SERVER_URL=http://127.0.0.1:8000` |
-| **In-process** | `pip install laya` (checkpoint downloads on first use) | `LAYA_INPROCESS=1` |
-| **Heuristics** (default) | nothing | nothing — JEV judges alone |
-
-**About `LAYA_API_KEY`:** you were right to question it. Laya itself is an open model — no account,
-no key, no fees. The key exists for exactly one situation: if you run `laya-serve` on a *shared*
-machine or an exposed port, you can start the server itself with `LAYA_API_KEY=…` so only callers
-bearing that bearer token may query it. It is an access lock **you** choose to put on **your** own
-server. Running Laya locally on your laptop? Leave `LAYA_API_KEY` empty and forget it exists.
-
-Laya can only *escalate* risk, never lower it, and deterministic policy always wins — so wiring it
-in is strictly additive safety.
+**Without a key** Dobot still runs: the deterministic policies and risk floors decide on their own,
+and the Doctor reports the missing judgement model rather than pretending it is there. The model
+can only *escalate* risk, never lower it, and deterministic policy always wins — so wiring it in is
+strictly additive safety.
 
 ---
 

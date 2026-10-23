@@ -138,14 +138,30 @@ class Settings(BaseSettings):
     # --- decision layer ------------------------------------------------------
     jev_enabled: bool = True
     jev_mode: str = "advisory"
-    # The judgement model behind JEV: Laya (convaiinnovations/laya), an open System 1 decision
-    # model. Preferred integration is the JEV-compatible HTTP server (`pip install "laya[serve]"`,
-    # then LAYA_SERVER_URL) so the 800 MB checkpoint can live on another machine or GPU; set
-    # LAYA_INPROCESS=1 to load it into the backend process instead. With neither set, JEV's
-    # deterministic heuristics judge alone and the Doctor says so.
-    laya_server_url: str = ""
-    laya_api_key: str = ""
-    laya_inprocess: bool = False
+    # The judgement model behind JEV: AutoTrust JEV-27B-VL on Novita's decision-evaluation
+    # endpoint (POST /v3/autotrust/v1/decide). One request = one question; the answer is a
+    # probability distribution over options, not free text — nothing to parse, nothing to
+    # hallucinate. JEV asks it how risky an action is (with thinking=auto, so an unsure answer
+    # gets a second look), whether untrusted on-screen/web content is trying to manipulate the
+    # assistant, and — vision — whether a credential is visible in the captured screenshot.
+    # Bring your own key from the app's Settings page (Your API keys → Novita) or set
+    # NOVITA_API_KEY. Without a key the Doctor says so and the deterministic policies decide alone.
+    novita_api_key: str = ""
+    novita_base_url: str = "https://api.novita.ai"
+    jev_model: str = "autotrust/jev-27b-vl"
+    #: off | auto | on. `auto` thinks only when the risk answer's confidence is below JEV_THRESHOLD;
+    #: `score`-kind questions would reject it, but JEV asks choice/noul questions.
+    jev_thinking: str = "auto"
+    #: Confidence below which `thinking=auto` lets the model reason before answering.
+    jev_threshold: float = 0.8
+    #: Thinking effort when it does think: xhigh | medium | low (the model rejects `high`).
+    jev_reasoning_effort: str = "medium"
+    #: Hard cap on thinking tokens, so an uncertain judgement costs a little, never unbounded.
+    jev_think_budget: int = 512
+    #: Ask the vision question against the screenshot SEE captured (is a credential on screen?).
+    jev_screen_check: bool = True
+    #: Read timeout for one decide call. Thinking calls get JEV_THINK_BUDGET tokens of headroom.
+    jev_timeout_seconds: float = 25.0
     shadow_mode: bool = False
     # --- agent harness (LangGraph) -------------------------------------------
     # Every tool step is driven through a structured validate→execute→finalise loop. When langgraph
@@ -370,6 +386,10 @@ class Settings(BaseSettings):
         return bool(self.tavily_api_key.strip())
 
     @property
+    def has_novita(self) -> bool:
+        return bool(self.novita_api_key.strip())
+
+    @property
     def has_mongo(self) -> bool:
         return bool(self.mongodb_uri.strip())
 
@@ -385,9 +405,9 @@ class Settings(BaseSettings):
             for value in (
                 self.nebius_api_key,
                 self.tavily_api_key,
+                self.novita_api_key,
                 self.zilliz_token,
                 self.dobot_api_token,
-                self.laya_api_key,
                 self.langsmith_api_key,
             )
             if value
@@ -444,6 +464,21 @@ class Settings(BaseSettings):
         allowed = {"block", "warn", "off"}
         value = value.strip().lower()
         return value if value in allowed else "block"
+
+    @field_validator("jev_thinking")
+    @classmethod
+    def _known_jev_thinking(cls, value: str) -> str:
+        allowed = {"off", "auto", "on"}
+        value = value.strip().lower()
+        return value if value in allowed else "auto"
+
+    @field_validator("jev_reasoning_effort")
+    @classmethod
+    def _known_jev_effort(cls, value: str) -> str:
+        # The model rejects `high` outright — only these three exist.
+        allowed = {"xhigh", "medium", "low"}
+        value = value.strip().lower()
+        return value if value in allowed else "medium"
 
     @field_validator("voice_rate")
     @classmethod

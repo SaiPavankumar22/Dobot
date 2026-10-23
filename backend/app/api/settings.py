@@ -28,7 +28,7 @@ MUTABLE = {"shadow_mode", "screen_capture", "jev_enabled", "ocr_enabled"}
 # * **User keys** (below) are the ones a person brings for themselves. The app's Settings page
 #   writes them to the backend's `.env` and applies them live.
 # * **Operator values** are infrastructure: the tracing account, the plaintext-schema memory
-#   database, the local API gate, the optional Laya server. They belong to whoever runs the backend
+#   database, the local API gate. They belong to whoever runs the backend
 #   — on a deployed Hugging Face Space that means Space **secrets**, i.e. environment variables —
 #   and the app must not solicit them from an end user.
 
@@ -36,6 +36,7 @@ MUTABLE = {"shadow_mode", "screen_capture", "jev_enabled", "ocr_enabled"}
 KEY_FIELDS = {
     "nebius": "nebius_api_key",
     "tavily": "tavily_api_key",
+    "novita": "novita_api_key",
     "zilliz_token": "zilliz_token",
 }
 
@@ -54,13 +55,11 @@ OPERATOR_FIELDS = {
     "langsmith_api_url": "usage tracing host — backend environment only",
     "langsmith_project": "usage tracing project — backend environment only",
     "dobot_api_token": "backend access gate — backend environment only",
-    "laya_api_key": "optional Laya judgement server — backend environment only",
-    "laya_server_url": "optional Laya judgement server — backend environment only",
 }
 
 #: Ids that used to be manageable in the app and now belong to the operator, so an older client (or a
 #: curious curl) gets an explanation instead of a bare "unknown key".
-_OPERATOR_ALIASES = {"langsmith": "langsmith_api_key", "laya": "laya_api_key"}
+_OPERATOR_ALIASES = {"langsmith": "langsmith_api_key"}
 
 
 def _operator_reason(name: str) -> str | None:
@@ -165,6 +164,17 @@ async def onboarding(services: ServicesDep) -> dict:
             "detail": "Set TAVILY_API_KEY to enable source-aware research.",
         },
         {
+            "id": "judgement",
+            "title": "Connect AutoTrust JEV for action judgement",
+            "done": status.get("autotrust") == "connected",
+            "detail": (
+                "Paste your Novita key under Your API keys (or set NOVITA_API_KEY in .env) — "
+                "JEV-27B-VL then judges every proposed action with calibrated probabilities, "
+                "including whether untrusted on-screen text is a prompt injection and whether a "
+                "credential is visible on screen."
+            ),
+        },
+        {
             "id": "execution",
             "title": "Connect the Hermes agent for desktop control",
             "done": "available" in status["agent_runtime"],
@@ -236,10 +246,10 @@ def _apply_key(services: ServicesDep, field: str, value: str) -> None:
                 pass
     decision = getattr(services, "decision", None)
     jev = getattr(decision, "jev", None) if decision is not None else None
-    laya = getattr(jev, "laya", None)
-    if laya is not None and hasattr(laya, "reset_http"):
+    autotrust = getattr(jev, "client", None)
+    if autotrust is not None and hasattr(autotrust, "reset_http"):
         try:
-            laya.reset_http()
+            autotrust.reset_http()
         except Exception:  # noqa: BLE001
             pass
 

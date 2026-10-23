@@ -71,7 +71,7 @@ thread, the activity timeline, and progress bars in the dashboard.
 | `app/agents/research_agent.py` | Tavily research pipeline with parallel sub-queries |
 | `app/tools/*` | Tool implementations with declared risk levels |
 | `app/memory/*` | Structured store, vector store, embeddings, retriever |
-| `app/security/*` | Risk classifier, policies, JEV (optionally Laya-backed), approvals |
+| `app/security/*` | Risk classifier, policies, JEV (AutoTrust JEV-27B-VL-backed), approvals |
 | `app/api/*` | HTTP + WebSocket surface |
 
 ## Degradation model

@@ -143,11 +143,15 @@ class Services:
         else:
             nemotron = "key_rejected" if getattr(self.reasoner, "key_rejected", False) else "unreachable"
         tavily = "connected" if getattr(self.tavily, "available", False) else "not_configured"
+        # A saved key is not a working key, but the decide endpoint bills per call — the Doctor
+        # does the live probe; here the UI only needs configured-vs-not.
+        autotrust = "connected" if self.settings.has_novita else "not_configured"
         runtime_info = await self.runtime.info()
         sandbox = await self.sandbox.status()
         return {
             "nemotron": nemotron,
             "tavily": tavily,
+            "autotrust": autotrust,
             "memory_store": getattr(self.store, "name", "unknown"),
             "vectors": getattr(self.memory.vectors, "name", "unknown"),
             "embedder": getattr(self.memory.embedder, "name", "unknown"),
@@ -186,7 +190,12 @@ class Services:
                 "flagged": self.skills.flagged_names(),
                 "blocked": self.skills.blocked_names(),
             },
-            "jev": {"enabled": self.settings.jev_enabled, "mode": self.settings.jev_mode},
+            "jev": {
+                "enabled": self.settings.jev_enabled,
+                "mode": self.settings.jev_mode,
+                "judge": self.settings.jev_model if self.settings.has_novita else "none",
+                "screen_check": self.settings.jev_screen_check,
+            },
             "kill_switch_hotkey": self.settings.kill_switch_hotkey,
             "active_tasks": self.kill_switch.active_ids,
             "allowed_paths": [str(path) for path in self.settings.allowed_paths],
