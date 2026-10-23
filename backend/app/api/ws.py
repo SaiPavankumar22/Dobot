@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import re
 import secrets
 from typing import Any
 
@@ -19,6 +20,23 @@ from app.logging_setup import get_logger
 
 logger = get_logger(__name__)
 router = APIRouter()
+
+
+def _origin_allowed(websocket: WebSocket) -> bool:
+    """Browser provenance, checked by hand because CORS never sees a WebSocket upgrade.
+
+    Any page can *open* ``ws://127.0.0.1:8756`` — the HTTP CORS middleware does not govern the
+    upgrade — and this stream carries approval prompts that the same connection may then answer.
+    So the CORS allowlist itself is re-applied here (imported lazily: app.main imports this
+    router). No ``Origin`` at all means a non-browser client (curl, the selftest, tests): those
+    remain subject to the token gate below.
+    """
+    origin = (websocket.headers.get("origin") or "").strip()
+    if not origin:
+        return True
+    from app.main import ALLOWED_ORIGIN_REGEX, ALLOWED_ORIGINS
+
+    return origin in ALLOWED_ORIGINS or re.match(ALLOWED_ORIGIN_REGEX, origin) is not None
 
 
 @router.websocket("/ws")
@@ -32,6 +50,12 @@ async def event_stream(websocket: WebSocket) -> None:
     # connection so approvals/kills act as them and the stream carries only their events plus
     # system-wide ones. The operator token (if any) still connects as the unscoped viewer.
     settings = getattr(websocket.app.state, "settings", None) or get_settings()
+    if not _origin_allowed(websocket):
+        # Accept-then-close, the same shape as the token refusals below: the client sees an
+        # application-level 4403 rather than a mystery handshake failure.
+        await websocket.accept()
+        await websocket.close(code=4403)
+        return
     token = (settings.dobot_api_token or "").strip()
     supplied = websocket.query_params.get("access_token", "").strip()
     if not supplied:

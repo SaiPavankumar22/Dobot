@@ -7,6 +7,7 @@ still goes through the sandbox for path checks and is verified by looking for th
 from __future__ import annotations
 
 import re
+import shlex
 import shutil
 import sys
 import time
@@ -115,6 +116,16 @@ class AppOpenTool(Tool):
         ctx.check_cancelled()
         app = self.require(params, "app").strip()
         target = params.get("target")
+        # Model-supplied text must never become shell syntax. A double quote is the one character
+        # that breaks out of a quoted cmd.exe argument (POSIX launches lean on this guarantee for
+        # their shlex quoting too), so a value carrying one is refused before any command exists.
+        for label, value in (("app", app), ("target", target)):
+            if value is not None and '"' in str(value):
+                return self.fail(
+                    self.name,
+                    f"{label} contains a double quote, which cannot be launched safely",
+                    started,
+                )
         platform = _platform_key()
         resolved = _resolve_alias(app)
         looks_like_path = app.lower().endswith(_PATH_SUFFIXES) or "/" in app or "\\" in app
@@ -210,17 +221,22 @@ class AppOpenTool(Tool):
 
     @staticmethod
     def _build_command(binary: str, platform: str, target: str) -> str | None:
-        quoted_target = f'"{target}"' if target else ""
+        # Windows: inputs are quote-free (rejected in run()), so a double-quoted cmd.exe argument
+        # cannot be broken out of — `&`, `|`, `<`, `>` stay literal inside the quotes.
         if platform == "win32":
             exe = shutil.which(binary) or binary
             if exe.lower() in {"explorer", "explorer.exe"}:
                 return f'explorer "{target}"' if target else "explorer"
+            quoted_target = f'"{target}"' if target else ""
             return f'start "" "{exe}" {quoted_target}'.strip()
+        # POSIX: shlex-quote every model-supplied piece — `$`, backticks and friends are inert
+        # inside single quotes, so no character in a name or URL reaches the shell unparsed.
         if platform == "darwin":
-            base = f'open -a "{binary}"'
-            return f"{base} {quoted_target}".strip()
+            command = f"open -a {shlex.quote(binary)}"
+            return f"{command} {shlex.quote(target)}".strip() if target else command
         exe = shutil.which(binary) or binary
-        return f"{exe} {quoted_target}".strip()
+        command = shlex.quote(exe)
+        return f"{command} {shlex.quote(target)}".strip() if target else command
 
     @staticmethod
     async def _window_titles(ctx: ToolContext, hint: str) -> set[str]:
@@ -268,7 +284,7 @@ class AppOpenTool(Tool):
         probe = (
             f'tasklist /FI "IMAGENAME eq {hint}"'
             if _platform_key() == "win32"
-            else f"pgrep -fl {Path(hint).stem}"
+            else f"pgrep -fl {shlex.quote(Path(hint).stem)}"
         )
         try:
             probe_result = await ctx.sandbox.run_command(probe, timeout=15)

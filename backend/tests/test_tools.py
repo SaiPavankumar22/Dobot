@@ -286,6 +286,63 @@ async def test_app_open_takes_a_url_target_for_browsers(
 
 
 @pytest.mark.asyncio
+async def test_app_open_refuses_a_target_that_would_break_out_of_quotes(
+    ctx: ToolContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`start "" "msedge" "https://x/" & calc & "` — a double quote closes the quoted argument
+    and the rest becomes commands. The value is refused before any command exists (audit F2)."""
+    from app.tools import apps as apps_module
+
+    monkeypatch.setattr(apps_module, "_platform_key", lambda: "win32")
+    commands: list[str] = []
+
+    class _StubSandbox:
+        async def check_path(self, raw: str, *, write: bool = False) -> Path:
+            return Path(raw)
+
+        async def run_command(self, command: str, **kwargs):
+            commands.append(command)
+            return SimpleNamespace(ok=True, exit_code=0, stdout="", stderr="", backend="stub")
+
+    stub_ctx = ToolContext(settings=ctx.settings, sandbox=_StubSandbox(), task_id="task_test")
+    result = await AppOpenTool().run(
+        {"app": "browser", "target": 'https://x.example/" & calc & "'}, stub_ctx
+    )
+
+    assert not result.ok
+    assert "double quote" in (result.error or "")
+    assert commands == [], "a refused target must never reach a launcher"
+
+
+@pytest.mark.asyncio
+async def test_app_open_quotes_posix_launches(
+    ctx: ToolContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """On POSIX the same class of target is shlex-quoted, so `$` and backticks in a URL stay
+    literal arguments instead of becoming command substitutions."""
+    from app.tools import apps as apps_module
+
+    monkeypatch.setattr(apps_module, "_platform_key", lambda: "linux")
+    commands: list[str] = []
+
+    class _StubSandbox:
+        async def check_path(self, raw: str, *, write: bool = False) -> Path:
+            return Path(raw)
+
+        async def run_command(self, command: str, **kwargs):
+            commands.append(command)
+            return SimpleNamespace(ok=True, exit_code=0, stdout="", stderr="", backend="stub")
+
+    stub_ctx = ToolContext(settings=ctx.settings, sandbox=_StubSandbox(), task_id="task_test")
+    result = await AppOpenTool().run(
+        {"app": "browser", "target": "https://x.example/$HOME`id`"}, stub_ctx
+    )
+
+    assert result.ok, result.error
+    assert "'https://x.example/$HOME`id`'" in commands[0], commands[0]
+
+
+@pytest.mark.asyncio
 async def test_app_open_refuses_a_url_target_for_a_file_manager(
     ctx: ToolContext, monkeypatch: pytest.MonkeyPatch
 ) -> None:

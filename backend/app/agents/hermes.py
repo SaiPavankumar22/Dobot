@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import shutil
 import time
 from dataclasses import dataclass, field
@@ -23,6 +24,7 @@ from typing import Any, Protocol
 
 import httpx
 
+from app.agents.sandbox import _safe_env
 from app.config import Settings, get_settings
 from app.core.killswitch import CancellationToken
 from app.logging_setup import get_logger
@@ -133,6 +135,17 @@ class HermesCliRuntime:
                 *args,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                # The CLI's documented config lives in %LOCALAPPDATA%\hermes\.env (LOCALAPPDATA
+                # is kept), but a user may export HERMES_* / AGENT_RUNTIME as overrides — pass
+                # exactly those through while unrelated shell-exported keys stay out of the child.
+                env={
+                    **_safe_env(),
+                    **{
+                        key: value
+                        for key, value in os.environ.items()
+                        if key.startswith("HERMES_") or key == "AGENT_RUNTIME"
+                    },
+                },
             )
             stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout)
         except TimeoutError:

@@ -28,6 +28,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from app.agents.sandbox import _safe_env
 from app.logging_setup import get_logger
 
 logger = get_logger(__name__)
@@ -228,6 +229,9 @@ class Voice:
                 *argv,
                 stdout=asyncio.subprocess.DEVNULL,
                 stderr=asyncio.subprocess.PIPE,
+                # The engine needs PATH and the standard directories (which _safe_env keeps);
+                # it has no business seeing whatever API keys the launcher shell exported.
+                env=_safe_env(),
             )
             _stdout, stderr = await process.communicate()
             if process.returncode != 0:

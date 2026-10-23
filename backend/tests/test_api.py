@@ -255,3 +255,25 @@ def test_websocket_stream_enforces_the_token(settings) -> None:
         with pytest.raises(WebSocketDisconnect):
             with guarded.websocket_connect("/ws?access_token=wrong") as stream:
                 stream.receive_json()
+
+
+def test_websocket_stream_refuses_a_foreign_origin(client: TestClient) -> None:
+    """CORS never sees a WebSocket upgrade, so /ws re-applies the allowlist itself: a page on
+    another origin must not reach the event bus, let alone answer approval prompts from it."""
+    with pytest.raises(WebSocketDisconnect) as refused:
+        with client.websocket_connect("/ws", headers={"origin": "https://evil.example"}) as stream:
+            stream.receive_json()
+    assert refused.value.code == 4403
+
+
+def test_websocket_stream_allows_the_webview_and_dev_origins(client: TestClient) -> None:
+    """Every client CORS allows may also open the stream — one policy, two gates."""
+    allowed = (
+        "http://localhost:1420",
+        "http://127.0.0.1:5173",
+        "tauri://localhost",
+        "https://tauri.localhost",
+    )
+    for origin in allowed:
+        with client.websocket_connect("/ws", headers={"origin": origin}) as stream:
+            assert stream.receive_json()["type"] == "hello"

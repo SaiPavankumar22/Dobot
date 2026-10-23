@@ -38,6 +38,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from app.agents.sandbox import _safe_env
 from app.config import get_settings
 from app.logging_setup import get_logger
 
@@ -329,6 +330,9 @@ class Transcriber:
                     "ffmpeg", "-y", "-i", str(audio), "-ar", "16000", "-ac", "1", str(temp_wav),
                     stdout=asyncio.subprocess.DEVNULL,
                     stderr=asyncio.subprocess.DEVNULL,
+                    # ffmpeg resolves on PATH (kept below); unrelated shell-exported secrets
+                    # stay out of the child, matching the sandbox's policy.
+                    env=_safe_env(),
                 )
                 if await proc.wait() != 0 or not temp_wav.exists():
                     return {

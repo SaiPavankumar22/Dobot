@@ -59,6 +59,13 @@ ALLOWED_ORIGINS = [
     "https://tauri.localhost",
 ]
 
+#: The regex half of the same policy — any localhost port plus the Tauri webview origins.
+#: One string, two gates: CORS applies it to fetch/XHR, and `/ws` re-applies it to WebSocket
+#: upgrades, which the CORS middleware never sees.
+ALLOWED_ORIGIN_REGEX = (
+    r"^(http://(localhost|127\.0\.0\.1)(:\d+)?|tauri://localhost|https?://tauri\.localhost)$"
+)
+
 
 async def _load_user_key_overrides(services: Any, user_id: str) -> dict[str, str]:
     """The asking user's own provider keys, stored per user under the settings collection."""
@@ -101,7 +108,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=ALLOWED_ORIGINS,
-        allow_origin_regex=r"^(http://(localhost|127\.0\.0\.1)(:\d+)?|tauri://localhost|https?://tauri\.localhost)$",
+        allow_origin_regex=ALLOWED_ORIGIN_REGEX,
         allow_credentials=False,
         allow_methods=["*"],
         allow_headers=["*"],
