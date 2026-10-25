@@ -69,6 +69,9 @@ class NemotronClient:
 
     @property
     def available(self) -> bool:
+        provider = self.settings.reasoning_provider.lower()
+        if provider in {"local", "hybrid"}:
+            return bool(self.settings.local_model.strip())
         return self.settings.has_nebius
 
     @property
@@ -78,17 +81,21 @@ class NemotronClient:
 
     def _http(self) -> httpx.AsyncClient:
         if self._client is None:
+            local = self.settings.reasoning_provider.lower() in {"local", "hybrid"}
+            base_url = self.settings.local_model_base_url if local else self.settings.nebius_base_url
+            headers = {"Content-Type": "application/json"}
+            if not local and self.settings.nebius_api_key:
+                headers["Authorization"] = f"Bearer {self.settings.nebius_api_key}"
             self._client = httpx.AsyncClient(
-                base_url=self.settings.nebius_base_url.rstrip("/"),
-                headers={
-                    "Authorization": f"Bearer {self.settings.nebius_api_key}",
-                    "Content-Type": "application/json",
-                },
+                base_url=base_url.rstrip("/"),
+                headers=headers,
                 timeout=httpx.Timeout(180.0, connect=15.0),
             )
         return self._client
 
     def model_for(self, tier: ModelTier) -> str:
+        if self.settings.reasoning_provider.lower() in {"local", "hybrid"}:
+            return self.settings.local_model
         return {
             ModelTier.LIGHT: self.settings.nemotron_light_model,
             ModelTier.SUPER: self.settings.nemotron_super_model,

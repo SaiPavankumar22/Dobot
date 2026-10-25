@@ -90,6 +90,7 @@ async def get_settings(services: ServicesDep) -> dict:
         "jev_enabled": settings.jev_enabled,
         "kill_switch_hotkey": settings.kill_switch_hotkey,
         "models": {
+            "provider": settings.reasoning_provider,
             "primary": settings.nemotron_model,
             "super": settings.nemotron_super_model,
             "light": settings.nemotron_light_model,
@@ -138,6 +139,7 @@ async def providers(services: ServicesDep) -> dict:
 @router.get("/onboarding")
 async def onboarding(services: ServicesDep) -> dict:
     status = await services.provider_status()
+    provider = str(status.get("reasoning_provider", "cloud"))
     reasoning_detail = {
         "key_rejected": (
             "Nebius refused the saved key (HTTP 401). Paste a valid Token Factory API key under "
@@ -146,13 +148,24 @@ async def onboarding(services: ServicesDep) -> dict:
         "unreachable": "A key is saved, but the Nebius endpoint did not answer. Check the backend's network access.",
     }.get(
         status["nemotron"],
-        "Paste your Nebius key under Your API keys (or set NEBIUS_API_KEY in .env) — without it Dobot "
-        "runs in limited offline mode.",
+        "Set LOCAL_MODEL and REASONING_PROVIDER=local for an OpenAI-compatible local server, or paste "
+        "your Nebius key under Your API keys for cloud reasoning.",
     )
+    if provider in {"local", "hybrid"}:
+        reasoning_detail = (
+            "Local reasoning is selected. Confirm the local model server is running and LOCAL_MODEL "
+            "matches an installed model."
+            if status["nemotron"] != "connected"
+            else "Local model server is connected."
+        )
     steps = [
         {
             "id": "reasoning",
-            "title": "Connect Nemotron via Nebius Token Factory",
+            "title": (
+                "Connect a local reasoning model"
+                if provider in {"local", "hybrid"}
+                else "Connect Nemotron via Nebius Token Factory"
+            ),
             "done": status["nemotron"] == "connected",
             "state": status["nemotron"],
             "detail": reasoning_detail,

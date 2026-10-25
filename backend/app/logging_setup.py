@@ -10,6 +10,7 @@ import json
 import logging
 import sys
 from datetime import UTC, datetime
+from logging.handlers import RotatingFileHandler
 
 from app.config import get_settings
 
@@ -86,9 +87,21 @@ def configure_logging() -> None:
     handler.setFormatter(JsonFormatter() if settings.dobot_env == "production" else DevFormatter())
     handler.addFilter(RedactingFilter())
 
+    # The desktop supervisor needs a bounded file it can attach to diagnostics after a crash.
+    # Keep the console stream as well so source/development runs remain pleasant.
+    file_handler = RotatingFileHandler(
+        settings.logs_dir / "backend.log",
+        maxBytes=2_000_000,
+        backupCount=3,
+        encoding="utf-8",
+    )
+    file_handler.setFormatter(JsonFormatter())
+    file_handler.addFilter(RedactingFilter())
+
     root = logging.getLogger()
     root.handlers.clear()
     root.addHandler(handler)
+    root.addHandler(file_handler)
     root.setLevel(settings.log_level)
 
     # Third-party chatter that would drown out the agent timeline.

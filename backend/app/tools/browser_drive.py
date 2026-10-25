@@ -300,6 +300,46 @@ class DriveSession:
         self._profile_root = Path(local) / "Dobot" / "browser-profile"
         self._download_dir = Path.home() / "Downloads"
 
+    async def capability_status(self) -> dict[str, Any]:
+        """Report browser support without launching a browser or touching a user profile."""
+        try:
+            from playwright.async_api import async_playwright  # noqa: F401
+        except ImportError:
+            return {
+                "available": False,
+                "logged_in": None,
+                "checked": False,
+                "detail": "Playwright is not installed",
+            }
+
+        channels = [
+            ("chrome", "chrome"),
+            ("msedge", "msedge"),
+            ("chromium", "chromium"),
+        ]
+        installed = [name for name, binary in channels if shutil.which(binary)]
+        available = bool(installed)
+        logged_in: bool | None = None
+        checked = False
+        detail = (
+            f"browser available ({', '.join(installed)})"
+            if available
+            else "Playwright is installed, but no Chrome, Edge or Chromium executable was found"
+        )
+        if self._context is not None and self._page is not None:
+            try:
+                logged_in = len(await self._context.cookies()) >= 10
+                checked = True
+                detail = "active Dobot browser session inspected"
+            except Exception:  # noqa: BLE001 - capability reporting must never break the API
+                detail = "browser is available; login state could not be inspected"
+        return {
+            "available": available,
+            "logged_in": logged_in,
+            "checked": checked,
+            "detail": detail,
+        }
+
     # ---------------------------------------------------------------- lifecycle
     async def ensure(self) -> str:
         """Start the browser if needed. Returns "" on success or an error detail."""

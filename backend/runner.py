@@ -17,6 +17,7 @@ Build it with ``scripts/build-backend-exe.bat`` (from the repo root) or directly
 
 from __future__ import annotations
 
+import os
 import sys
 
 
@@ -29,6 +30,14 @@ def _arg_value(args: list[str], flag: str) -> str | None:
 
 
 def main() -> int:
+    args = sys.argv[1:]
+    host = _arg_value(args, "--host")
+    port = _arg_value(args, "--port")
+    if host:
+        os.environ["DOBOT_HOST"] = host
+    if port:
+        os.environ["DOBOT_PORT"] = port
+
     import uvicorn
 
     from app.config import get_settings
@@ -37,9 +46,8 @@ def main() -> int:
 
     settings = get_settings()
     configure_logging()
-    args = sys.argv[1:]
-    host = _arg_value(args, "--host") or settings.dobot_host
-    port = int(_arg_value(args, "--port") or settings.dobot_port)
+    host = host or settings.dobot_host
+    port = int(port or settings.dobot_port)
     print(f"dobot-backend: serving on http://{host}:{port}", flush=True)
     uvicorn.run(app, host=host, port=port, log_level=settings.log_level.lower())
     return 0

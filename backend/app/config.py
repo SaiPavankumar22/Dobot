@@ -31,6 +31,12 @@ def _resolve_root() -> Path:
     if override:
         return Path(override).expanduser().resolve()
     if getattr(sys, "frozen", False):
+        # The installation directory is read-only on many Windows machines.  Keep mutable
+        # configuration, memory and downloaded runtimes in the per-user app-data directory while
+        # still allowing DOBOT_HOME to opt into a portable layout.
+        local_app_data = os.environ.get("LOCALAPPDATA", "").strip()
+        if local_app_data:
+            return Path(local_app_data) / "Dobot"
         return Path(sys.executable).resolve().parent
     return Path(__file__).resolve().parents[2]
 
@@ -78,6 +84,11 @@ class Settings(BaseSettings):
     #: Only used when set — screen transcription degrades to local OCR when this is empty or absent.
     nemotron_vision_model: str = "openbmb/MiniCPM-V-4_5"
     embedding_model: str = "Qwen/Qwen3-Embedding-8B"
+    #: cloud = Nebius, local = an OpenAI-compatible local server, hybrid = local with cloud fallback.
+    #: The local server is never started implicitly.
+    reasoning_provider: str = "cloud"
+    local_model_base_url: str = "http://127.0.0.1:11434/v1"
+    local_model: str = ""
     # Nemotron 3 is a reasoning model: by default it emits a thinking trace before the answer, which
     # can be thousands of tokens of latency. Short conversational turns and the final answer
     # composition do not need it, so the shell disables thinking for the light tier and for composed
@@ -317,6 +328,27 @@ class Settings(BaseSettings):
         return path
 
     @property
+    def data_dir(self) -> Path:
+        """Stable app-owned data directory for durable user state."""
+        path = self.state_dir / "data"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    @property
+    def logs_dir(self) -> Path:
+        """Rotating-log location shared by the backend and the desktop diagnostics UI."""
+        path = self.state_dir / "logs"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    @property
+    def models_dir(self) -> Path:
+        """Downloaded local model cache; never place large mutable files beside the installer."""
+        path = self.state_dir / "models"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    @property
     def skills_dir(self) -> Path:
         configured = (self.dobot_skills_dir or "").strip()
         if not configured:
@@ -443,6 +475,12 @@ class Settings(BaseSettings):
         allowed = {"local", "cli", "remote", "api", "hermes", "auto"}
         value = value.lower()
         return value if value in allowed else "local"
+
+    @field_validator("reasoning_provider")
+    @classmethod
+    def _known_reasoning_provider(cls, value: str) -> str:
+        value = value.lower()
+        return value if value in {"cloud", "local", "hybrid"} else "cloud"
 
     @field_validator("sandbox_provider")
     @classmethod

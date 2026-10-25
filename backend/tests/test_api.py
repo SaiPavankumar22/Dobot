@@ -186,6 +186,39 @@ def test_settings_and_onboarding(client: TestClient) -> None:
     assert client.patch("/settings", json={"nonsense": 1}).status_code == 422
 
 
+def test_capabilities_describe_backend_environment(client: TestClient) -> None:
+    body = client.get("/capabilities").json()
+    assert body["contract_version"] == "1"
+    assert body["backend_location"] in {"local", "hosted", "remote"}
+    assert set(body["browser"]) >= {"available", "logged_in", "checked", "detail"}
+    assert set(body["hermes"]) >= {"available", "mode", "name", "detail"}
+    assert set(body["local_screen"]) >= {"available", "mode", "detail"}
+    assert set(body["local_files"]) >= {"available", "roots", "detail"}
+    assert set(body["voice"]) >= {"available", "enabled", "detail"}
+    assert set(body["sandbox"]) >= {"provider", "isolation", "degraded", "detail"}
+
+
+def test_runtime_contract_reports_ready_process_and_data_paths(client: TestClient) -> None:
+    response = client.get("/runtime")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["contract_version"] == "1"
+    assert body["state"] == "ready"
+    assert body["pid"] > 0
+    assert body["port"] == 8756
+    assert body["uptime_seconds"] >= 0
+    assert body["data_dir"]
+    assert body["logs_dir"]
+
+
+def test_runtime_profile_is_conservative_and_actionable(client: TestClient) -> None:
+    body = client.get("/runtime/profile").json()
+    assert body["cpu_threads"] >= 1
+    assert body["recommended_mode"] in {"cloud", "hybrid", "local-or-hybrid"}
+    assert body["local_model_class"]
+    assert body["detail"]
+
+
 def test_activity_and_trace(client: TestClient) -> None:
     client.post("/chat", json={"message": "hello"})
     activity = client.get("/activity", params={"limit": 20}).json()

@@ -20,7 +20,9 @@ from app.agents.transcriber import get_transcriber
 from app.api.deps import ServicesDep
 from app.core.identity import GENOME, MEMORY, TELOS
 from app.doctor import build_doctor
+from app.hardware import probe_hardware
 from app.memory.canonical import CanonicalFact
+from app.runtime_contracts import CapabilitiesResponse, RuntimeStatusResponse
 from app.voice import probe_voice
 
 router = APIRouter(tags=["system"])
@@ -59,6 +61,24 @@ class InterceptorEvalRequest(BaseModel):
 async def doctor(services: ServicesDep) -> dict:
     """Every capability, its real state, and the exact fix for anything that is not live."""
     return await build_doctor(services).report()
+
+
+@router.get("/capabilities", response_model=CapabilitiesResponse)
+async def capabilities(services: ServicesDep) -> dict:
+    """What this backend can execute here, rather than what the client merely supports."""
+    return await services.capabilities()
+
+
+@router.get("/runtime", response_model=RuntimeStatusResponse)
+async def runtime_status(services: ServicesDep) -> dict:
+    """Lifecycle and data-path contract used by the desktop supervisor and diagnostics."""
+    return await services.runtime_status()
+
+
+@router.get("/runtime/profile")
+async def runtime_profile() -> dict:
+    """Hardware-aware setup guidance; this is advisory and never starts a model."""
+    return probe_hardware()
 
 
 # ---------------------------------------------------------------------- budgets

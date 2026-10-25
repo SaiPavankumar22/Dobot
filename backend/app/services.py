@@ -6,9 +6,12 @@ tests can build an isolated, fully-wired system against a temporary state direct
 
 from __future__ import annotations
 
+import os
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
+from app import __version__
 from app.agents.hermes import build_runtime
 from app.agents.nemotron import build_reasoner
 from app.agents.research_agent import ResearchAgent
@@ -87,6 +90,7 @@ class Services:
     orchestrator: Any = None
     extras: dict[str, Any] = field(default_factory=dict)
     _started: bool = False
+    _started_monotonic: float = field(default_factory=time.monotonic, repr=False)
 
     # ------------------------------------------------------------------ helpers
 
@@ -150,6 +154,7 @@ class Services:
         sandbox = await self.sandbox.status()
         return {
             "nemotron": nemotron,
+            "reasoning_provider": self.settings.reasoning_provider,
             "tavily": tavily,
             "autotrust": autotrust,
             "memory_store": getattr(self.store, "name", "unknown"),
@@ -159,6 +164,84 @@ class Services:
             "sandbox": f"{sandbox.provider}:{sandbox.isolation}",
             "shadow_mode": "on" if self.settings.shadow_mode else "off",
             "screen_capture": self.settings.screen_capture,
+        }
+
+    async def capabilities(self) -> dict[str, Any]:
+        """Describe what this backend can actually do in its current environment."""
+        from app.tools.browser_drive import get_drive
+
+        runtime_info = await self.runtime.info()
+        sandbox = await self.sandbox.status()
+        browser = await get_drive().capability_status()
+        screen_available = bool(self.settings.screen_capture != "off")
+        file_roots = [str(path) for path in self.settings.allowed_paths if path.exists()]
+        location = (os.environ.get("DOBOT_BACKEND_LOCATION") or "").strip().lower()
+        if location not in {"local", "hosted", "remote"}:
+            location = "local" if self.settings.dobot_host in {"127.0.0.1", "localhost", "::1"} else "remote"
+        is_local = location == "local"
+        if not screen_available:
+            screen_detail = "Screen capture is disabled by configuration"
+        elif is_local:
+            screen_detail = "The desktop client can submit explicit screen captures"
+        else:
+            screen_detail = "This backend is remote; it cannot capture this laptop's screen"
+        if not file_roots:
+            files_detail = "No allowed file roots are available"
+        elif is_local:
+            files_detail = "File tools operate on this laptop"
+        else:
+            files_detail = "File tools operate on the remote backend"
+        return {
+            "contract_version": "1",
+            "backend_location": location,
+            "browser": browser,
+            "hermes": {
+                "available": bool(runtime_info.available),
+                "mode": runtime_info.mode,
+                "name": runtime_info.name,
+                "detail": runtime_info.detail,
+            },
+            "local_screen": {
+                "available": is_local and screen_available,
+                "mode": self.settings.screen_capture,
+                "detail": screen_detail,
+            },
+            "local_files": {
+                "available": is_local and bool(file_roots),
+                "roots": file_roots,
+                "detail": files_detail,
+            },
+            "voice": {
+                "available": bool(self.voice.available),
+                "enabled": bool(self.settings.voice_enabled),
+                "detail": self.voice.plan.detail,
+            },
+            "sandbox": {
+                "provider": sandbox.provider,
+                "isolation": sandbox.isolation,
+                "degraded": sandbox.degraded,
+                "detail": sandbox.details,
+            },
+        }
+
+    async def runtime_status(self) -> dict[str, Any]:
+        """Return lifecycle metadata consumed by the desktop supervisor and Doctor page."""
+        location = (os.environ.get("DOBOT_BACKEND_LOCATION") or "").strip().lower()
+        if location not in {"local", "hosted", "remote"}:
+            location = "local" if self.settings.dobot_host in {"127.0.0.1", "localhost", "::1"} else "remote"
+        state = "ready" if self._started else "starting"
+        return {
+            "contract_version": "1",
+            "state": state,
+            "backend_location": location,
+            "pid": os.getpid(),
+            "version": __version__,
+            "host": self.settings.dobot_host,
+            "port": self.settings.dobot_port,
+            "uptime_seconds": round(max(0.0, time.monotonic() - self._started_monotonic), 3),
+            "state_dir": str(self.settings.state_dir),
+            "data_dir": str(self.settings.data_dir),
+            "logs_dir": str(self.settings.logs_dir),
         }
 
     async def security_status(self) -> dict[str, Any]:
@@ -304,6 +387,7 @@ class Services:
         if self.consolidator is not None:
             await self.consolidator.start()
         self._started = True
+        self._started_monotonic = time.monotonic()
         logger.info(
             "dobot ready: reasoning=%s research=%s store=%s vectors=%s runtime=%s sandbox=%s "
             "interceptors=%s voice=%s",
