@@ -41,6 +41,32 @@ jobs:
       - name: Typecheck and build
         run: npm run build
 
+  desktop-native:
+    name: desktop (rust check)
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Check the native shell
+        run: cargo check --manifest-path src-tauri/Cargo.toml
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - name: Install frontend dependencies
+        run: npm ci
+      - name: Build and smoke-test the backend sidecar
+        run: |
+          npm run sidecar
+          powershell -NoProfile -ExecutionPolicy Bypass -File ..\scripts\smoke-backend.ps1
+
   skills:
     name: shipped skills scan clean
     runs-on: ubuntu-latest
