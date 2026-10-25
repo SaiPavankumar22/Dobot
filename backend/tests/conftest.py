@@ -14,6 +14,8 @@ from app.events import EventBus, set_event_bus
 @pytest.fixture()
 def settings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Settings:
     """Offline settings: no providers, state confined to a temp dir, workspace inside tmp."""
+    # Tests must not read developer or runner credentials from the machine credential manager.
+    monkeypatch.setattr("app.security.local_secrets._keyring", lambda: None)
     monkeypatch.setenv("DOBOT_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setenv("DOBOT_ENV", "test")
     monkeypatch.setenv("NEBIUS_API_KEY", "")
