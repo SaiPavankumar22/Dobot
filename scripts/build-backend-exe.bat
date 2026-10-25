@@ -4,15 +4,14 @@ REM Run from anywhere. Requires uv (https://docs.astral.sh/uv/).
 setlocal
 set HERE=%~dp0
 
-echo [1/3] Installing pyinstaller into the backend venv...
+echo [1/2] Preparing the locked backend environment...
 cd /d "%HERE%..\backend" || goto :fail
 uv sync --locked || goto :fail
-uv pip install pyinstaller || goto :fail
 
-echo [2/3] Running PyInstaller...
-uv run pyinstaller --noconfirm --clean dobot-backend.spec || goto :fail
+echo [2/2] Running PyInstaller in the same environment as the backend...
+uv run --with pyinstaller python -m PyInstaller --noconfirm --clean dobot-backend.spec || goto :fail
 
-echo [3/3] Copying skills/ next to the exe for standalone smoke tests...
+echo Copying skills/ next to the exe for standalone smoke tests...
 if exist dist\skills rmdir /s /q dist\skills
 xcopy ..\skills dist\skills /e /i /q || goto :fail
 

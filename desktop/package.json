@@ -9,7 +9,7 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "tauri": "node scripts/tauri.mjs",
-    "sidecar": "cd ../backend && uv sync --locked && uv pip install pyinstaller && uv run pyinstaller --noconfirm --clean dobot-backend.spec",
+    "sidecar": "cd ../backend && uv sync --locked && uv run --with pyinstaller python -m PyInstaller --noconfirm --clean dobot-backend.spec",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

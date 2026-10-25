@@ -12,6 +12,8 @@
 
 import os
 
+from PyInstaller.utils.hooks import collect_submodules
+
 block_cipher = None
 
 # Ship the built-in skills inside the exe. At runtime app.config prefers a writable skills/ folder
@@ -23,19 +25,12 @@ a = Analysis(
     pathex=[os.path.join(os.getcwd(), "app")],
     binaries=[],
     datas=[(skills_src, "skills")],
+    # These packages use dynamic imports for the selected event loop, protocol and graph
+    # implementations. Collect the installed package layout instead of pinning module names that
+    # change between compatible releases.
     hiddenimports=[
-        "uvicorn.logging",
-        "uvicorn.loops",
-        "uvicorn.loops.auto",
-        "uvicorn.protocols",
-        "uvicorn.protocols.http",
-        "uvicorn.protocols.http.auto",
-        "uvicorn.protocols.http.h11_impl",
-        "uvicorn.protocols.websockets",
-        "uvicorn.protocols.websockets.auto",
-        "uvicorn.protocols.websockets.wsproto_impl",
-        "uvicorn.lifespan",
-        "uvicorn.lifespan.on",
+        *collect_submodules("uvicorn"),
+        *collect_submodules("langgraph"),
         "app.api.chat",
         "app.api.screen",
         "app.api.research",
@@ -49,8 +44,6 @@ a = Analysis(
         "app.api.activity",
         "app.api.system",
         "app.api.ws",
-        "langgraph.graph.state",
-        "langgraph.checkpoint.memory",
     ],
     hookspath=[],
     runtime_hooks=[],
