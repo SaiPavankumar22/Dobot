@@ -135,6 +135,47 @@ export type OperatorKey = {
   why: string;
 };
 
+export type BackendCapabilities = {
+  contract_version: string;
+  backend_location: "local" | "hosted" | "remote";
+  browser: {
+    available: boolean;
+    logged_in: boolean | null;
+    checked: boolean;
+    detail: string;
+  };
+  hermes: { available: boolean; mode: string; name: string; detail: string };
+  local_screen: { available: boolean; mode: string; detail: string };
+  local_files: { available: boolean; roots: string[]; detail: string };
+  voice: { available: boolean; enabled: boolean; detail: string };
+  sandbox: { provider: string; isolation: string; degraded: boolean; detail: string };
+};
+
+export type RuntimeStatus = {
+  contract_version: string;
+  state: "not_started" | "starting" | "ready" | "degraded" | "crashed" | "stopping" | "external" | "unavailable";
+  backend_location: "local" | "hosted" | "remote";
+  pid: number;
+  version: string;
+  host: string;
+  port: number;
+  uptime_seconds: number;
+  state_dir: string;
+  data_dir: string;
+  logs_dir: string;
+};
+
+export type HardwareProfile = {
+  platform: string;
+  architecture: string;
+  cpu_threads: number;
+  memory_bytes: number;
+  free_disk_bytes: number;
+  recommended_mode: "cloud" | "hybrid" | "local-or-hybrid";
+  local_model_class: string;
+  detail: string;
+};
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let response: Response;
   try {
@@ -179,6 +220,9 @@ export const api = {
   health: () => request<{ status: string; providers: Record<string, string>; degraded: string[] }>("/health"),
   dashboard: () => request<DashboardSummary>("/dashboard"),
   providers: () => request<Record<string, string>>("/settings/providers"),
+  capabilities: () => request<BackendCapabilities>("/capabilities"),
+  runtime: () => request<RuntimeStatus>("/runtime"),
+  runtimeProfile: () => request<HardwareProfile>("/runtime/profile"),
   settings: () => request<Record<string, unknown>>("/settings"),
   updateSettings: (patch: Record<string, unknown>) =>
     request<{ applied: Record<string, unknown> }>("/settings", {

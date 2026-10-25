@@ -1,13 +1,10 @@
-//! The *opt-in* bundled backend sidecar.
+//! The supervised backend sidecar.
 //!
-//! Installers bundle no backend by default: the app talks to a deployed backend (a Hugging Face
-//! Space, set in Settings → Backend) or to one the user runs themselves. With
-//! `DOBOT_BUNDLE_SIDECAR=1` the installer ships the FastAPI backend as `dobot-backend.exe` next to
-//! `Dobot.exe` (Tauri `externalBin`), and this module starts it on launch, waits for the API port to
-//! accept connections and stops it when the shell exits. Every step is honest and optional: if the
-//! sidecar is not registered, nothing is spawned and the app behaves exactly as before — connect to
-//! whatever backend the user runs or points Settings at.
+//! Release builds may ship the FastAPI backend as `dobot-backend.exe` next to `Dobot.exe`
+//! (Tauri `externalBin`). This module owns its lifecycle, adopts compatible external processes,
+//! reports startup failures and never kills a process it did not start.
 
+use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -42,7 +39,7 @@ fn take_child(app: &AppHandle) -> Option<CommandChild> {
 /// session left one behind). We adopt it instead of spawning a duplicate — and because it is not
 /// ours, we also leave it running on exit.
 fn port_already_serving() -> bool {
-    TcpStream::connect(format!("{HOST}:{PORT}")).is_ok()
+    health_ready()
 }
 
 pub fn spawn_if_bundled(app: &AppHandle) -> bool {
@@ -101,14 +98,31 @@ pub fn spawn_if_bundled(app: &AppHandle) -> bool {
 /// Wait (up to `timeout`) for the backend to accept TCP connections on its port.
 pub fn wait_for_backend(timeout: Duration) -> bool {
     let deadline = Instant::now() + timeout;
-    let address = format!("{HOST}:{PORT}");
     while Instant::now() < deadline {
-        if TcpStream::connect(&address).is_ok() {
+        if health_ready() {
             return true;
         }
         std::thread::sleep(Duration::from_millis(250));
     }
     false
+}
+
+/// A listening port is not readiness: Uvicorn may have bound before the service graph is built.
+/// Keep this tiny probe dependency-free so the supervisor remains usable before the webview starts.
+fn health_ready() -> bool {
+    let mut stream = match TcpStream::connect(format!("{HOST}:{PORT}")) {
+        Ok(stream) => stream,
+        Err(_) => return false,
+    };
+    let _ = stream.set_read_timeout(Some(Duration::from_millis(750)));
+    let _ = stream.write_all(
+        format!("GET /health HTTP/1.1\r\nHost: {HOST}:{PORT}\r\nConnection: close\r\n\r\n").as_bytes(),
+    );
+    let mut response = String::new();
+    if stream.read_to_string(&mut response).is_err() {
+        return false;
+    }
+    response.starts_with("HTTP/1.1 200") || response.starts_with("HTTP/1.0 200")
 }
 
 /// Stop the managed backend, if we started one. Never touches a backend the user runs themselves.

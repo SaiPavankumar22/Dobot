@@ -4,6 +4,8 @@ import { ThemeStudio } from "../components/ThemeStudio";
 import {
   api,
   authHeader,
+  type BackendCapabilities,
+  type HardwareProfile,
   getApiToken,
   getBaseUrl,
   setApiToken,
@@ -118,9 +120,18 @@ export function Settings() {
   const [operator, setOperator] = useState<OperatorKey[]>([]);
   const [keyDrafts, setKeyDrafts] = useState<Record<string, string>>({});
   const [keyNote, setKeyNote] = useState("");
+  const [capabilities, setCapabilities] = useState<BackendCapabilities | null>(null);
+  const [hardware, setHardware] = useState<HardwareProfile | null>(null);
 
   async function load() {
     setSettings(await api.settings());
+    try {
+      setCapabilities(await api.capabilities());
+      setHardware(await api.runtimeProfile());
+    } catch {
+      setCapabilities(null);
+      setHardware(null);
+    }
     const onboarding = await fetch(`${getBaseUrl()}/settings/onboarding`, { headers: authHeader() }).then(
       (response) => response.json(),
     );
@@ -236,6 +247,52 @@ export function Settings() {
           ? "This backend requires a token."
           : "The connected backend is not asking for a token right now."}
       </p>
+
+      <h2>Backend capabilities</h2>
+      {capabilities ? (
+        <div className="card">
+          <div className="row" style={{ justifyContent: "space-between" }}>
+            <strong>{capabilities.backend_location} backend</strong>
+            <span className="chip chip--ok">detected</span>
+          </div>
+          <p className="subtle">
+            These describe what this backend can do in its own environment. A hosted backend cannot
+            access this laptop's files, screen or desktop applications.
+          </p>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
+            <div><strong>Browser</strong><div className="subtle">
+              {capabilities.browser.available
+                ? capabilities.browser.logged_in === null
+                  ? "available; login not checked"
+                  : capabilities.browser.logged_in ? "available; logged in" : "available; signed out"
+                : capabilities.browser.detail}
+            </div></div>
+            <div><strong>Hermes</strong><div className="subtle">
+              {capabilities.hermes.available ? "available" : "unavailable"}
+            </div></div>
+            <div><strong>Screen</strong><div className="subtle">
+              {capabilities.local_screen.available ? capabilities.local_screen.detail : "unavailable"}
+            </div></div>
+            <div><strong>Files</strong><div className="subtle">
+              {capabilities.local_files.available ? capabilities.local_files.detail : "unavailable"}
+            </div></div>
+            <div><strong>Voice</strong><div className="subtle">
+              {capabilities.voice.available ? "available" : capabilities.voice.detail}
+            </div></div>
+            <div><strong>Sandbox</strong><div className="subtle">
+              {capabilities.sandbox.provider} / {capabilities.sandbox.isolation}
+            </div></div>
+          </div>
+          {hardware && (
+            <p className="subtle" style={{ marginBottom: 0 }}>
+              Compute guidance: <strong>{hardware.recommended_mode}</strong> / {hardware.local_model_class}.
+              {" "}{hardware.detail}
+            </p>
+          )}
+        </div>
+      ) : (
+        <p className="subtle">Capability information is unavailable until the backend connects.</p>
+      )}
 
       <h2>Account</h2>
       {authUser ? (

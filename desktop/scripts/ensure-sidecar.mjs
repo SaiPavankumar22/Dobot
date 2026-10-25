@@ -1,10 +1,9 @@
-// Pre-tauri hook for the *opt-in* bundled backend.
+// Pre-tauri hook for the bundled local backend.
 //
-// Default: installers do NOT contain the backend. The app talks to a deployed backend (a Hugging
-// Face Space — Settings → Backend) or to one the user runs themselves; a bundled PyInstaller exe
-// crashed the machine this was tested on, so shipping one is no longer the default.
+// Production installers contain the backend. Cloud-only builds talk to a deployed backend (a Hugging
+// Face Space — Settings → Backend) when DOBOT_CLOUD_ONLY=1 is set.
 //
-// Opt back in with DOBOT_BUNDLE_SIDECAR=1: `build` then stages backend/dist/dobot-backend.exe to
+// A local `build` stages backend/dist/dobot-backend.exe to
 // src-tauri/binaries/dobot-backend-<triple>.exe (the triple suffix is how Tauri matches an
 // `externalBin`) and tauri.mjs injects tauri.sidecar.json into the bundle config. A missing backend
 // hard-fails that build — the mistake this project actually hit: an installer whose bundled backend
@@ -20,7 +19,9 @@ const desktop = join(here, "..");
 const repoRoot = join(desktop, "..");
 const args = process.argv.slice(2);
 const building = args.includes("build");
-const bundling = process.env.DOBOT_BUNDLE_SIDECAR === "1";
+const bundling =
+  process.env.DOBOT_CLOUD_ONLY !== "1" &&
+  (process.env.DOBOT_BUNDLE_SIDECAR === "1" || building);
 // Tauri sets TAURI_ENV_TARGET_TRIPLE when it runs hooks; fall back to the host triple this repo
 // targets (Windows x64) so staging also works when the script is run by hand.
 const triple = process.env.TAURI_ENV_TARGET_TRIPLE || "x86_64-pc-windows-msvc";
@@ -40,11 +41,10 @@ function removeStale() {
 }
 
 if (!bundling) {
-  // The default: no backend in the .exe. Clear anything an earlier opt-in build left behind so the
-  // bundler cannot pick it up.
+  // Cloud-only builds must not accidentally pick up a sidecar left by a previous local build.
   removeStale();
   if (building) {
-    console.log("sidecar: not bundling a backend (default) — the app uses a deployed/local backend");
+    console.log("sidecar: cloud-only installer — the app uses an external backend");
   }
 } else if (existsSync(source)) {
   mkdirSync(binariesDir, { recursive: true });
@@ -55,12 +55,12 @@ if (!bundling) {
 } else if (building) {
   console.error(
     [
-      "sidecar: DOBOT_BUNDLE_SIDECAR=1 but backend/dist/dobot-backend.exe is missing.",
+      "sidecar: local installer requires backend/dist/dobot-backend.exe, but it is missing.",
       "",
       "Build it first (one command, ~1-2 min):",
       "    scripts\\build-backend-exe.bat",
       "",
-      "or drop DOBOT_BUNDLE_SIDECAR=1 to ship an installer without a bundled backend (the default).",
+      "Use `DOBOT_CLOUD_ONLY=1 npm run tauri build` for a thin external-backend installer.",
     ].join("\n"),
   );
   process.exit(1);

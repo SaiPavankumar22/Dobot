@@ -2,12 +2,12 @@
 
 This is the practical guide: how to go from the source checkout to something you double-click.
 
-Dobot is **two processes**:
+Dobot is a **single desktop experience** backed by a supervised local process:
 
 | Process | What it is | What it does |
 | --- | --- | --- |
-| **Backend** | FastAPI app (Python) on `127.0.0.1:8756` | All reasoning, memory, tools and safety decisions |
-| **Desktop app** | Tauri shell + web UI (`Dobot.exe`) | The chat window, the floating dot, hotkeys, screen capture |
+| **Backend** | FastAPI app (Python) on `127.0.0.1:8756` | All reasoning, memory, tools and safety decisions; started by the desktop shell |
+| **Desktop app** | Tauri shell + web UI (`Dobot.exe`) | The chat window, the floating dot, hotkeys, screen capture and backend supervision |
 
 The desktop app is the part you install. The backend has to be running for Dobot to think, so
 there are exactly three ways to run the pair — choose yours in
@@ -20,9 +20,9 @@ there are exactly three ways to run the pair — choose yours in
 3. **The `.exe`, backend hosted** — the installed app pointed at a backend you host somewhere
    else. No terminal at all after it is set up.
 
-The installer never ships a backend *inside* the exe (that experiment crashed the laptop it was
-first tried on); bundling one is an opt-in flag, see [§4](#4-ways-2-and-3--build-a-real-installer). A
-single backend that several devices share is a server-shaped variant of way 3:
+Production installers ship the backend sidecar by default. A thin cloud-only installer remains
+available with `DOBOT_CLOUD_ONLY=1` for devices that intentionally use a remote backend. A single
+backend that several devices share is a server-shaped variant of way 3:
 [§5.5](#55-deploy-one-backend-point-every-device-at-it).
 
 ---
@@ -269,8 +269,8 @@ desktop/src-tauri/target/release/bundle/msi/Dobot_0.1.0_x64_en-US.msi       (~3.
 desktop/src-tauri/target/release/bundle/nsis/Dobot_0.1.0_x64-setup.exe      (~2.3 MB)
 desktop/src-tauri/target/release/dobot-desktop.exe                          # the shell
 
-(Those sizes are small on purpose: no backend rides along — see "Where the backend comes from"
-below. The same build with `DOBOT_BUNDLE_SIDECAR=1` is ~50 MB.)
+(A local build includes the backend sidecar and is expected to be roughly 50 MB. Use
+`DOBOT_CLOUD_ONLY=1 npm run tauri build` only when you intentionally want a thin shell.)
 ```
 
 Pick either: the **NSIS `.exe`** is the friendlier one (per-user install, no admin prompt), the
@@ -278,26 +278,22 @@ Pick either: the **NSIS `.exe`** is the friendlier one (per-user install, no adm
 
 ### Where the backend comes from
 
-Since the shell and the brain are two processes, the installed app needs a brain somewhere — and it
-never ships *inside* the installer: a PyInstaller backend bundled into the exe crashed the laptop it
-was first tried on. The installed app connects to a backend in this order:
+The shell and brain remain separate internal processes, but the normal installer starts and owns the
+local backend automatically. The installed app uses a backend in this order:
 
-1. **The backend you point it at** — **Settings → Backend** stores a URL (plus the token every call
-   carries) per machine. Every build defaults to `http://127.0.0.1:8756`; a backend hosted anywhere
-   else (§5.5) is a URL pasted there.
-2. **A backend running on this machine** — the app never searches for one: set **Settings →
-   Backend** to `http://127.0.0.1:8756` and it uses that instead ([way 2](#way-2--the-installed-exe-backend-still-on-this-machine);
-   you start the backend yourself, §5.1–5.4).
+1. **The supervised local sidecar** — the default and the only process the installer starts.
+2. **An already-running local backend** — adopted without spawning a duplicate.
+3. **The backend you point it at** — **Settings → Backend** stores a URL and token per machine.
+   Use this for a hosted backend or an intentional cloud-only installation.
 
 On an installed machine, `%LOCALAPPDATA%\Dobot\` contains the shell and the writable `skills/`
 folder the Skills page manages.
 
-**Opt-in: bundle the backend after all.** The sidecar machinery is still there — it is just no
-longer the default. Build the PyInstaller exe first, then build the installer with the flag:
+**Build the local installer:**
 
 ```bash
 npm run sidecar            # or scripts\build-backend-exe.bat from the repo root (~1–2 min)
-set DOBOT_BUNDLE_SIDECAR=1&& npm run tauri build
+npm run tauri build
 ```
 
 That installer starts the backend on launch (waiting for its port before the UI connects), stops it
@@ -305,8 +301,7 @@ when you quit Dobot (tray → Quit, or closing the chat window with the dot off)
 already-running backend instead of spawning a second one, and does none of this in
 `npm run tauri dev`. The build fails loudly if the sidecar exe is missing, so a bundle with a hole
 cannot happen by accident. Two honest notes: the PyInstaller exe unpacks itself on each launch (a
-few extra seconds on first paint), and a bundled backend still dies with the machine it runs on —
-exactly why a deployed one is the default.
+few extra seconds on first paint), and a bundled backend still dies with the machine it runs on.
 
 Notes worth knowing before you run it:
 
