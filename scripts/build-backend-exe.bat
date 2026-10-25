@@ -6,6 +6,7 @@ set HERE=%~dp0
 
 echo [1/3] Installing pyinstaller into the backend venv...
 cd /d "%HERE%..\backend" || goto :fail
+uv sync --locked || goto :fail
 uv pip install pyinstaller || goto :fail
 
 echo [2/3] Running PyInstaller...
