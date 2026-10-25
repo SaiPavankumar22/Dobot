@@ -141,11 +141,21 @@ class Orchestrator:
             tavily=s.tavily,
             hermes=s.runtime,
             browser=s.browser,
+            process_supervisor=getattr(s, "process_supervisor", None),
         )
 
     async def _persist(self, task: TaskRecord) -> None:
         task.updated_at = datetime.now(UTC)
         await self.s.store.insert("tasks", task.model_dump(mode="json"))
+        traces = getattr(self.s, "traces", None)
+        if traces is not None:
+            await traces.append(
+                task.id,
+                "task_state",
+                status=task.status.value,
+                progress=task.progress,
+                error=task.error or "",
+            )
 
     @staticmethod
     def _new_task(request: ChatRequest) -> TaskRecord:
@@ -155,6 +165,7 @@ class Orchestrator:
             description=request.message[:2000],
             status=TaskStatus.PENDING,
             source=request.source,
+            conversation_id=request.conversation_id.strip() or "default",
             background=request.background,
         )
 
@@ -211,6 +222,15 @@ class Orchestrator:
         for target in killed or ([task_id] if task_id else []):
             if not target:
                 continue
+            supervisor = getattr(self.s, "process_supervisor", None)
+            if supervisor is not None:
+                cleanup = await supervisor.terminate(target)
+                await self.s.bus.emit(
+                    EventType.PROCESS_EXITED,
+                    task_id=target,
+                    message="process cleanup completed",
+                    **cleanup,
+                )
             doc = await self.s.store.get("tasks", target)
             if doc:
                 doc["status"] = TaskStatus.CANCELLED.value
@@ -637,10 +657,14 @@ class Orchestrator:
             analysis = s.verifier.analyse_failure(result)
             if analysis.retry_recommended and attempt < MAX_RETRIES:
                 attempt += 1
+                step.status = StepStatus.RETRYING
+                task.status = TaskStatus.RETRYING
+                await self._persist(task)
                 await s.bus.emit(
-                    EventType.TOOL_STARTED,
+                    EventType.RETRYING,
                     message=f"Retrying after a transient failure: {step.action.tool}",
                     task_id=task.id,
+                    step_id=step.id,
                     tool=step.action.tool,
                     attempt=attempt + 1,
                 )
@@ -653,6 +677,9 @@ class Orchestrator:
 
         verification: VerificationResult | None = None
         if result.ok:
+            step.status = StepStatus.VERIFYING
+            task.status = TaskStatus.VERIFYING
+            await self._persist(task)
             verification = await s.verifier.verify_step(step, result, ctx, task_id=task.id)
             step.verification = verification.model_dump(mode="json")
             hard_failure = bool(verification.checks) and any(
@@ -1273,6 +1300,7 @@ class Orchestrator:
         providers = await self.s.provider_status()
         return ChatResponse(
             task_id=task.id,
+            conversation_id=task.conversation_id,
             status=task.status,
             answer=task.answer,
             plan=plan,

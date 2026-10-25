@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 import shutil
 import tempfile
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -132,6 +133,114 @@ async def journal(services: ServicesDep, task_id: str, limit: int = 200) -> dict
         "count": len(entries),
         "usage": services.cost.for_task(task_id) if services.cost else {},
     }
+
+
+@router.get("/system/traces/{task_id}")
+async def traces(services: ServicesDep, task_id: str, limit: int = Query(200, ge=1, le=2000)) -> dict:
+    """Durable, redacted execution trace for a task."""
+    entries = await services.traces.entries(task_id, limit=limit)
+    return {"task_id": task_id, "entries": entries, "count": len(entries)}
+
+
+@router.get("/system/storage")
+async def storage_status(services: ServicesDep) -> dict:
+    """Show storage usage without exposing file contents or secrets."""
+    roots = {
+        "state": services.settings.state_dir,
+        "data": services.settings.data_dir,
+        "logs": services.settings.logs_dir,
+    }
+    usage: dict[str, Any] = {}
+    for name, root in roots.items():
+        size = 0
+        files = 0
+        if root.exists():
+            for path in root.rglob("*"):
+                if path.is_file():
+                    files += 1
+                    try:
+                        size += path.stat().st_size
+                    except OSError:
+                        continue
+        usage[name] = {"path": str(root), "bytes": size, "files": files}
+    collection_counts = {
+        collection: await services.store.count(collection)
+        for collection in ("tasks", "memories", "activity", "traces", "automations")
+    }
+    disk = shutil.disk_usage(services.settings.state_dir)
+    database = {}
+    if hasattr(services.store, "health"):
+        try:
+            database = await services.store.health()
+        except Exception as exc:  # noqa: BLE001
+            database = {"engine": getattr(services.store, "name", "unknown"), "error": str(exc)[:200]}
+    return {
+        "usage": usage,
+        "collections": collection_counts,
+        "disk": {"total_bytes": disk.total, "free_bytes": disk.free, "used_bytes": disk.used},
+        "database": database,
+    }
+
+
+@router.post("/system/storage/checkpoint")
+async def checkpoint_storage(services: ServicesDep) -> dict:
+    if not hasattr(services.store, "checkpoint"):
+        raise HTTPException(status_code=409, detail={"code": "SQLITE_ONLY", "message": "not a SQLite store"})
+    return await services.store.checkpoint()
+
+
+@router.post("/system/storage/vacuum")
+async def vacuum_storage(services: ServicesDep) -> dict:
+    if not hasattr(services.store, "vacuum"):
+        raise HTTPException(status_code=409, detail={"code": "SQLITE_ONLY", "message": "not a SQLite store"})
+    await services.store.vacuum()
+    return {"vacuumed": True}
+
+
+@router.post("/system/storage/backup")
+async def backup_storage(services: ServicesDep) -> dict:
+    if not hasattr(services.store, "backup"):
+        raise HTTPException(status_code=409, detail={"code": "SQLITE_ONLY", "message": "not a SQLite store"})
+    destination = (
+        services.settings.data_dir
+        / "backups"
+        / f"dobot-{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}.sqlite3"
+    )
+    await services.store.backup(destination)
+    return {"backup": str(destination), "bytes": destination.stat().st_size}
+
+
+@router.get("/system/storage/export")
+async def export_storage(services: ServicesDep) -> dict:
+    """Export portable JSON for user-owned chats and memories, never database credentials."""
+    export: dict[str, list[dict[str, Any]]] = {}
+    for collection in ("tasks", "memories", "automations", "canonical"):
+        export[collection] = await services.store.all(collection, limit=100_000)
+    return {"format": "dobot-export-v1", "created_at": datetime.now(UTC).isoformat(), "collections": export}
+
+
+@router.post("/system/storage/prune")
+async def prune_storage(
+    services: ServicesDep,
+    older_than_days: int = Query(30, ge=1, le=3650),
+    include_activity: bool = False,
+) -> dict:
+    """Remove only disposable traces and optionally activity; chats and memories are retained."""
+    cutoff = datetime.now(UTC) - timedelta(days=older_than_days)
+    collections = ["traces"] + (["activity"] if include_activity else [])
+    removed: dict[str, int] = {}
+    for collection in collections:
+        count = 0
+        for doc in await services.store.all(collection, limit=100_000):
+            raw = str(doc.get("timestamp") or doc.get("at") or "")
+            try:
+                stamp = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            except ValueError:
+                continue
+            if stamp < cutoff and await services.store.delete(collection, str(doc.get("id", ""))):
+                count += 1
+        removed[collection] = count
+    return {"removed": removed, "older_than_days": older_than_days, "preserved": ["tasks", "memories"]}
 
 
 # ---------------------------------------------------------------------- identity

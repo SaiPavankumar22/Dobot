@@ -116,6 +116,7 @@ def _settings_with_uri(tmp_path: Path) -> Settings:
     object.__setattr__(settings, "dobot_state_dir", str(tmp_path / "state"))
     object.__setattr__(settings, "mongodb_uri", "mongodb://user:pass@new-host:27017")
     object.__setattr__(settings, "mongodb_db", "dobot_users_test")
+    object.__setattr__(settings, "mongodb_enabled", True)
     return settings
 
 
@@ -140,8 +141,10 @@ async def test_unreachable_server_falls_back_to_local_files(
     FakeMongo.next_ping = False
     monkeypatch.setattr(store_module, "MongoRecordStore", FakeMongo)
     store = await build_record_store(_settings_with_uri(tmp_path))
-    assert isinstance(store, LocalFileStore)
-    assert store.name == "local-file-store"
+    from app.memory.sqlite_store import SQLiteRecordStore
+
+    assert isinstance(store, SQLiteRecordStore)
+    assert store.name == "sqlite"
 
 
 async def test_missing_driver_or_bad_uri_falls_back_to_local_files(
@@ -153,7 +156,9 @@ async def test_missing_driver_or_bad_uri_falls_back_to_local_files(
 
     monkeypatch.setattr(store_module, "MongoRecordStore", ExplodingMongo)
     store = await build_record_store(_settings_with_uri(tmp_path))
-    assert isinstance(store, LocalFileStore)
+    from app.memory.sqlite_store import SQLiteRecordStore
+
+    assert isinstance(store, SQLiteRecordStore)
 
 
 async def test_no_uri_keeps_the_local_store(tmp_path: Path) -> None:
@@ -163,7 +168,9 @@ async def test_no_uri_keeps_the_local_store(tmp_path: Path) -> None:
     object.__setattr__(settings, "dobot_state_dir", str(tmp_path / "state"))
     object.__setattr__(settings, "mongodb_uri", "")
     store = await build_record_store(settings)
-    assert isinstance(store, LocalFileStore)
+    from app.memory.sqlite_store import SQLiteRecordStore
+
+    assert isinstance(store, SQLiteRecordStore)
     assert FakeMongo.made == []  # nothing even constructed without a URI
 
 

@@ -311,6 +311,8 @@ class Settings(BaseSettings):
     # multi_user_open_registration is true. DOBOT_API_TOKEN keeps working as the operator gate.
     multi_user: bool = False
     multi_user_open_registration: bool = False
+    #: MongoDB is intentionally opt-in; the packaged local desktop uses SQLite.
+    mongodb_enabled: bool = False
 
     # --- screen / ocr --------------------------------------------------------
     screen_capture: str = "on_demand"
@@ -423,7 +425,7 @@ class Settings(BaseSettings):
 
     @property
     def has_mongo(self) -> bool:
-        return bool(self.mongodb_uri.strip())
+        return self.mongodb_enabled and bool(self.mongodb_uri.strip())
 
     @property
     def has_zilliz(self) -> bool:

@@ -26,16 +26,18 @@ from app.core.identity import IdentityLayer, build_identity
 from app.core.killswitch import KillSwitch, get_kill_switch
 from app.core.orchestrator import Orchestrator
 from app.core.planner import Planner
+from app.core.process_supervisor import ProcessSupervisor
 from app.core.router import ModelRouter
 from app.core.scheduler import Scheduler
 from app.core.tokenjuice import TokenJuice, build_tokenjuice
+from app.core.trace_store import TraceStore
 from app.core.verifier import Verifier
-from app.events import EventBus, get_event_bus
+from app.events import EventBus, EventType, get_event_bus
 from app.logging_setup import get_logger
 from app.memory.canonical import CanonicalLedger, build_canonical_ledger
 from app.memory.manager import build_memory_manager
 from app.memory.store import build_record_store
-from app.schemas import Region
+from app.schemas import Region, TaskStatus
 from app.security.approvals import ApprovalStore
 from app.security.grants import GrantStore
 from app.security.interceptors import Interceptors, build_interceptors
@@ -78,6 +80,8 @@ class Services:
     tokenjuice: TokenJuice
     cost: CostLedger
     journal: RunJournal
+    traces: TraceStore
+    process_supervisor: ProcessSupervisor
     canonical: CanonicalLedger
     identity: IdentityLayer
     interceptors: Interceptors
@@ -131,6 +135,7 @@ class Services:
             tavily=self.tavily,
             hermes=self.runtime,
             browser=self.browser,
+            process_supervisor=self.process_supervisor,
         )
 
     async def provider_status(self) -> dict[str, str]:
@@ -242,6 +247,7 @@ class Services:
             "state_dir": str(self.settings.state_dir),
             "data_dir": str(self.settings.data_dir),
             "logs_dir": str(self.settings.logs_dir),
+            "supervised_processes": len(self.process_supervisor.handles()),
         }
 
     async def security_status(self) -> dict[str, Any]:
@@ -263,6 +269,11 @@ class Services:
             },
             "screen_capture": self.settings.screen_capture,
             "continuous_monitoring": False,
+            "data_policy": {
+                "remote_sensitive_data": "blocked",
+                "remote_secret_data": "blocked",
+                "local_only_supported": True,
+            },
             "shadow_mode": self.settings.shadow_mode,
             "require_write_approval": self.settings.require_write_approval,
             "execution_mode": self.resolved_mode(),
@@ -386,6 +397,7 @@ class Services:
         await self.reload_interceptors()
         if self.consolidator is not None:
             await self.consolidator.start()
+        await self._recover_interrupted_tasks()
         self._started = True
         self._started_monotonic = time.monotonic()
         logger.info(
@@ -400,6 +412,31 @@ class Services:
             len(self.interceptors.rules),
             self.voice.plan.engine or "none",
         )
+
+    async def _recover_interrupted_tasks(self) -> None:
+        """Mark work interrupted by a backend restart for explicit user recovery.
+
+        Re-running an arbitrary tool after a crash can duplicate side effects, so recovery is
+        deliberately conservative: approval-paused tasks remain resumable, while active tasks are
+        surfaced as recovery-required instead of being silently replayed.
+        """
+        for doc in await self.store.all("tasks", limit=500):
+            if doc.get("status") not in {
+                TaskStatus.PLANNING.value,
+                TaskStatus.IN_PROGRESS.value,
+                TaskStatus.VERIFYING.value,
+                TaskStatus.RETRYING.value,
+            }:
+                continue
+            doc["status"] = TaskStatus.RECOVERY_REQUIRED.value
+            doc["error"] = "backend restarted before this task finished; review before retrying"
+            await self.store.insert("tasks", doc)
+            await self.traces.append(doc.get("id", ""), "recovery_required", reason=doc["error"])
+            await self.bus.emit(
+                EventType.RECOVERY_REQUIRED,
+                task_id=str(doc.get("id", "")),
+                message=doc["error"],
+            )
 
     async def shutdown(self) -> None:
         if self.consolidator is not None:
@@ -427,6 +464,9 @@ class Services:
 
 async def build_services(settings: Settings | None = None, *, bus: EventBus | None = None) -> Services:
     settings = settings or get_settings()
+    from app.security.local_secrets import hydrate
+
+    hydrate(settings)
     bus = bus or get_event_bus()
 
     store = await build_record_store(settings)
@@ -506,6 +546,8 @@ async def build_services(settings: Settings | None = None, *, bus: EventBus | No
         tokenjuice=tokenjuice,
         cost=get_cost_ledger(),
         journal=journal,
+        traces=TraceStore(store),
+        process_supervisor=ProcessSupervisor(),
         canonical=canonical,
         identity=identity,
         interceptors=build_interceptors(settings),

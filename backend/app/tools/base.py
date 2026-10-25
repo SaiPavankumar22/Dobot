@@ -39,6 +39,7 @@ class ToolContext:
     hermes: Any = None
     screen: Any = None
     browser: Any = None
+    process_supervisor: Any = None
 
     def check_cancelled(self) -> None:
         if self.token:

@@ -45,8 +45,12 @@ class Verdict(str, Enum):
 
 class TaskStatus(str, Enum):
     PENDING = "PENDING"
+    QUEUED = "QUEUED"
     PLANNING = "PLANNING"
     IN_PROGRESS = "IN_PROGRESS"
+    VERIFYING = "VERIFYING"
+    RETRYING = "RETRYING"
+    RECOVERY_REQUIRED = "RECOVERY_REQUIRED"
     WAITING_APPROVAL = "WAITING_APPROVAL"
     WAITING_USER = "WAITING_USER"
     COMPLETED = "COMPLETED"
@@ -57,6 +61,8 @@ class TaskStatus(str, Enum):
 class StepStatus(str, Enum):
     PENDING = "PENDING"
     RUNNING = "RUNNING"
+    VERIFYING = "VERIFYING"
+    RETRYING = "RETRYING"
     COMPLETED = "COMPLETED"
     FAILED = "FAILED"
     SKIPPED = "SKIPPED"
@@ -342,6 +348,7 @@ class TaskRecord(BaseModel):
     status: TaskStatus = TaskStatus.PENDING
     priority: str = "normal"
     source: str = "chat"
+    conversation_id: str = "default"
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
     deadline: datetime | None = None
@@ -470,6 +477,7 @@ class ContextRequest(BaseModel):
 
 class ChatRequest(BaseModel):
     message: str
+    conversation_id: str = "default"
     context: ContextRequest = Field(default_factory=ContextRequest)
     shadow: bool | None = None
     background: bool = False
@@ -480,6 +488,7 @@ class ChatRequest(BaseModel):
 
 class ChatResponse(BaseModel):
     task_id: str
+    conversation_id: str = "default"
     status: TaskStatus
     answer: str = ""
     plan: Plan | None = None

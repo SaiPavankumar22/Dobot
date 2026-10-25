@@ -273,9 +273,9 @@ class Doctor:
                 id="record_store",
                 label="Record store",
                 state="live",
-                detail=f"{name} (local JSON, no server needed).",
-                fix="Set MONGODB_URI to switch to MongoDB.",
-                env="MONGODB_URI",
+                detail=f"{name} (local SQLite, no server needed); data stays on this device and is not synchronized.",
+                fix="No action needed; local data is stored in the SQLite database.",
+                env="",
                 optional=False,
                 meta={"store": name},
             )

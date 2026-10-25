@@ -30,6 +30,7 @@ COLLECTIONS = (
     "settings",
     "canonical",
     "runs",
+    "traces",
     "grants",
     # Identity itself: when MongoDB is configured, accounts and invites must migrate with
     # everything else — a new database has to receive existing users too.
@@ -366,7 +367,17 @@ async def migrate_local_into(primary: RecordStore, local: RecordStore) -> int:
 
 async def build_record_store(settings: Settings | None = None) -> RecordStore:
     settings = settings or get_settings()
-    local = LocalFileStore(settings.state_dir / "store")
+    from app.memory.sqlite_store import SQLiteRecordStore
+    from app.memory.storage_migration import migrate_json_store
+
+    local = SQLiteRecordStore(settings.data_dir / "dobot.sqlite3")
+    migration = await migrate_json_store(
+        settings.state_dir / "store",
+        local,
+        backup_directory=settings.data_dir / "backups" / "json-store",
+    )
+    if migration.get("migrated") or migration.get("backup"):
+        logger.info("local JSON store migration: %s", migration)
     if settings.has_mongo:
         try:
             mongo = MongoRecordStore(settings.mongodb_uri, settings.mongodb_db)

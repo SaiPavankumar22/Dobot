@@ -216,7 +216,22 @@ def test_app_open_resolves_the_phrases_the_model_uses() -> None:
     assert _resolve_alias("Visual Studio Code") == "vscode"
     assert _resolve_alias("web browser") == "browser"
     assert _resolve_alias("notepad") == "notepad"
+    assert _resolve_alias("Telegram") == "telegram"
+    assert _resolve_alias("Telegram Desktop") == "telegram"
     assert _resolve_alias("somethingelse") is None
+
+
+def test_telegram_resolves_from_standard_windows_install_location(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.tools.apps import _windows_installed_binary
+
+    telegram = tmp_path / "Telegram Desktop" / "Telegram.exe"
+    telegram.parent.mkdir()
+    telegram.touch()
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    monkeypatch.setenv("LOCALAPPDATA", "")
+    assert _windows_installed_binary("telegram") == str(telegram)
 
 
 def test_app_open_process_hint_is_an_image_name_or_nothing() -> None:
@@ -243,7 +258,7 @@ async def test_app_open_rejects_an_unknown_name_instead_of_launching_it(ctx: Too
 async def test_app_open_unresolvable_name_fails_cleanly(ctx: ToolContext) -> None:
     result = await AppOpenTool().run({"app": "Banana Deluxe"}, ctx)
     assert not result.ok
-    assert "unknown application" in (result.error or "")
+    assert "was not found" in (result.error or "")
 
 
 @pytest.mark.asyncio

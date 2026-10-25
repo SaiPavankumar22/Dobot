@@ -24,6 +24,7 @@ from app.api import (
     auth,
     automations,
     chat,
+    conversations,
     memory,
     research,
     screen,
@@ -119,6 +120,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         screen.router,
         research.router,
         tasks.router,
+        conversations.router,
+        auth.router,
         automations.router,
         approvals.router,
         memory.router,
@@ -127,7 +130,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         security.router,
         activity.router,
         system.router,
-        auth.router,
         ws.router,
     ):
         app.include_router(router)

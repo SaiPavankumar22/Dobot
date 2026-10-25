@@ -6,6 +6,8 @@ still goes through the sandbox for path checks and is verified by looking for th
 
 from __future__ import annotations
 
+import json
+import os
 import re
 import shlex
 import shutil
@@ -29,6 +31,7 @@ APP_ALIASES: dict[str, dict[str, str]] = {
     "files": {"win32": "explorer", "darwin": "Finder", "linux": "xdg-open"},
     "notepad": {"win32": "notepad", "darwin": "TextEdit", "linux": "gedit"},
     "calculator": {"win32": "calc", "darwin": "Calculator", "linux": "gnome-calculator"},
+    "telegram": {"win32": "telegram", "darwin": "Telegram", "linux": "telegram-desktop"},
 }
 
 PROCESS_HINTS = {
@@ -39,6 +42,7 @@ PROCESS_HINTS = {
     "notepad": "notepad.exe",
     "calc": "CalculatorApp.exe",
     "wt": "WindowsTerminal.exe",
+    "telegram": "Telegram.exe",
 }
 
 #: Human phrasings the model reaches for that are not alias keys — e.g. it asked for "File Explorer"
@@ -50,6 +54,7 @@ APP_SYNONYMS: dict[str, str | None] = {
     "webbrowser": "browser",
     "internetbrowser": "browser",
     "visualstudiocode": "vscode",
+    "telegramdesktop": "telegram",
     "texteditor": "notepad",
     "wordpad": "notepad",
     "taskmanager": None,  # not an alias we can launch reliably; rejected below
@@ -92,15 +97,80 @@ def _platform_key() -> str:
     return "linux"
 
 
+def _windows_installed_binary(binary: str) -> str:
+    """Resolve apps that commonly install outside PATH on Windows."""
+    if binary.lower() != "telegram":
+        return binary
+    found = shutil.which(binary)
+    if found:
+        return found
+    roots = [os.environ.get("APPDATA", ""), os.environ.get("LOCALAPPDATA", "")]
+    candidates = [
+        Path(root) / "Telegram Desktop" / "Telegram.exe"
+        for root in roots
+        if root
+    ]
+    local_app_data = os.environ.get("LOCALAPPDATA", "")
+    if local_app_data:
+        candidates.append(Path(local_app_data) / "Programs" / "Telegram Desktop" / "Telegram.exe")
+    return next((str(path) for path in candidates if path.is_file()), binary)
+
+
+async def _discover_windows_app(app: str, ctx: ToolContext) -> tuple[str, str, str] | None:
+    """Find an arbitrary Start-menu application without maintaining an alias list.
+
+    ``Get-StartApps`` is Windows' own application inventory and includes packaged/UWP apps as well
+    as ordinary desktop shortcuts. We only read the inventory; the returned AppID is then opened by
+    Explorer's ``shell:AppsFolder`` handler. Exact matches win, and fuzzy matches are accepted only
+    when they identify one application.
+    """
+    command = (
+        "powershell.exe -NoProfile -NonInteractive -Command "
+        '"$apps = Get-StartApps | Select-Object Name,AppID; '
+        '$apps | ConvertTo-Json -Compress"'
+    )
+    try:
+        result = await ctx.sandbox.run_command(command, timeout=10, token=ctx.token)
+        apps = json.loads(result.stdout)
+    except Exception:  # noqa: BLE001 - discovery is an optional convenience
+        return None
+    if isinstance(apps, dict):
+        apps = [apps]
+    if not isinstance(apps, list):
+        return None
+    wanted = _normalise(app)
+    records = [
+        item
+        for item in apps
+        if isinstance(item, dict) and isinstance(item.get("Name"), str) and isinstance(item.get("AppID"), str)
+    ]
+    exact = [item for item in records if _normalise(item["Name"]) == wanted]
+    matches = exact or [item for item in records if wanted in _normalise(item["Name"])]
+    if len(matches) != 1:
+        return None
+    item = matches[0]
+    app_id = item["AppID"].replace('"', "")
+    if not app_id:
+        return None
+    return "explorer.exe", f"shell:AppsFolder\\{app_id}", str(item["Name"])
+
+
 class AppOpenTool(Tool):
     name = "app_open"
-    description = "Open an application (e.g. VS Code, a browser, the file explorer) or a folder in it."
+    description = (
+        "Open an installed application, executable path, browser, or folder. On Windows, "
+        "application names are resolved through PATH and the Start-menu app inventory, so an "
+        "alias is optional."
+    )
     risk_floor = RiskLevel.LOW
     proactive_ok = True
     parameters = {
         "type": "object",
         "properties": {
-            "app": {"type": "string", "description": "Application name or alias, e.g. 'vscode'"},
+            "app": {
+                "type": "string",
+                "description": "Application name, executable/path, or friendly alias, e.g. 'vscode' or 'Telegram'",
+            },
             "target": {
                 "type": "string",
                 "description": (
@@ -131,19 +201,40 @@ class AppOpenTool(Tool):
         looks_like_path = app.lower().endswith(_PATH_SUFFIXES) or "/" in app or "\\" in app
         if resolved:
             binary = APP_ALIASES[resolved].get(platform, app)
+            if platform == "win32":
+                binary = _windows_installed_binary(binary)
         elif looks_like_path:
             binary = app  # an explicit path to an executable: launch it as given
         else:
-            # Launching the literal phrase used to produce `start "" "File Explorer"`, which times
-            # out and then fails its own process probe. Say so instead of pretending.
-            known = ", ".join(sorted(APP_ALIASES))
-            return self.fail(
-                self.name,
-                f"unknown application {app!r} on {platform}; known aliases: {known}",
-                started,
-            )
-        resolved_target = ""
-        target_kind = "path"
+            # Let Windows resolve arbitrary installed applications through its own Start-menu
+            # inventory, so every new app does not require an alias or a Dobot release.
+            discovered_target = ""
+            discovered_name = ""
+            if platform == "win32":
+                path_binary = shutil.which(app)
+                discovered = (
+                    (path_binary, "", Path(path_binary).stem)
+                    if path_binary
+                    else await _discover_windows_app(app, ctx)
+                )
+                if discovered:
+                    binary, discovered_target, discovered_name = discovered
+                else:
+                    known = ", ".join(sorted(APP_ALIASES))
+                    return self.fail(
+                        self.name,
+                        f"application {app!r} was not found in Windows apps, PATH, or known aliases "
+                        f"(shortcuts: {known})",
+                        started,
+                    )
+            else:
+                return self.fail(
+                    self.name,
+                    f"application {app!r} was not found on {platform}; provide its executable path",
+                    started,
+                )
+        resolved_target = discovered_target if "discovered_target" in locals() else ""
+        target_kind = "application" if resolved_target else "path"
 
         if target:
             target = str(target).strip()
@@ -193,6 +284,7 @@ class AppOpenTool(Tool):
             self.name,
             {
                 "app": app,
+                "discovered_name": discovered_name if "discovered_name" in locals() else "",
                 "binary": binary,
                 "command": command,
                 "target": resolved_target,
@@ -228,7 +320,9 @@ class AppOpenTool(Tool):
             if exe.lower() in {"explorer", "explorer.exe"}:
                 return f'explorer "{target}"' if target else "explorer"
             quoted_target = f'"{target}"' if target else ""
-            return f'start "" "{exe}" {quoted_target}'.strip()
+            # Detach the child from the backend's stdio handles. GUI applications such as Notepad
+            # otherwise inherit the pipe and make asyncio.communicate wait until the app exits.
+            return f'start "" /B "{exe}" {quoted_target} >NUL 2>&1'.strip()
         # POSIX: shlex-quote every model-supplied piece — `$`, backticks and friends are inert
         # inside single quotes, so no character in a name or URL reaches the shell unparsed.
         if platform == "darwin":

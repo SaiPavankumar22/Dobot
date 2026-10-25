@@ -40,6 +40,7 @@ async def chat(request: ChatRequest, services: ServicesDep) -> ChatResponse:
         task_id = await services.orchestrator.submit_background(request)
         return ChatResponse(
             task_id=task_id,
+            conversation_id=request.conversation_id,
             status=TaskStatus.IN_PROGRESS,
             answer="Started in the background. I'll notify you when it's done.",
             providers=await services.provider_status(),

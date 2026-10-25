@@ -10,7 +10,6 @@ packaged install where no terminal or `.env` editor is assumed.
 from __future__ import annotations
 
 import re
-from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -207,38 +206,12 @@ async def onboarding(services: ServicesDep) -> dict:
 
 
 # ---------------------------------------------------------------------- credentials
-# Keys are persisted to the repo-root .env and hot-reloaded into the running process, so a packaged
-# install (no terminal, no editor) can still be configured entirely from the Settings page.
+# Local credentials are stored in Windows Credential Manager (or an encrypted development fallback)
+# and hot-reloaded into the running process. They never enter the SQLite database.
 
 
 class KeyValue(BaseModel):
     value: str
-
-
-def _env_path(services: ServicesDep) -> Path:
-    from app.config import REPO_ROOT
-
-    return REPO_ROOT / ".env"
-
-
-def _write_env_key(path: Path, name: str, value: str) -> None:
-    """Create-or-update one KEY=VALUE line, preserving everything else in the file.
-
-    ``name`` is the Settings field (snake_case); the .env convention is its upper-case form.
-    """
-    env_name = name.upper()
-    lines: list[str] = []
-    if path.exists():
-        lines = path.read_text(encoding="utf-8").splitlines()
-    pattern = re.compile(rf"^\s*#?\s*{re.escape(env_name)}\s*=.*$")
-    replacement = f"{env_name}={value}"
-    for index, line in enumerate(lines):
-        if pattern.match(line):
-            lines[index] = replacement
-            break
-    else:
-        lines.append(replacement)
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def _apply_key(services: ServicesDep, field: str, value: str) -> None:
@@ -365,16 +338,17 @@ async def set_key(name: str, payload: KeyValue, services: ServicesDep) -> dict:
             status_code=422,
             detail={"code": "EMPTY_VALUE", "message": "send the key in the body: {\"value\": \"...\"}", "recoverable": True},
         )
-    path = _env_path(services)
     try:
-        _write_env_key(path, field, value)
-    except OSError as exc:
+        from app.security.local_secrets import set_value
+
+        persisted = set_value(field, value, services.settings.state_dir)
+    except Exception as exc:  # noqa: BLE001
         raise HTTPException(
             status_code=500,
-            detail={"code": "ENV_WRITE_FAILED", "message": str(exc)[:200], "recoverable": False},
+            detail={"code": "SECRET_WRITE_FAILED", "message": str(exc)[:200], "recoverable": False},
         ) from exc
     _apply_key(services, field, value)
-    return {"ok": True, "id": name, "field": field, "kind": kind, "persisted": str(path)}
+    return {"ok": True, "id": name, "field": field, "kind": kind, "persisted": persisted}
 
 
 @router.delete("/keys/{name}")
@@ -405,10 +379,11 @@ async def clear_key(name: str, services: ServicesDep) -> dict:
         doc["keys"] = keys
         await services.store.insert("settings", doc)
         return {"ok": True, "id": name, "field": field}
-    path = _env_path(services)
     try:
-        _write_env_key(path, field, "")
-    except OSError as exc:
-        raise HTTPException(status_code=500, detail={"code": "ENV_WRITE_FAILED", "message": str(exc)[:200], "recoverable": False}) from exc
+        from app.security.local_secrets import delete
+
+        delete(field, services.settings.state_dir)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail={"code": "SECRET_DELETE_FAILED", "message": str(exc)[:200], "recoverable": False}) from exc
     _apply_key(services, field, "")
     return {"ok": True, "id": name, "field": field}
