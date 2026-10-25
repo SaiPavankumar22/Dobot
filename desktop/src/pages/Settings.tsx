@@ -14,7 +14,6 @@ import {
   type OperatorKey,
 } from "../services/api";
 import { useDobot } from "../store/dobotStore";
-import { useAuth } from "../store/authStore";
 import { isNative } from "../services/native";
 import { checkForUpdates } from "../services/updater";
 import type { VoiceSummary } from "../types";
@@ -88,24 +87,6 @@ export function Settings() {
   const setSpeakAnswers = useDobot((state) => state.setSpeakAnswers);
   const connect = useDobot((state) => state.connect);
   const disconnect = useDobot((state) => state.disconnect);
-  const authUser = useAuth((state) => (state.phase === "signed-in" ? state.user : null));
-  const signOut = useAuth((state) => state.signOut);
-  const [inviteCode, setInviteCode] = useState<string | null>(null);
-  const [inviteBusy, setInviteBusy] = useState(false);
-  const [inviteError, setInviteError] = useState<string | null>(null);
-
-  async function makeInvite() {
-    setInviteBusy(true);
-    setInviteError(null);
-    try {
-      const result = await api.createInvite();
-      setInviteCode(result.invite_code);
-    } catch (error) {
-      setInviteError(error instanceof Error ? error.message : String(error));
-    } finally {
-      setInviteBusy(false);
-    }
-  }
   const [updateBusy, setUpdateBusy] = useState(false);
   const [updateNote, setUpdateNote] = useState("");
   const [baseUrl, setBase] = useState(getBaseUrl());
@@ -122,15 +103,19 @@ export function Settings() {
   const [keyNote, setKeyNote] = useState("");
   const [capabilities, setCapabilities] = useState<BackendCapabilities | null>(null);
   const [hardware, setHardware] = useState<HardwareProfile | null>(null);
+  const [storage, setStorage] = useState<Record<string, unknown> | null>(null);
+  const [storageNote, setStorageNote] = useState("");
 
   async function load() {
     setSettings(await api.settings());
     try {
       setCapabilities(await api.capabilities());
       setHardware(await api.runtimeProfile());
+      setStorage(await api.storage());
     } catch {
       setCapabilities(null);
       setHardware(null);
+      setStorage(null);
     }
     const onboarding = await fetch(`${getBaseUrl()}/settings/onboarding`, { headers: authHeader() }).then(
       (response) => response.json(),
@@ -248,6 +233,99 @@ export function Settings() {
           : "The connected backend is not asking for a token right now."}
       </p>
 
+      <h2>Storage and chat history</h2>
+      <div className="card">
+        <p className="subtle">
+          Chats and memories are stored by the connected backend. Old traces and activity can be
+          pruned without deleting conversations or persistent memories.
+        </p>
+        {storage ? (
+          <>
+            <div className="subtle">
+              {Object.entries((storage.collections ?? {}) as Record<string, unknown>)
+                .map(([name, count]) => `${name}: ${String(count)}`)
+                .join(" · ")}
+            </div>
+            {!!storage.database && (
+              <div className="subtle" style={{ marginTop: 6 }}>
+                SQLite: {String((storage.database as Record<string, unknown>).path ?? "unknown")} ·{" "}
+                {String((storage.database as Record<string, unknown>).integrity ?? "unknown")} ·{" "}
+                {String((storage.database as Record<string, unknown>).bytes ?? 0)} bytes
+              </div>
+            )}
+          </>
+        ) : (
+          <div className="subtle">Storage details unavailable.</div>
+        )}
+        <div className="row" style={{ marginTop: 10 }}>
+          <button
+            className="ghost"
+            onClick={async () => {
+              setStorage(await api.storage());
+              setStorageNote("Storage refreshed.");
+            }}
+          >
+            Refresh storage
+          </button>
+          <button
+            className="ghost"
+            onClick={async () => {
+              const result = await api.pruneStorage(30, false);
+              setStorage(await api.storage());
+              setStorageNote(`Removed ${JSON.stringify(result.removed ?? {})}. Chats and memories kept.`);
+            }}
+          >
+            Prune old traces
+          </button>
+          <button
+            className="ghost"
+            onClick={async () => {
+              await api.checkpointStorage();
+              setStorage(await api.storage());
+              setStorageNote("Database checkpoint completed.");
+            }}
+          >
+            Checkpoint database
+          </button>
+          <button
+            className="ghost"
+            onClick={async () => {
+              await api.vacuumStorage();
+              setStorage(await api.storage());
+              setStorageNote("Database vacuum completed.");
+            }}
+          >
+            Compact database
+          </button>
+          <button
+            className="ghost"
+            onClick={async () => {
+              const result = await api.backupStorage();
+              setStorageNote(`Backup created at ${result.backup}.`);
+            }}
+          >
+            Create backup
+          </button>
+          <button
+            className="ghost"
+            onClick={async () => {
+              const result = await api.exportStorage();
+              const blob = new Blob([JSON.stringify(result, null, 2)], { type: "application/json" });
+              const url = URL.createObjectURL(blob);
+              const link = document.createElement("a");
+              link.href = url;
+              link.download = "dobot-export.json";
+              link.click();
+              URL.revokeObjectURL(url);
+              setStorageNote("Chat and memory export downloaded.");
+            }}
+          >
+            Export chats and memory
+          </button>
+          {storageNote && <span className="subtle">{storageNote}</span>}
+        </div>
+      </div>
+
       <h2>Backend capabilities</h2>
       {capabilities ? (
         <div className="card">
@@ -292,73 +370,6 @@ export function Settings() {
         </div>
       ) : (
         <p className="subtle">Capability information is unavailable until the backend connects.</p>
-      )}
-
-      <h2>Account</h2>
-      {authUser ? (
-        <>
-          <div className="row" style={{ alignItems: "center" }}>
-            <div>
-              <strong>{authUser.name}</strong>
-              <span className="subtle">{"  ·  "}{authUser.role}</span>
-            </div>
-            <button
-              className="ghost"
-              onClick={() => {
-                signOut();
-                // The live socket still carries the session token in its handshake: drop it
-                // now (the sign-in gate is about to appear; a fresh login redials).
-                disconnect();
-              }}
-            >
-              Sign out
-            </button>
-          </div>
-          <p className="subtle">
-            Signed in to this backend — your memory, tasks and keys are scoped to this account.
-            The token field above stays untouched by signing in or out.
-          </p>
-          {authUser.role === "owner" && (
-            <div className="notice" style={{ marginTop: 10 }}>
-              <div className="row" style={{ alignItems: "center", justifyContent: "space-between" }}>
-                <span>
-                  <strong>Invite someone</strong>
-                  <div className="subtle" style={{ marginTop: 2 }}>
-                    Accounts are invite-gated. Create a one-time code — the new account gets its own
-                    memory, tasks and keys.
-                  </div>
-                </span>
-                <button className="ghost" disabled={inviteBusy} onClick={() => void makeInvite()}>
-                  {inviteBusy ? "Creating…" : "Create invite code"}
-                </button>
-              </div>
-              {inviteError && (
-                <div className="subtle" style={{ color: "var(--danger)", marginTop: 8 }}>
-                  {inviteError}
-                </div>
-              )}
-              {inviteCode && (
-                <div className="row" style={{ marginTop: 8, alignItems: "center", gap: 8 }}>
-                  <code className="invite-code">{inviteCode}</code>
-                  <button
-                    className="ghost"
-                    onClick={() => {
-                      void navigator.clipboard.writeText(inviteCode).then(() => setInviteCode(null));
-                    }}
-                    title="Copies the code and clears it from this screen"
-                  >
-                    Copy & clear
-                  </button>
-                </div>
-              )}
-            </div>
-          )}
-        </>
-      ) : (
-        <p className="subtle">
-          This backend has no account session (single-user, or nobody signed in): access is via
-          the token field above.
-        </p>
       )}
 
       <h2>Updates</h2>

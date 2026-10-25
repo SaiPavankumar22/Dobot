@@ -73,21 +73,17 @@ export function setApiToken(token: string): void {
  * /auth/register), kept separate from `dobot.apiToken` so signing in never clobbers the
  * operator/HF token pasted in Settings — and signing out restores exactly that setup.
  */
-let userToken = localStorage.getItem("dobot.userToken") || "";
-
 export function getUserToken(): string {
-  return userToken;
+  return "";
 }
 
 export function setUserToken(token: string): void {
-  userToken = token.trim();
-  if (userToken) localStorage.setItem("dobot.userToken", userToken);
-  else localStorage.removeItem("dobot.userToken");
+  void token;
 }
 
-/** The token every call actually sends: a signed-in session wins over the pasted token. */
+/** The optional local backend token. Local mode has no account session. */
 export function getBearerToken(): string {
-  return userToken || apiToken;
+  return apiToken;
 }
 
 /**
@@ -371,6 +367,31 @@ export const api = {
   journal: (taskId: string) =>
     request<{ task_id: string; entries: { seq: number; kind: string; detail: string; at: string }[] }>(
       `/system/journal/${taskId}`,
+    ),
+  traces: (taskId: string) =>
+    request<{ task_id: string; count: number; entries: Record<string, unknown>[] }>(
+      `/system/traces/${taskId}`,
+    ),
+  conversation: (conversationId: string, limit = 100) =>
+    request<TaskRecord[]>(
+      `/conversations/${encodeURIComponent(conversationId)}?limit=${limit}`,
+    ),
+  storage: () =>
+    request<Record<string, unknown>>("/system/storage"),
+  pruneStorage: (olderThanDays = 30, includeActivity = false) =>
+    request<Record<string, unknown>>(
+      `/system/storage/prune?older_than_days=${olderThanDays}&include_activity=${includeActivity}`,
+      { method: "POST" },
+    ),
+  checkpointStorage: () =>
+    request<Record<string, unknown>>("/system/storage/checkpoint", { method: "POST" }),
+  vacuumStorage: () =>
+    request<{ vacuumed: boolean }>("/system/storage/vacuum", { method: "POST" }),
+  backupStorage: () =>
+    request<{ backup: string; bytes: number }>("/system/storage/backup", { method: "POST" }),
+  exportStorage: () =>
+    request<{ format: string; created_at: string; collections: Record<string, unknown[]> }>(
+      "/system/storage/export",
     ),
 
   authStatus: () =>

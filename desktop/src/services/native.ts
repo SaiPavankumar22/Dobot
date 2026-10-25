@@ -34,6 +34,14 @@ export interface SelectionPayload {
   error?: string;
 }
 
+export interface BackendShellStatus {
+  managed: boolean;
+  adopted_or_external: boolean;
+  ready: boolean;
+  host: string;
+  port: number;
+}
+
 /** What the shell tells the panel to do with the microphone: start listening, stop and send. */
 export type VoiceSignal = "start" | "stop";
 
@@ -110,6 +118,14 @@ export const native = {
 
   async quit(): Promise<void> {
     await this.invokeSafe("quit_dobot");
+  },
+
+  async backendStatus(): Promise<BackendShellStatus | null> {
+    return this.invokeSafe<BackendShellStatus>("backend_status");
+  },
+
+  async restartBackend(): Promise<boolean> {
+    return (await this.invokeSafe<boolean>("restart_backend")) ?? false;
   },
 
   async startDragging(): Promise<void> {

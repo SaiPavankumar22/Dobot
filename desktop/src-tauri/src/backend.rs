@@ -136,6 +136,34 @@ pub fn shutdown(app: &AppHandle) {
     }
 }
 
+/// Runtime status exposed to the desktop settings/Doctor surfaces.
+pub fn status(app: &AppHandle) -> serde_json::Value {
+    let managed = match app.state::<BackendProcess>().0.lock() {
+        Ok(guard) => guard.is_some(),
+        Err(poisoned) => poisoned.into_inner().is_some(),
+    };
+    serde_json::json!({
+        "managed": managed,
+        "adopted_or_external": !managed && health_ready(),
+        "ready": health_ready(),
+        "host": HOST,
+        "port": PORT,
+    })
+}
+
+/// Restart only a sidecar Dobot owns. An adopted/external backend is never killed.
+pub fn restart_if_owned(app: &AppHandle) -> bool {
+    let owned = match app.state::<BackendProcess>().0.lock() {
+        Ok(guard) => guard.is_some(),
+        Err(poisoned) => poisoned.into_inner().is_some(),
+    };
+    if !owned {
+        return false;
+    }
+    shutdown(app);
+    spawn_if_bundled(app)
+}
+
 /// Exit hook: runs for every exit path (window close, tray quit, `app.exit(0)`).
 pub fn handle_exit_event(app: &AppHandle, event: &RunEvent) {
     if let RunEvent::Exit = event {

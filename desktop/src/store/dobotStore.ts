@@ -2,7 +2,7 @@
 // updates, approvals and notifications, so the UI is a projection of what the agent actually did.
 
 import { create } from "zustand";
-import { ApiError, api, getUserToken } from "../services/api";
+import { ApiError, api } from "../services/api";
 import { native } from "../services/native";
 import { socket } from "../services/websocket";
 import { useProgress } from "../services/gamification";
@@ -26,24 +26,11 @@ const THREAD_PREFIX = "dobot.thread.";
 /** Enough history to feel continuous; small enough to stay inside the localStorage quota. */
 const THREAD_LIMIT = 60;
 
-/**
- * The conversation is per account, on purpose: signing out must never show one person's
- * chat to the next, and signing back in must continue where that person left off.
- *
- * `activeThreadKey` is the storage slot the live thread writes to. It is set by
- * ``loadThread`` (sign-in / app start) and detached by ``clearThread`` (sign-out), so the
- * wipe that hides the thread behind the login card cannot erase the saved copy.
- */
+/** The local conversation slot used by the desktop shell. */
 let activeThreadKey: string | null = null;
 
 function threadKeyForCurrentUser(): string {
-  const token = getUserToken();
-  // The backend mints `dobot_u_<user_id>_<random>` where the user id is `user_` plus
-  // exactly 12 hex chars (users.py). Anchor on that — the trailing random segment is
-  // token_urlsafe and can itself contain `_`, so a bare split would cut the id short
-  // and make every account share one slot.
-  const match = /^dobot_u_(user_[0-9a-f]{12})_/.exec(token);
-  return `${THREAD_PREFIX}${match?.[1] ?? "local"}`;
+  return `${THREAD_PREFIX}local`;
 }
 
 /** Persist the thread, minus anything too heavy for localStorage (base64 attachments). */

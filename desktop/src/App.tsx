@@ -16,12 +16,11 @@ import { DobotDot } from "./components/DobotDot";
 import { ScreenSelector } from "./components/ScreenSelector";
 import { Toast } from "./components/Toast";
 import { Chat } from "./pages/Chat";
-import { AuthGate } from "./pages/Auth";
 import { Dashboard } from "./pages/Dashboard";
 import { UpdateBanner } from "./components/UpdateBanner";
 import { native } from "./services/native";
 import { resolvePendingSelection } from "./services/screen";
-import { useDobot } from "./store/dobotStore";
+import { loadThread, useDobot } from "./store/dobotStore";
 import { applyTheme, loadThemeId } from "./theme";
 
 const DASHBOARD_HASHES = [
@@ -62,6 +61,7 @@ export default function App() {
   useEffect(() => {
     // Paint the stored theme before the first frame settles, so a light theme never flashes dark.
     applyTheme(loadThemeId());
+    loadThread();
   }, []);
 
   useEffect(() => {
@@ -151,7 +151,7 @@ export default function App() {
         />
       )}
       {windowKind === "chat" && (
-        <AuthGate>
+        <>
           <UpdateBanner />
           <Chat />
           <Toast placement="top-right" />
@@ -162,10 +162,10 @@ export default function App() {
               onCancel={() => useDobot.setState({ capturing: false })}
             />
           )}
-        </AuthGate>
+        </>
       )}
       {windowKind === "dashboard" && (
-        <AuthGate>
+        <>
           <UpdateBanner />
           <Dashboard />
           <Toast />
@@ -176,7 +176,7 @@ export default function App() {
               onCancel={() => useDobot.setState({ capturing: false })}
             />
           )}
-        </AuthGate>
+        </>
       )}
     </>
   );
