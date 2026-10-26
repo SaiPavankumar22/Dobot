@@ -260,8 +260,7 @@ export function Chat() {
     <div className="chat">
       <aside className="chat__sidebar">
         <div className="chat__brand">
-          <span className="chat__brand-mark">●</span>
-          <span className="chat__brand-name">Dobot</span>
+          <img className="chat__brand-logo" src="/branding/dobot-logo.png" alt="Dobot" />
         </div>
 
         <button className="chat__new" onClick={newConversation} title="Start a fresh conversation">
@@ -353,7 +352,7 @@ export function Chat() {
         <div className="chat__scroll" ref={scrollRef}>
           {messages.length === 0 ? (
             <div className="chat__hero">
-              <div className="chat__hero-mark">●</div>
+              <img className="chat__hero-mark" src="/branding/dobot-logo.png" alt="" />
               <h1>An AI that doesn&apos;t just answer you.</h1>
               <p>
                 Ask a question, point Dobot at your screen, or hand it a job. It plans what it will do,

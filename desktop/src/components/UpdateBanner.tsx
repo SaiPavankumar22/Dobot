@@ -10,7 +10,7 @@ import { useEffect, useRef, useState } from "react";
 import { isNative } from "../services/native";
 import { checkForUpdates, downloadAndInstall, relaunchApp } from "../services/updater";
 
-type Phase = "checking" | "available" | "downloading" | "installed" | "hidden";
+type Phase = "checking" | "available" | "preparing" | "downloading" | "installed" | "hidden";
 
 export function UpdateBanner() {
   const [phase, setPhase] = useState<Phase>("checking");
@@ -49,11 +49,15 @@ export function UpdateBanner() {
 
   async function install() {
     if (!update) return;
-    setPhase("downloading");
+    setPhase("preparing");
     setError(null);
     setPercent(undefined);
     try {
-      await downloadAndInstall(update, (value) => setPercent(value));
+      await downloadAndInstall(
+        update,
+        (value) => setPercent(value),
+        () => setPhase("downloading"),
+      );
       setPhase("installed");
       setRelaunching(true);
       try {
@@ -62,7 +66,7 @@ export function UpdateBanner() {
         // Relaunch refused (an installer may still be finishing): keep the app usable
         // and let the person restart it themselves — never strand them on a dead banner.
         setRelaunching(false);
-        setError("Installed. Restart Dobot to finish switching to the new version.");
+        setError("The update was installed, but Dobot could not restart automatically. Please reopen it.");
       }
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
@@ -115,6 +119,9 @@ export function UpdateBanner() {
         <button className="ghost" disabled>
           {percent !== undefined ? `${percent}%` : "…"}
         </button>
+      )}
+      {phase === "preparing" && (
+        <strong>Preparing Dobot for the update…</strong>
       )}
     </div>
   );

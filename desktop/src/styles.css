@@ -774,6 +774,15 @@ a {
   font-weight: 700;
 }
 
+.chat__brand-logo {
+  display: block;
+  width: 112px;
+  height: auto;
+  max-height: 30px;
+  object-fit: contain;
+  object-position: left center;
+}
+
 .chat__brand-mark {
   color: var(--accent);
   text-shadow: 0 0 14px rgba(76, 154, 255, 0.7);
@@ -1075,12 +1084,8 @@ a {
 .chat__hero-mark {
   width: 52px;
   height: 52px;
-  border-radius: 50%;
-  display: grid;
-  place-items: center;
-  font-size: 22px;
-  color: #0b1220;
-  background: radial-gradient(circle at 32% 28%, #5b9dff, #1f4f9e 70%);
+  object-fit: contain;
+  object-position: center;
   box-shadow: 0 10px 30px rgba(31, 111, 235, 0.45);
 }
 

@@ -1,9 +1,8 @@
-"""Generate Dobot's app icons without any image library.
+"""Regenerate Dobot's branded app icons.
 
 Tauri validates that ``bundle.icon`` paths exist at build time, so this keeps the repository
-self-contained: run ``python scripts/make_icons.py`` from ``desktop/`` to regenerate the PNG/ICO set.
-
-The mark: Dobot's dot — a blue sphere with a soft highlight, on transparency.
+self-contained: run ``python scripts/make_icons.py`` from ``desktop/`` to regenerate the supplied
+playmark icon and the matching wordmark assets.
 """
 
 from __future__ import annotations
@@ -67,12 +66,9 @@ def _ico(png: bytes, size: int = 256) -> bytes:
 
 
 def main() -> None:
-    OUT.mkdir(parents=True, exist_ok=True)
-    for name, size in SIZES.items():
-        (OUT / name).write_bytes(_png(size))
-        print("wrote", OUT / name)
-    (OUT / "icon.ico").write_bytes(_ico(_png(256)))
-    print("wrote", OUT / "icon.ico")
+    from prepare_branding import main as prepare_branding
+
+    prepare_branding()
 
 
 if __name__ == "__main__":

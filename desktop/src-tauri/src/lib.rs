@@ -200,6 +200,11 @@ fn restart_backend(app: AppHandle) -> bool {
 }
 
 #[tauri::command]
+fn prepare_update(app: AppHandle) -> serde_json::Value {
+    backend::prepare_update(&app)
+}
+
+#[tauri::command]
 fn app_status(app: AppHandle) -> serde_json::Value {
     let mut hotkeys = serde_json::json!([]);
     if let Ok(registered) = hotkeys_registered(&app) {
@@ -266,6 +271,7 @@ pub fn run() {
             set_autostart,
             backend_status,
             restart_backend,
+            prepare_update,
             app_status,
         ])
         .setup(|app| {

@@ -8,7 +8,7 @@
 
 import { relaunch } from "@tauri-apps/plugin-process";
 import { check, type Update } from "@tauri-apps/plugin-updater";
-import { isNative } from "./native";
+import { isNative, native } from "./native";
 
 /** The available update, or null (browser build, offline, or already current). */
 export async function checkForUpdates(): Promise<Update | null> {
@@ -24,7 +24,17 @@ export async function checkForUpdates(): Promise<Update | null> {
 export async function downloadAndInstall(
   update: Update,
   onProgress: (percent: number | undefined) => void,
+  onPreparing?: () => void,
 ): Promise<void> {
+  onPreparing?.();
+  const preparation = await native.prepareUpdate();
+  if (isNative && preparation && !preparation.released) {
+    throw new Error(
+      preparation.external_backend
+        ? "An external backend is using the local port. Stop that backend and retry the update."
+        : "Dobot could not stop its backend safely. Please retry the update.",
+    );
+  }
   let received = 0;
   let total: number | undefined;
   await update.downloadAndInstall((event) => {

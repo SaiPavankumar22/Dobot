@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="docs/branding/dobot-logo.png" alt="Dobot" width="360">
+
 # Dobot
 
 **A personal AI that works on your computer — not just talks about it.**

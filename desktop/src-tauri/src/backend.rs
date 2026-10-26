@@ -125,6 +125,18 @@ fn health_ready() -> bool {
     response.starts_with("HTTP/1.1 200") || response.starts_with("HTTP/1.0 200")
 }
 
+fn port_released() -> bool {
+    TcpStream::connect(format!("{HOST}:{PORT}")).is_err()
+}
+
+/// Whether this shell owns the bundled backend process.
+pub fn managed(app: &AppHandle) -> bool {
+    match app.state::<BackendProcess>().0.lock() {
+        Ok(guard) => guard.is_some(),
+        Err(poisoned) => poisoned.into_inner().is_some(),
+    }
+}
+
 /// Stop the managed backend, if we started one. Never touches a backend the user runs themselves.
 pub fn shutdown(app: &AppHandle) {
     if let Some(child) = take_child(app) {
@@ -134,6 +146,33 @@ pub fn shutdown(app: &AppHandle) {
             println!("dobot: bundled backend stopped");
         }
     }
+}
+
+/// Prepare an update without ever requiring the user to find a process manually.
+/// An adopted/external backend is deliberately left alone.
+pub fn prepare_update(app: &AppHandle) -> serde_json::Value {
+    let was_managed = managed(app);
+    if was_managed {
+        shutdown(app);
+    }
+    let released = if !was_managed {
+        !health_ready()
+    } else {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while Instant::now() < deadline {
+            if port_released() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        port_released()
+    };
+    serde_json::json!({
+        "managed": was_managed,
+        "stopped": was_managed,
+        "released": released,
+        "external_backend": !was_managed && health_ready(),
+    })
 }
 
 /// Runtime status exposed to the desktop settings/Doctor surfaces.

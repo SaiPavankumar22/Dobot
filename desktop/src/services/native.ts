@@ -42,6 +42,13 @@ export interface BackendShellStatus {
   port: number;
 }
 
+export interface UpdatePreparation {
+  managed: boolean;
+  stopped: boolean;
+  released: boolean;
+  external_backend: boolean;
+}
+
 /** What the shell tells the panel to do with the microphone: start listening, stop and send. */
 export type VoiceSignal = "start" | "stop";
 
@@ -126,6 +133,9 @@ export const native = {
 
   async restartBackend(): Promise<boolean> {
     return (await this.invokeSafe<boolean>("restart_backend")) ?? false;
+  },
+  async prepareUpdate(): Promise<UpdatePreparation | null> {
+    return this.invokeSafe<UpdatePreparation>("prepare_update");
   },
 
   async startDragging(): Promise<void> {
