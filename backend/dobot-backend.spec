@@ -25,7 +25,6 @@ ct2_datas, ct2_binaries, ct2_hidden = collect_all("ctranslate2")
 a = Analysis(
     ["runner.py"],
     pathex=[os.path.join(os.getcwd(), "app")],
-    binaries=[],
     datas=[(skills_src, "skills"), *voice_datas, *ct2_datas],
     binaries=[*voice_binaries, *ct2_binaries],
     # These packages use dynamic imports for the selected event loop, protocol and graph
