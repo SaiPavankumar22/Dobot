@@ -5,7 +5,7 @@
 - Python 3.11+
 - Node 20+ (Node 26 verified)
 - Rust 1.77+ with cargo (for the Tauri shell)
-- Optional: MongoDB, Zilliz, Hermes CLI, NemoClaw CLI, tesseract
+- Optional: MongoDB, Hermes CLI, NemoClaw CLI, tesseract
 
 Nothing above is required to run Dobot — see the degradation model in `docs/architecture.md`.
 
@@ -109,7 +109,7 @@ Building a distributable installer is covered in [`install.md`](install.md).
    and the dot appears above every window.
 2. Open a research PDF, select a paragraph, ask *"Explain this in simple terms."*
 3. Ask *"Find recent research about this."* — research events stream, sources are listed.
-4. Ask *"Remember that this project uses Zilliz for long-term memory."* then later ask what database
+4. Ask *"Remember that this project uses SQLite for long-term memory."* then later ask what database
    Dobot uses for memory.
 5. Ask *"Open my Dobot project in VS Code."* — an `app_open` action runs, verification confirms.
 6. Ask *"Clean my Downloads folder."* — Shadow Mode or an approval dialog shows 32 screenshots / 14

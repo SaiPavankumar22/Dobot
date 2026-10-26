@@ -48,3 +48,10 @@ desktop.ini
 # final hand-off drop (release build output, never source)
 /final/
 site/
+
+# local agent skills (graphify, karpathy-guidelines, ponytail) — read every session,
+# never committed and never pushed
+*.mdc
+
+# graphify knowledge graph — local, regenerated with `graphify update .` after code changes
+/graphify-out/

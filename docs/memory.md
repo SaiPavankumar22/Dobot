@@ -10,7 +10,7 @@ past actions.
 | `preference` | "User prefers Python for backend development." |
 | `project` | "User is building Dobot, a desktop AI assistant." |
 | `person` | "John is the reviewer for the Dobot report." |
-| `fact` | "Dobot's long-term vector memory uses Zilliz." |
+| `fact` | "Dobot's long-term vector memory runs on a local index." |
 | `workflow` | "Weekly report: check GitHub → check issues → summarize → draft." |
 | `episode` | "On Friday Dobot researched AI agent releases and summarized them." |
 | `task` | Task titles and outcomes, so follow-ups have continuity. |
@@ -21,7 +21,7 @@ past actions.
 Memory Service
      │
      ├── structured memory   MongoDB collection `memories`   (fallback: local JSON store)
-     ├── semantic memory     Zilliz / Milvus collection       (fallback: in-process cosine index)
+     ├── semantic memory     local cosine index (.dobot/vectors.json)
      └── task & automation   MongoDB collections `tasks`, `automations`, `activity_logs`
 ```
 

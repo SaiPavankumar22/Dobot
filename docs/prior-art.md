@@ -28,7 +28,7 @@ by a single `SANDBOX_PROVIDER` variable.
   fallback) — useful confirmation, not new code.
 
 **Rejected on purpose:** PostgreSQL/Prisma (Dobot's store interface keeps the local-file default
-and MongoDB/Zilliz as optional extras), multi-user accounts and auth (single-person laptop tool),
+and MongoDB as an optional extra), multi-user accounts and auth (single-person laptop tool),
 the Composio/Pipedream integration catalogs, and the mobile client.
 
 ## [milind-soni/OpenMausBot](https://github.com/milind-soni/OpenMausBot) — a roster of bots, each with a computer

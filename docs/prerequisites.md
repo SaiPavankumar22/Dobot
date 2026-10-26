@@ -10,7 +10,7 @@ The short version:
 | --- | --- | --- |
 | A chat assistant that answers questions | `NEBIUS_API_KEY` | optional |
 | …that can also research the web | + `TAVILY_API_KEY` | optional |
-| Memory that survives restarts and is shared | + `MONGODB_URI`, `ZILLIZ_URI` | optional |
+| Memory that survives restarts and is shared | + `MONGODB_URI` | optional (local memory already persists) |
 | Model-backed risk judgement (AutoTrust JEV-27B-VL) | + `NOVITA_API_KEY` (below) | optional |
 | Usage monitoring in LangSmith | + `LANGSMITH_API_KEY` | optional |
 
@@ -61,11 +61,12 @@ With it, Dobot runs real searches and returns cited answers. Free tier is fine t
 Durable structured memory: conversations, tasks, approvals, the cost ledger. Empty → a local
 file-backed store under `.dobot/` that works fine on one machine.
 
-### `ZILLIZ_URI` (+ `ZILLIZ_TOKEN`) and `EMBEDDING_MODEL`
+### `EMBEDDING_MODEL`
 
-Semantic memory recall ("what did I tell you about my thesis last month?"). Empty → a local vector
-index. The embedding model (`Qwen/Qwen3-Embedding-8B` by default) is also served by Nebius and uses
-the same `NEBIUS_API_KEY` — there is no separate key.
+Semantic memory recall ("what did I tell you about my thesis last month?"). There is no vector
+database to host: Dobot runs its own cosine index and persists it under the state directory. The
+embedding model (`Qwen/Qwen3-Embedding-8B` by default) is served by Nebius and uses the same
+`NEBIUS_API_KEY` — there is no separate key.
 
 ---
 

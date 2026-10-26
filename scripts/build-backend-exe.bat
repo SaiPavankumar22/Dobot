@@ -6,7 +6,7 @@ set HERE=%~dp0
 
 echo [1/2] Preparing the locked backend environment...
 cd /d "%HERE%..\backend" || goto :fail
-uv sync --locked || goto :fail
+uv sync --locked --extra voice --extra dev || goto :fail
 
 echo [2/2] Running PyInstaller in the same environment as the backend...
 uv run --with pyinstaller python -m PyInstaller --noconfirm --clean dobot-backend.spec || goto :fail

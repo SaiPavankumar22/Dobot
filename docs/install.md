@@ -180,8 +180,9 @@ NEBIUS_API_KEY=...        # reasoning (required for real answers)
 TAVILY_API_KEY=...        # web research
 ```
 
-Optionally add `MONGODB_URI` and `ZILLIZ_URI` for durable memory. Leave them blank and Dobot uses its
-local file store and local vector index instead — it still works, it just keeps memory on disk.
+Optionally add `MONGODB_URI` for shared structured memory. Leave it blank and Dobot uses its local
+store instead. Chat history and the vector index are always local — they are stored under the state
+directory either way, and need no server.
 
 `.env` is gitignored. Never commit it, and never put a key anywhere except this file.
 
@@ -363,8 +364,6 @@ The page asks for exactly four credentials, all of them yours:
 | --- | --- |
 | `nebius` | **Required.** Every Nemotron model: reasoning, the vision model that reads attachments, screen analysis. Get one at studio.nebius.com |
 | `tavily` | Web research and the news automations |
-| `zilliz_token` | Vector memory — recall across past conversations and documents (optional) |
-| `zilliz_uri` | The cluster endpoint that token belongs to (optional, needed with `zilliz_token`) |
 
 Everything else the backend needs is **infrastructure**, not a user credential, and the app never
 asks for it. Those values are read-only on the page, listed with where they come from:
@@ -641,7 +640,6 @@ These are all genuinely optional — Dobot runs without each of them, with the t
 | Upgrade | How | What you gain | If you skip it |
 | --- | --- | --- | --- |
 | MongoDB | set `MONGODB_URI`, install the `mongo` extra | durable structured memory across reinstalls | local file store in `.dobot/` |
-| Zilliz (Milvus) | set `ZILLIZ_URI` + `ZILLIZ_TOKEN`, install the `vectors` extra | scalable semantic recall | local cosine index over the file store |
 | OCR | install the `ocr` extra and Tesseract | reading text out of screenshots | vision model path only |
 | Hermes runtime | set `AGENT_RUNTIME=cli` or `remote`, `HERMES_ENDPOINT` | desktop (GUI) control (`computer_*`) and prompt delegation | local Playwright browser driver handles all browser interaction; `computer_*` refuses |
 | NemoClaw / OpenShell | run the stack, then set `SANDBOX_PROVIDER=nemoclaw` and `OPENSHIELD_GATEWAY_URL` | kernel-level isolation for executed actions | in-process action firewall only (`isolation: none`) |

@@ -83,7 +83,7 @@ Each external dependency has a local implementation behind the same interface:
 | Nebius / Nemotron | OpenAI-compatible chat completions | Deterministic rule-based planner/responder |
 | Tavily | REST search + extract | Offline "no sources" research result with an explicit notice |
 | MongoDB | `motor` async driver | JSON file store under `DOBOT_STATE_DIR` |
-| Zilliz | `pymilvus` client | In-process cosine index |
+| Vector index | — (local only) | In-process cosine index, persisted under `DOBOT_STATE_DIR` |
 | Hermes | CLI / remote endpoint | Dobot's guarded local tool implementations |
 | NemoClaw | NemoClaw CLI / OpenShell gateway | Dobot action firewall + path/network allowlists |
 | OCR | `pytesseract` | Vision model transcription, then empty-text fallback |
@@ -133,10 +133,22 @@ approvals(id, task_id, action, risk, description, payload, status, created_at, r
 activity_logs(id, task_id, event_type, message, metadata, timestamp)
 ```
 
-Structured records live in MongoDB when `MONGODB_URI` is set, otherwise in the local store. Embeddings
-live in Zilliz when configured, otherwise in the local index. Both paths share one interface, so the
-retriever is storage-agnostic.
+Structured records live in MongoDB when `MONGODB_URI` is set, otherwise in the local store — SQLite
+for desktop installs, JSON files before that. Embeddings always live in Dobot's own local cosine
+index, which is flushed to `.dobot/vectors.json` so semantic recall survives a restart; there is no
+hosted vector database to configure. Both paths share one interface, so the retriever is
+storage-agnostic.
 
-> Note: the specification's later sections mention PostgreSQL + pgvector. The definitive stack for
-> this build is MongoDB + Zilliz (stated in the product header); the store interfaces are narrow
-> enough that a Postgres implementation is a drop-in third backend.
+> Note: the specification's later sections mention PostgreSQL + pgvector, and an earlier revision of
+> this build offered Zilliz. Zilliz was removed as unused: an optional dependency nobody switches on
+> is a second code path that is never exercised. The store interfaces are narrow enough that a
+> Postgres implementation is still a drop-in third backend.
+
+## Conversation history
+
+Every turn is written to `conversations` + `messages` before and after it runs, so a chat is durable
+and reopenable. What the *model* sees is a separate, bounded view built by `app/core/sessions.py`:
+the newest `SESSION_HISTORY_TURNS` turns verbatim within `SESSION_HISTORY_CHARS` characters, plus a
+rolling `summary` of everything older, regenerated once `SESSION_COMPACT_AFTER` messages pile up.
+Storing history and sending history are different problems; conflating them is how a transcript
+either blows the context window or never reaches the prompt at all.

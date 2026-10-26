@@ -135,7 +135,7 @@ Full details: [`docs/security.md`](docs/security.md).
 | Risk signals | **AutoTrust JEV-27B-VL** decision model on Novita (optional, bring your own key) |
 | Backend | Python · FastAPI · LangGraph |
 | Desktop app | Tauri 2 · React · TypeScript |
-| Memory | Local by default · MongoDB and Zilliz optional |
+| Memory | Local by default (SQLite + a local vector index) · MongoDB optional |
 
 <details>
 <summary><b>Models in use</b></summary>
