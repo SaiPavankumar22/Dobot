@@ -11,11 +11,13 @@ import type {
   ApprovalRecord,
   ChatAttachment,
   ChatMessage,
+  Conversation,
   DashboardSummary,
   DobotEvent,
   DotStatus,
   ExecutionMode,
   Plan,
+  SessionMessage,
   TaskRecord,
 } from "../types";
 
@@ -23,14 +25,78 @@ const MAX_EVENTS = 250;
 const MODE_KEY = "dobot.mode";
 const SPEAK_KEY = "dobot.speakAnswers";
 const THREAD_PREFIX = "dobot.thread.";
+/** The conversation that was open last time, so reopening the app lands you where you were. */
+const ACTIVE_CONV_KEY = "dobot.activeConversation";
 /** Enough history to feel continuous; small enough to stay inside the localStorage quota. */
 const THREAD_LIMIT = 60;
 
-/** The local conversation slot used by the desktop shell. */
+/** The local cache slot for the conversation currently open. */
 let activeThreadKey: string | null = null;
 
-function threadKeyForCurrentUser(): string {
-  return `${THREAD_PREFIX}local`;
+function newConversationId(): string {
+  return `conv-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function threadKeyFor(conversationId: string | null): string {
+  // `local` is the pre-transcript slot every older install used; it is still readable so nothing
+  // already saved disappears.
+  return `${THREAD_PREFIX}${conversationId || "local"}`;
+}
+
+/**
+ * The id this turn will be filed under, minted on first use.
+ *
+ * Created lazily rather than when the app opens: a conversation the user never said anything in
+ * should not exist on the server.
+ */
+function ensureConversation(): string {
+  const current = useDobot.getState().activeConversationId;
+  if (current) return current;
+  const id = newConversationId();
+  activeThreadKey = threadKeyFor(id);
+  localStorage.setItem(ACTIVE_CONV_KEY, id);
+  useDobot.setState({ activeConversationId: id });
+  return id;
+}
+
+/** A stored turn becomes a thread message again. */
+function fromSessionMessage(message: SessionMessage): ChatMessage {
+  const status = (message.status || "") as ChatMessage["status"];
+  return {
+    id: message.id,
+    role: message.role === "dobot" ? "dobot" : "user",
+    text: message.content,
+    createdAt: message.created_at ? Date.parse(message.created_at) || Date.now() : Date.now(),
+    taskId: message.task_id || undefined,
+    // Only a status the backend actually recorded is shown; an unknown one renders no chip rather
+    // than pretending a turn succeeded.
+    status: status || undefined,
+  };
+}
+
+/**
+ * Anything still marked in-flight is a turn from a run that ended when the app closed.
+ * Showing it as an eternal spinner would be a lie; the backend task is gone.
+ */
+function markInterrupted(messages: ChatMessage[]): ChatMessage[] {
+  const interrupted = new Set(["PENDING", "PLANNING", "IN_PROGRESS", "WAITING_APPROVAL", "WAITING_USER"]);
+  return messages.map((message) =>
+    message.status && interrupted.has(message.status)
+      ? {
+          ...message,
+          status: "CANCELLED" as const,
+          text: message.text || "Stopped — Dobot was closed while this was running.",
+          plan: message.plan
+            ? {
+                ...message.plan,
+                steps: message.plan.steps.map((step) =>
+                  step.status === "PENDING" ? { ...step, status: "SKIPPED" as const } : step,
+                ),
+              }
+            : message.plan,
+        }
+      : message,
+  );
 }
 
 /** Persist the thread, minus anything too heavy for localStorage (base64 attachments). */
@@ -73,6 +139,10 @@ async function maybeSpeak(answer: string, get: () => DobotStore): Promise<void> 
  */
 async function notifyIfAway(task: TaskRecord): Promise<void> {
   if (native.label() !== "chat") return;
+  // Only a task that actually finished is worth a notification. A task paused at an approval
+  // gate (or still running) announces itself through its own event, and "Dobot finished" for it
+  // would be a lie — finaliseTask calls this for those states too.
+  if (task.status !== "COMPLETED" && task.status !== "FAILED" && task.status !== "CANCELLED") return;
   if (await native.dobotFocused()) return;
   const answer = (task.answer || task.error || "")
     .replace(/[*_`#>]/g, "")
@@ -107,6 +177,10 @@ interface DobotStore {
   connectionDetail: string;
   providers: Record<string, string>;
   messages: ChatMessage[];
+  /** Every chat the backend can reopen, newest first — this, not the message log, is the sidebar. */
+  conversations: Conversation[];
+  /** The chat currently open. Every outgoing turn is filed under this id. */
+  activeConversationId: string | null;
   events: DobotEvent[];
   approvals: ApprovalRecord[];
   dashboard: DashboardSummary | null;
@@ -145,8 +219,9 @@ interface DobotStore {
   refreshSecurity: () => Promise<void>;
   decide: (
     id: string,
-    decision: "approve" | "reject",
+    decision: "approve" | "reject" | "edit",
     note?: string,
+    edits?: Record<string, unknown>,
     scope?: "once" | "lifetime",
   ) => Promise<void>;
   kill: (taskId?: string) => Promise<void>;
@@ -158,6 +233,12 @@ interface DobotStore {
   refreshVoice: () => Promise<void>;
   /** Start a fresh conversation. Pending approvals survive — they belong to running tasks. */
   newConversation: () => void;
+  /** Refresh the sidebar from the backend. */
+  loadConversations: () => Promise<void>;
+  /** Reopen a past chat: replay its transcript and keep sending under the same id. */
+  openConversation: (id: string) => Promise<boolean>;
+  /** Remove a chat and its turns from the database. */
+  deleteConversation: (id: string) => Promise<void>;
   reset: () => void;
 }
 
@@ -200,6 +281,8 @@ export const useDobot = create<DobotStore>((set, get) => ({
   connectionDetail: "not connected",
   providers: {},
   messages: [],
+  conversations: [],
+  activeConversationId: null,
   events: [],
   approvals: [],
   dashboard: null,
@@ -224,6 +307,7 @@ export const useDobot = create<DobotStore>((set, get) => ({
         if (connected) {
           void get().refreshApprovals();
           void get().refreshProviders();
+          void get().refreshVoice();
         }
       });
       socket.onEvent((event) => get().handleEvent(event));
@@ -234,12 +318,25 @@ export const useDobot = create<DobotStore>((set, get) => ({
     void get().refreshProviders();
     void get().refreshApprovals();
     void get().refreshDotEnabled();
+    void get().refreshVoice();
   },
 
   disconnect: () => socket.close(),
 
   handleEvent: (event) => {
-    set((state) => ({ events: [...state.events.slice(-MAX_EVENTS + 1), event] }));
+    set((state) => {
+      // Every reconnect replays the server's history, which is largely already in this buffer —
+      // appending it twice duplicated rows in the live timeline and made React warn about the
+      // duplicate keys. Only the display buffer is deduplicated: the switch below still runs, so
+      // approvals, task finalisation and the dot status are never skipped. MAX_SAFE_INTEGER marks
+      // frames synthesised in this client, which are deliberately repeatable.
+      const replayed =
+        event.sequence !== Number.MAX_SAFE_INTEGER &&
+        state.events.some((known) => known.sequence === event.sequence);
+      return {
+        events: replayed ? state.events : [...state.events.slice(-MAX_EVENTS + 1), event],
+      };
+    });
 
     switch (event.type) {
       case "dot_status": {
@@ -264,10 +361,16 @@ export const useDobot = create<DobotStore>((set, get) => ({
         break;
       }
       case "notification": {
-        void native.notify(
-          String(event.data.title ?? "Dobot"),
-          String(event.data.body ?? event.message),
-        );
+        // A finished task is already announced by finaliseTask → notifyIfAway, which carries the
+        // answer and also covers failures; the backend still emits this event so the in-app toast
+        // can show it. Notifying here as well popped twice for every completed response — only
+        // non-task notifications (e.g. "Permission remembered") go straight to the system here.
+        if (!("background" in event.data)) {
+          void native.notify(
+            String(event.data.title ?? "Dobot"),
+            String(event.data.body ?? event.message),
+          );
+        }
         break;
       }
       case "plan_created": {
@@ -316,6 +419,7 @@ export const useDobot = create<DobotStore>((set, get) => ({
     try {
       const response = await api.chat({
         message: trimmed,
+        conversation_id: ensureConversation(),
         background: true,
         shadow: options?.shadow ?? get().shadowMode,
         mode: get().mode,
@@ -468,9 +572,9 @@ export const useDobot = create<DobotStore>((set, get) => ({
     }
   },
 
-  decide: async (id, decision, note = "", scope = "once") => {
+  decide: async (id, decision, note = "", edits, scope = "once") => {
     try {
-      const response = await api.decide(id, decision, note, undefined, scope);
+      const response = await api.decide(id, decision, note, edits, scope);
       set((state) => ({
         messages: patchMessage(state.messages, response.task_id, {
           text: response.answer,
@@ -541,56 +645,146 @@ export const useDobot = create<DobotStore>((set, get) => ({
     }
   },
 
-  newConversation: () => set({ messages: [], lastError: null, activeTaskId: null }),
+  newConversation: () => {
+    const id = newConversationId();
+    activeThreadKey = threadKeyFor(id);
+    localStorage.setItem(ACTIVE_CONV_KEY, id);
+    set({ messages: [], lastError: null, activeTaskId: null, activeConversationId: id });
+  },
+
+  loadConversations: async () => {
+    try {
+      set({ conversations: await api.conversations(50) });
+    } catch {
+      /* backend may be starting; the sidebar keeps whatever it already had */
+    }
+  },
+
+  openConversation: async (id) => {
+    if (!id) return false;
+    try {
+      const payload = await api.conversation(id, 500);
+      const restored = (payload.messages ?? []).map(fromSessionMessage);
+      activeThreadKey = threadKeyFor(id);
+      localStorage.setItem(ACTIVE_CONV_KEY, id);
+      set({
+        activeConversationId: id,
+        messages: restored,
+        lastError: null,
+        activeTaskId: null,
+        busy: false,
+      });
+      persistThread(restored);
+      return true;
+    } catch {
+      // Still starting, or deleted elsewhere: leave what is on screen alone rather than blank it.
+      return false;
+    }
+  },
+
+  deleteConversation: async (id) => {
+    try {
+      await api.deleteConversation(id);
+      set((state) => ({ conversations: state.conversations.filter((item) => item.id !== id) }));
+      if (get().activeConversationId === id) get().newConversation();
+    } catch (error) {
+      set({ lastError: error instanceof ApiError ? error.message : String(error) });
+    }
+  },
 
   reset: () => set({ messages: [], events: [], approvals: [], lastError: null }),
 }));
 
 /**
- * Restore this account's saved conversation and point persistence at its slot.
+ * Restore the conversation that was open last time, then reconcile it with the backend.
  *
- * Called by the auth gate when a session exists (sign-in or app start). Messages left
- * mid-flight by a restart are shown as cancelled rather than as eternal spinners — the
- * backend task is gone; pretending otherwise would be a lie in the thread.
+ * The cached copy is shown first so reopening is instant, and so a chat still renders when the
+ * backend is not up yet. The database is the source of truth: whatever it has replaces the cache.
+ * Called by the auth gate when a session exists (sign-in or app start).
  */
-export function loadThread(): void {
-  activeThreadKey = threadKeyForCurrentUser();
-  let messages: ChatMessage[] = [];
+export function loadThread(): Promise<void> {
+  // App mount and the auth gate both ask for this. Run one restore at a time so two of them cannot
+  // interleave and leave the sidebar showing whatever the slower one happened to fetch.
+  if (restoreInFlight) return restoreInFlight;
+  restoreInFlight = restoreThread().finally(() => {
+    restoreInFlight = null;
+  });
+  return restoreInFlight;
+}
+
+let restoreInFlight: Promise<void> | null = null;
+
+async function restoreThread(): Promise<void> {
+  const lastId = localStorage.getItem(ACTIVE_CONV_KEY) || "";
+  const cacheKey = threadKeyFor(lastId || null);
+  activeThreadKey = cacheKey;
+
+  let cached: ChatMessage[] = [];
   try {
-    const raw = localStorage.getItem(activeThreadKey);
-    if (raw) messages = JSON.parse(raw) as ChatMessage[];
+    const raw = lastId ? localStorage.getItem(cacheKey) : null;
+    if (raw) cached = JSON.parse(raw) as ChatMessage[];
   } catch {
-    messages = [];
+    cached = [];
   }
-  const interrupted = new Set(["PENDING", "PLANNING", "IN_PROGRESS", "WAITING_APPROVAL", "WAITING_USER"]);
-  messages = messages.map((message) =>
-    message.status && interrupted.has(message.status)
-      ? {
-          ...message,
-          status: "CANCELLED" as const,
-          text: message.text || "Stopped — Dobot was closed while this was running.",
-          plan: message.plan
-            ? {
-                ...message.plan,
-                steps: message.plan.steps.map((step) =>
-                  step.status === "PENDING" ? { ...step, status: "SKIPPED" as const } : step,
-                ),
-              }
-            : message.plan,
-        }
-      : message,
-  );
-  useDobot.setState({ messages, busy: false, activeTaskId: null, lastError: null });
+  useDobot.setState({
+    activeConversationId: lastId || null,
+    messages: markInterrupted(cached),
+    busy: false,
+    activeTaskId: null,
+    lastError: null,
+  });
+
+  const store = useDobot.getState();
+  await store.loadConversations();
+  const conversations = useDobot.getState().conversations;
+  const known = Boolean(lastId && conversations.some((item) => item.id === lastId));
+
+  if (known) {
+    await useDobot.getState().openConversation(lastId);
+    return;
+  }
+  if (conversations[0]) {
+    // Nothing remembered, but there is history: land on the most recent chat, like any chat app.
+    await useDobot.getState().openConversation(conversations[0].id);
+    return;
+  }
+  if (cached.length && lastId) {
+    // The backend has never seen this thread. Push it up so the transcript lives in the database
+    // from now on instead of only in this browser's storage.
+    try {
+      await api.seedConversation(
+        lastId,
+        cached.map((message) => ({
+          role: message.role === "dobot" ? "dobot" : "user",
+          content: message.text,
+          status: message.status ?? "",
+          created_at: new Date(message.createdAt).toISOString(),
+        })),
+      );
+      await useDobot.getState().openConversation(lastId);
+    } catch {
+      useDobot.setState({ activeConversationId: lastId });
+    }
+    return;
+  }
+  if (!useDobot.getState().messages.length) useDobot.getState().newConversation();
 }
 
 /**
  * Detach persistence, then blank the thread — in that order. Signing out hides the
- * conversation behind the login card without erasing the saved copy, so the next sign-in
- * (by anyone) starts clean and the owner finds theirs intact.
+ * conversation behind the login card without erasing the saved copy on the server, so the next
+ * sign-in (by anyone) starts clean and the owner finds theirs intact.
  */
 export function clearThread(): void {
   activeThreadKey = null;
-  useDobot.setState({ messages: [], busy: false, activeTaskId: null, lastError: null });
+  localStorage.removeItem(ACTIVE_CONV_KEY);
+  useDobot.setState({
+    messages: [],
+    busy: false,
+    activeTaskId: null,
+    activeConversationId: null,
+    lastError: null,
+  });
 }
 
 // The thread saves itself as it grows. Only the chat window writes: every Tauri window has
@@ -624,6 +818,8 @@ async function finaliseTask(
     await maybeSpeak(task.answer, get);
     void get().refreshApprovals();
     void get().refreshDashboard();
+    // The turn count and title just changed server-side; keep the sidebar honest.
+    void get().loadConversations();
     // After the state is written: whoever comes back from the notification finds the answer there.
     await notifyIfAway(task);
   } catch {

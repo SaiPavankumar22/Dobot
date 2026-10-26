@@ -9,6 +9,7 @@ export type TaskStatus =
   | "IN_PROGRESS"
   | "WAITING_APPROVAL"
   | "WAITING_USER"
+  | "PAUSED"
   | "COMPLETED"
   | "FAILED"
   | "CANCELLED";
@@ -319,6 +320,34 @@ export interface ChatMessage {
   usage?: { total_tokens: number; cost_usd: number } | null;
   /** Files and images this message carried, so the thread can show what was sent. */
   attachments?: ChatAttachment[];
+}
+
+// --------------------------------------------------------------- conversations
+
+/**
+ * A chat, as the backend's conversation list returns it. This — not the message log — is what the
+ * sidebar renders, which is why entries are real conversations rather than one per user turn.
+ */
+export interface Conversation {
+  id: string;
+  title: string;
+  /** Rolling summary of turns the prompt no longer shows verbatim. */
+  summary: string;
+  message_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+/** One durable turn of a conversation, replayed when a past chat is reopened. */
+export interface SessionMessage {
+  id: string;
+  conversation_id: string;
+  seq: number;
+  role: "user" | "dobot";
+  content: string;
+  task_id: string;
+  status: string;
+  created_at: string;
 }
 
 // ---------------------------------------------------------------------- system

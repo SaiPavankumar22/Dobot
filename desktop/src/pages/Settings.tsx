@@ -54,17 +54,6 @@ const KEY_COPY: Record<string, { label: string; hint: string; placeholder: strin
     placeholder: "sk_…",
     href: "https://novita.ai/settings/key-management",
   },
-  zilliz_token: {
-    label: "Zilliz token",
-    hint: "Vector memory: recall across past conversations and documents. Needs the URL below too.",
-    placeholder: "paste token",
-    href: "https://cloud.zilliz.com",
-  },
-  zilliz_uri: {
-    label: "Zilliz URL",
-    hint: "The cluster endpoint the token belongs to, e.g. https://in03-xxxx.serverless.gcp-us-west1.cloud.zilliz.com",
-    placeholder: "https://…zilliz.com",
-  },
 };
 
 /** Friendly names for the environment-only values shown as read-only. */

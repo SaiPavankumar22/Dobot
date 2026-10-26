@@ -8,6 +8,7 @@ import type {
   AutomationRecord,
   CanonicalFact,
   ChatResponse,
+  Conversation,
   DashboardSummary,
   DoctorReport,
   ExecutionMode,
@@ -18,6 +19,7 @@ import type {
   PermissionMatrix,
   PermissionGrant,
   Region,
+  SessionMessage,
   SkillFinding,
   SkillRecord,
   TaskRecord,
@@ -237,6 +239,8 @@ export const api = {
 
   chat: (payload: {
     message: string;
+    /** Which chat this turn belongs to. Omitting it files the turn under a new conversation. */
+    conversation_id?: string | null;
     background?: boolean;
     shadow?: boolean;
     mode?: ExecutionMode;
@@ -249,6 +253,7 @@ export const api = {
       method: "POST",
       body: JSON.stringify({
         message: payload.message,
+        conversation_id: payload.conversation_id || "default",
         background: payload.background ?? false,
         shadow: payload.shadow,
         mode: payload.mode,
@@ -292,6 +297,10 @@ export const api = {
   createTask: (payload: { title: string; description?: string; priority?: string }) =>
     request<TaskRecord>("/tasks", { method: "POST", body: JSON.stringify(payload) }),
   cancelTask: (id: string) => request<TaskRecord>(`/tasks/${id}/cancel`, { method: "POST" }),
+  pauseTask: (id: string) => request<TaskRecord>(`/tasks/${id}/pause`, { method: "POST" }),
+  resumeTask: (id: string) => request<TaskRecord>(`/tasks/${id}/resume`, { method: "POST" }),
+  nudgeTask: (id: string, message: string) =>
+    request<TaskRecord>(`/tasks/${id}/nudge`, { method: "POST", body: JSON.stringify({ message }) }),
   runTask: (id: string) => request<TaskRecord>(`/tasks/${id}/run`, { method: "POST" }),
   deleteTask: (id: string) => request<{ deleted: boolean }>(`/tasks/${id}`, { method: "DELETE" }),
 
@@ -372,10 +381,29 @@ export const api = {
     request<{ task_id: string; count: number; entries: Record<string, unknown>[] }>(
       `/system/traces/${taskId}`,
     ),
-  conversation: (conversationId: string, limit = 100) =>
-    request<TaskRecord[]>(
+  /** Every chat this user can reopen, newest first. */
+  conversations: (limit = 50) => request<Conversation[]>(`/conversations?limit=${limit}`),
+  /** One chat in full — the header plus every turn, oldest first. */
+  conversation: (
+    conversationId: string,
+    limit = 500,
+  ): Promise<{ conversation: Conversation | null; messages: SessionMessage[] }> =>
+    request<{ conversation: Conversation | null; messages: SessionMessage[] }>(
       `/conversations/${encodeURIComponent(conversationId)}?limit=${limit}`,
     ),
+  /** Push a locally cached transcript into the database the first time a chat is opened. */
+  seedConversation: (
+    conversationId: string,
+    messages: { role: string; content: string; status?: string; created_at?: string }[],
+  ) =>
+    request<{ inserted: number }>(
+      `/conversations/${encodeURIComponent(conversationId)}/messages`,
+      { method: "POST", body: JSON.stringify({ messages }) },
+    ),
+  deleteConversation: (conversationId: string) =>
+    request<{ success: boolean }>(`/conversations/${encodeURIComponent(conversationId)}`, {
+      method: "DELETE",
+    }),
   storage: () =>
     request<Record<string, unknown>>("/system/storage"),
   pruneStorage: (olderThanDays = 30, includeActivity = false) =>

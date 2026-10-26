@@ -148,13 +148,20 @@ export const native = {
   },
 
   async notify(title: string, body: string): Promise<void> {
-    if (!isNative) {
-      if ("Notification" in window && Notification.permission === "granted") {
-        new Notification(title, { body });
-      }
+    // One rule for every caller: all windows see the same events, so without this each open
+    // window pops its own copy of the same notification. Only the chat window speaks — and only
+    // while no Dobot window has the user's attention: if they are already reading a response,
+    // the thread is the feedback and no system notification should appear at all.
+    if (isNative) {
+      if (this.label() !== "chat") return;
+      if (await this.dobotFocused()) return;
+      await this.invokeSafe("notify_user", { title, body });
       return;
     }
-    await this.invokeSafe("notify_user", { title, body });
+    if (document.hasFocus()) return;
+    if ("Notification" in window && Notification.permission === "granted") {
+      new Notification(title, { body });
+    }
   },
 
   async loadDotPosition(): Promise<DotPosition | null> {

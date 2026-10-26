@@ -4,7 +4,7 @@
 // The ambient part of Dobot (the always-on floating dot) is opt-in and lives behind one switch in the
 // header. With the switch off, nothing of Dobot is on screen but this window.
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Activity } from "../pages/Activity";
 import { Approvals } from "../pages/Approvals";
 import { Automations } from "../pages/Automations";
@@ -22,7 +22,9 @@ import {
   IconSend,
   IconStopCircle,
 } from "../components/Icons";
+import { Doctor } from "../pages/Doctor";
 import { Guide } from "../pages/Guide";
+import { Identity } from "../pages/Identity";
 import { Memory } from "../pages/Memory";
 import { Overview } from "../pages/Overview";
 import { PlanView } from "../components/PlanView";
@@ -64,9 +66,11 @@ const NAV = [
   { id: "automations", label: "Automations", hint: "Saved tasks on a schedule" },
   { id: "approvals", label: "Approvals", hint: "Risky steps waiting for your decision" },
   { id: "memory", label: "Memory", hint: "What Dobot remembers about you and your work" },
+  { id: "identity", label: "Identity", hint: "The documents that make Dobot yours" },
   { id: "skills", label: "Skills", hint: "Reusable workflows it can run again" },
   { id: "activity", label: "Activity", hint: "The honest log of every step" },
   { id: "security", label: "Security", hint: "Permissions, guards and the kill switch" },
+  { id: "doctor", label: "Doctor", hint: "Which capabilities are live, degraded or missing" },
   { id: "settings", label: "Settings", hint: "Keys, connection, appearance" },
 ] as const;
 
@@ -79,9 +83,11 @@ function Section({ id, onBack }: { id: string; onBack: () => void }) {
     id === "automations" ? <Automations /> :
     id === "approvals" ? <Approvals /> :
     id === "memory" ? <Memory /> :
+    id === "identity" ? <Identity /> :
     id === "skills" ? <Skills /> :
     id === "activity" ? <Activity /> :
     id === "security" ? <Security /> :
+    id === "doctor" ? <Doctor /> :
     id === "settings" ? <Settings /> :
     <div className="notice">Unknown section.</div>;
   const label = NAV.find((item) => item.id === id)?.label ?? id;
@@ -124,24 +130,6 @@ const SUGGESTIONS: { title: string; detail: string; prompt: string; screen?: boo
   },
 ];
 
-interface Thread {
-  id: string;
-  title: string;
-  at: number;
-}
-
-/** The sidebar list is derived from the message log: every user turn starts a thread. */
-function deriveThreads(messages: ChatMessage[]): Thread[] {
-  return messages
-    .filter((message) => message.role === "user")
-    .map((message) => ({
-      id: message.id,
-      title: message.text.split("\n")[0]?.slice(0, 52) || "New conversation",
-      at: message.createdAt,
-    }))
-    .reverse();
-}
-
 export function Chat() {
   const messages = useDobot((state) => state.messages);
   const approvals = useDobot((state) => state.approvals);
@@ -164,6 +152,9 @@ export function Chat() {
   const setShadowMode = useDobot((state) => state.setShadowMode);
   const setDotEnabled = useDobot((state) => state.setDotEnabled);
   const newConversation = useDobot((state) => state.newConversation);
+  const conversations = useDobot((state) => state.conversations);
+  const activeConversationId = useDobot((state) => state.activeConversationId);
+  const openConversation = useDobot((state) => state.openConversation);
   const setCapturing = useDobot((state) => state.setCapturing);
   const kill = useDobot((state) => state.kill);
 
@@ -218,7 +209,6 @@ export function Chat() {
     if (accepted.length) setAttachments((current) => [...current, ...accepted]);
   }
 
-  const threads = useMemo(() => deriveThreads(messages), [messages]);
   const pending = approvals.length > 0;
 
   useEffect(() => {
@@ -256,6 +246,16 @@ export function Chat() {
     setSection(id);
   }
 
+  // The dashboard is its own window/route, not a chat section: sent through openSection("") it
+  // rendered "Unknown section."
+  function openDashboard() {
+    if (native.isNative) {
+      void native.openDashboard();
+      return;
+    }
+    window.location.hash = "#/dashboard";
+  }
+
   return (
     <div className="chat">
       <aside className="chat__sidebar">
@@ -269,21 +269,22 @@ export function Chat() {
 
         <div className="chat__section-label">Recent</div>
         <div className="chat__threads">
-          {threads.length === 0 && <div className="chat__empty-hint">No conversations yet</div>}
-          {threads.map((thread) => (
+          {conversations.length === 0 && <div className="chat__empty-hint">No conversations yet</div>}
+          {conversations.map((conversation) => (
             <button
-              key={thread.id}
-              className="chat__thread"
-              onClick={() => {
-                document
-                  .querySelector(`[data-message-id="${thread.id}"]`)
-                  ?.scrollIntoView({ behavior: "smooth", block: "start" });
-              }}
-              title={thread.title}
+              key={conversation.id}
+              className={`chat__thread${
+                conversation.id === activeConversationId ? " chat__thread--active" : ""
+              }`}
+              onClick={() => void openConversation(conversation.id)}
+              title={conversation.summary || conversation.title}
             >
-              <span className="chat__thread-title">{thread.title}</span>
+              <span className="chat__thread-title">{conversation.title}</span>
               <span className="chat__thread-time">
-                {new Date(thread.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                {new Date(conversation.updated_at).toLocaleTimeString([], {
+                  hour: "2-digit",
+                  minute: "2-digit",
+                })}
               </span>
             </button>
           ))}
@@ -305,9 +306,6 @@ export function Chat() {
           <span className={`chip ${connected ? "chip--ok" : "chip--danger"}`} title={connectionDetail}>
             {connected ? "backend connected" : "backend offline"}
           </span>
-          <button className="ghost" onClick={() => openSection("settings")}>
-            Connection settings
-          </button>
           {native.isNative && (
             <button className="ghost" onClick={() => void native.quit()}>
               Quit Dobot
@@ -338,7 +336,7 @@ export function Chat() {
                 hint="Keep Dobot's floating dot on screen above every window"
               />
             </div>
-            <button onClick={() => openSection("dashboard")}>Dashboard</button>
+            <button onClick={openDashboard}>Dashboard</button>
           </div>
         </header>
 

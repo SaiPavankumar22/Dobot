@@ -1,21 +1,12 @@
 // The dot is the product's whole first impression: it must communicate state at a glance.
-// Idle ● available · Listening ◉ · Thinking ◌ · Executing ↻ · Approval ! · Halted ×
+// The app icon is its face; the status is the coloured ring around it and its animation:
+// Idle blue · Listening green (pulse) · Thinking purple (spinner) · Executing cyan (pulse)
+// Approval amber (pulse) · Done green · Error/Stopped red
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { native } from "../services/native";
 import { useDobot } from "../store/dobotStore";
 import type { DotStatus } from "../types";
-
-const GLYPHS: Record<DotStatus, string> = {
-  IDLE: "●",
-  LISTENING: "◉",
-  THINKING: "◌",
-  EXECUTING: "↻",
-  APPROVAL_REQUIRED: "!",
-  COMPLETED: "✓",
-  ERROR: "×",
-  KILLED: "×",
-};
 
 const CLASSES: Record<DotStatus, string> = {
   IDLE: "",
@@ -115,7 +106,7 @@ export function DobotDot() {
       title={label}
     >
       <div className={`dot ${CLASSES[visibleStatus]}`} role="button" aria-label={label}>
-        <span className="dot__glyph">{GLYPHS[visibleStatus]}</span>
+        <img className="dot__icon" src="/branding/dobot-icon.png" alt="" draggable={false} />
         {approvals.length > 0 && <span className="dot__badge">{approvals.length}</span>}
         {!connected && <span className="dot__badge" style={{ background: "#6b7280" }}>·</span>}
       </div>

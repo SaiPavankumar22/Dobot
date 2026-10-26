@@ -30,7 +30,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (phase === "signed-in") {
       // This account's thread — the conversation continues where it left off.
-      loadThread();
+      void loadThread();
       // The event stream was opened with whatever credentials existed at window start (or
       // closed on sign-out): redial once a session exists so the handshake carries the
       // signed-in token — WS cannot pick up a token change mid-connection.
@@ -39,7 +39,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
     }
     if (phase === "off") {
       // Single-user backend: one shared thread, restored the same way.
-      loadThread();
+      void loadThread();
     }
     if (phase === "signed-out") {
       // Never leave one account's conversation on screen behind the sign-in card.

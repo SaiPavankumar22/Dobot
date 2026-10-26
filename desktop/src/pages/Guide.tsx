@@ -157,14 +157,14 @@ const TOPICS: Topic[] = [
   {
     id: "doctor",
     title: "Doctor",
-    where: "Dashboard window → Doctor (also linked from Settings).",
+    where: "Dashboard → Doctor, and Workspace → Doctor in the chat sidebar.",
     what: "Checks every capability and says which are live, degraded, or simply not configured — with the exact fix for each. Deliberately blunt: this page exists so the app never pretends something works when it does not.",
   },
   {
     id: "keys",
     title: "Your keys vs the backend's keys",
     where: "Settings → Your API keys (and the read-only 'Managed for you' list under it).",
-    what: "You provide the keys that belong to you: Nebius (reasoning — required), Tavily (web research), Novita (the JEV-27B-VL judgement model that scores every proposed action), and the Zilliz URL + token (semantic memory). They are stored by the backend you are connected to, never displayed back — a saved field shows only a mask — and applied immediately.",
+    what: "You provide the keys that belong to you: Nebius (reasoning — required), Tavily (web research), Novita (the JEV-27B-VL judgement model that scores every proposed action). They are stored by the backend you are connected to, never displayed back — a saved field shows only a mask — and applied immediately.",
     tip: "MongoDB and LangSmith are infrastructure, not user settings: when you use a shared backend (a Hugging Face Space) they are set there as secrets by whoever runs it. The app lists them as read-only and refuses to overwrite them, so your keys and theirs cannot collide.",
   },
   {

@@ -61,7 +61,7 @@ export default function App() {
   useEffect(() => {
     // Paint the stored theme before the first frame settles, so a light theme never flashes dark.
     applyTheme(loadThemeId());
-    loadThread();
+    void loadThread();
   }, []);
 
   useEffect(() => {

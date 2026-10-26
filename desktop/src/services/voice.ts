@@ -67,14 +67,29 @@ export async function transcribeAudio(blob: Blob): Promise<{ text: string; error
   }
   const body = (await response.json().catch(() => ({}))) as {
     text?: string;
-    error?: string;
-    detail?: { message?: string } | string;
+    error?: string | { message?: string };
+    detail?: { message?: string; code?: string } | string;
   };
   if (!response.ok) {
-    const detail = typeof body.detail === "string" ? body.detail : body.detail?.message;
-    return { text: "", error: detail || body.error || `Transcription failed (HTTP ${response.status})` };
+    const detail =
+      typeof body.detail === "string"
+        ? body.detail
+        : body.detail?.message;
+    const error = typeof body.error === "string" ? body.error : body.error?.message;
+    return {
+      text: "",
+      error:
+        detail ||
+        error ||
+        (response.status === 409
+          ? "Voice transcription is not ready. Install the voice extra or wait for the local model to load."
+          : `Transcription failed (HTTP ${response.status})`),
+    };
   }
-  return { text: String(body.text ?? ""), error: body.error || undefined };
+  return {
+    text: String(body.text ?? ""),
+    error: typeof body.error === "string" ? body.error : body.error?.message,
+  };
 }
 
 export type VoiceInputState = {
