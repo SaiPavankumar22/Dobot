@@ -283,15 +283,14 @@ class Doctor:
 
     async def _vector_index(self) -> list[Capability]:
         name = str(getattr(self.s.memory.vectors, "name", "unknown"))
-        hosted = name.startswith("zilliz") or name.startswith("milvus")
         return [
             Capability(
                 id="vector_index",
                 label="Vector index",
                 state="live",
-                detail=f"{name}.",
-                fix="" if hosted else "Set ZILLIZ_URI and ZILLIZ_TOKEN for a hosted index.",
-                env="" if hosted else "ZILLIZ_URI",
+                detail=f"{name} — a local cosine index persisted under the state directory.",
+                fix="No action needed; semantic recall runs on this machine and needs no server.",
+                env="",
                 meta={"vectors": name},
             )
         ]

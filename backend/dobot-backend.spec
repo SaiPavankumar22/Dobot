@@ -12,25 +12,30 @@
 
 import os
 
-from PyInstaller.utils.hooks import collect_submodules
+from PyInstaller.utils.hooks import collect_all, collect_submodules
 
 block_cipher = None
 
 # Ship the built-in skills inside the exe. At runtime app.config prefers a writable skills/ folder
 # next to the executable (the desktop bundler provides one) and falls back to this embedded copy.
 skills_src = os.path.abspath(os.path.join(SPECPATH, "..", "skills"))
+voice_datas, voice_binaries, voice_hidden = collect_all("faster_whisper")
+ct2_datas, ct2_binaries, ct2_hidden = collect_all("ctranslate2")
 
 a = Analysis(
     ["runner.py"],
     pathex=[os.path.join(os.getcwd(), "app")],
     binaries=[],
-    datas=[(skills_src, "skills")],
+    datas=[(skills_src, "skills"), *voice_datas, *ct2_datas],
+    binaries=[*voice_binaries, *ct2_binaries],
     # These packages use dynamic imports for the selected event loop, protocol and graph
     # implementations. Collect the installed package layout instead of pinning module names that
     # change between compatible releases.
     hiddenimports=[
         *collect_submodules("uvicorn"),
         *collect_submodules("langgraph"),
+        *voice_hidden,
+        *ct2_hidden,
         "app.api.chat",
         "app.api.screen",
         "app.api.research",

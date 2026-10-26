@@ -17,8 +17,11 @@ this module runs on a timer (and on demand) to do five deterministic things:
 5. **Write the working notes.** A short, human-readable ``MEMORY.md`` describing what has actually been
    learned, so the system's self-model is inspectable rather than implied.
 
-No model calls. The whole pass is arithmetic over stored records, which is why it can run unattended
-without costing anything.
+Pass A (deterministic) does all of the above with no model calls — it can run unattended for free.
+Pass B (review, optional) uses a cheap model to propose edits: merge near-duplicates that differ by
+wording, flag stale facts, and suggest canonical promotions. Proposals are stored for Doctor review
+and auto-applied only when ``consolidation_auto_apply_reviews`` is True and importance < 0.5.
+Secrets are redacted before any prompt is constructed.
 """
 
 from __future__ import annotations
@@ -33,6 +36,16 @@ from typing import Any
 
 from app.events import EventBus, EventType, get_event_bus
 from app.logging_setup import get_logger
+
+_SECRET_RE = re.compile(
+    r"(?i)(api[_-]?key|token|secret|password|bearer|access[_-]key|private[_-]key)\s*[=:]\s*\S+",
+    re.IGNORECASE,
+)
+
+
+def _redact(text: str) -> str:
+    """Strip credential-like patterns before any text reaches a model prompt."""
+    return _SECRET_RE.sub(lambda m: m.group(0).split("=")[0] + "=<redacted>", text)
 
 logger = get_logger(__name__)
 
@@ -105,6 +118,16 @@ class ConsolidationReport:
         )
 
 
+@dataclass
+class ReviewProposal:
+    """One proposed edit from pass B that a human or auto-apply can accept/reject."""
+    kind: str          # "merge" | "promote" | "flag_stale" | "note"
+    memory_ids: list[str]
+    content: str       # proposed new content (may be empty for flag_stale/note)
+    rationale: str
+    auto_applicable: bool = False  # safe to apply without human review
+
+
 class Consolidator:
     """Runs the maintenance pass and, optionally, on a timer."""
 
@@ -117,6 +140,8 @@ class Consolidator:
         settings: Any,
         journal: Any = None,
         bus: EventBus | None = None,
+        store: Any = None,
+        reasoner: Any = None,
     ) -> None:
         self.memory = memory
         self.canonical = canonical
@@ -125,8 +150,11 @@ class Consolidator:
         # Optional, so a test can build a consolidator without a record store behind it.
         self.journal = journal
         self.bus = bus or get_event_bus()
+        self._store = store           # for persisting review proposals
+        self._reasoner = reasoner     # cheap model for pass B (may be None)
         self._task: asyncio.Task[None] | None = None
         self._last: ConsolidationReport | None = None
+        self._last_proposals: list[ReviewProposal] = []
 
     # ------------------------------------------------------------------ lifecycle
 
@@ -289,6 +317,23 @@ class Consolidator:
             except Exception as exc:  # noqa: BLE001
                 logger.info("journal prune failed (%s)", exc)
 
+        # --- pass B: optional LLM review -----------------------------------------
+        # Only runs when a reasoner is wired and the feature is enabled in settings.
+        # Secrets are redacted before any prompt is sent.
+        if (
+            not dry_run
+            and self._reasoner is not None
+            and bool(getattr(self.settings, "consolidation_review_enabled", False))
+        ):
+            try:
+                proposals = await self._review_pass(kept)
+                self._last_proposals = proposals
+                await self._handle_proposals(proposals)
+                if proposals:
+                    logger.info("consolidation review: %d proposals", len(proposals))
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("consolidation review pass failed (%s)", exc)
+
         report.duration_ms = int((time.perf_counter() - started) * 1000)
         self._last = report
         if not dry_run:
@@ -299,6 +344,114 @@ class Consolidator:
             )
         logger.info("consolidation pass: %s", report.summary_line())
         return report
+
+    # ------------------------------------------------------------------ pass B: review
+
+    async def _review_pass(self, records: list[Any]) -> list[ReviewProposal]:
+        """Ask a cheap model to propose edits across the surviving memory records.
+
+        Only the first 40 records (by importance) are sent — the prompt cannot be unbounded.
+        Secrets are stripped before the prompt is built.
+        """
+        if not records:
+            return []
+        # Sort by importance descending; cap to 40 for prompt safety.
+        by_importance = sorted(
+            records,
+            key=lambda item: float(getattr(item, "importance", 0.5)),
+            reverse=True,
+        )[:40]
+
+        lines = []
+        for record in by_importance:
+            rid = str(getattr(record, "id", ""))
+            content = _redact(str(getattr(record, "content", ""))[:300])
+            imp = float(getattr(record, "importance", 0.5))
+            lines.append(f"[{rid}] (importance={imp:.2f}) {content}")
+
+        prompt = (
+            "You are reviewing a set of memory records for a local AI assistant. "
+            "Identify near-duplicate memories that should be merged, stale facts that should be flagged, "
+            "and frequently repeated facts that are good candidates for promotion to long-term canonical ledger. "
+            "Reply with a JSON array of objects, each with keys: "
+            '"kind" (merge|promote|flag_stale), "memory_ids" (array of IDs involved), '
+            '"content" (proposed merged text if kind=merge, else empty), "rationale" (1 sentence). '
+            "Do not invent new facts. Do not include secrets or credentials in any field. "
+            "If nothing needs changing, return an empty array [].\n\n"
+            "Memory records:\n" + "\n".join(lines)
+        )
+        try:
+            import json as _json
+            result = await self._reasoner.ask(prompt, max_tokens=1200)
+            raw = (result or "").strip()
+            # Extract the JSON array from the response (model may wrap it in prose).
+            bracket = raw.find("[")
+            end_bracket = raw.rfind("]")
+            if bracket == -1 or end_bracket == -1:
+                return []
+            items = _json.loads(raw[bracket : end_bracket + 1])
+            proposals: list[ReviewProposal] = []
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                kind = str(item.get("kind", "note"))
+                memory_ids = [str(i) for i in (item.get("memory_ids") or [])]
+                content = _redact(str(item.get("content") or ""))[:500]
+                rationale = _redact(str(item.get("rationale") or ""))[:300]
+                # Auto-apply only simple merges of low-importance records.
+                auto = kind == "merge" and all(
+                    float(getattr(r, "importance", 0.5)) < 0.5
+                    for r in records
+                    if str(getattr(r, "id", "")) in memory_ids
+                )
+                proposals.append(ReviewProposal(
+                    kind=kind,
+                    memory_ids=memory_ids,
+                    content=content,
+                    rationale=rationale,
+                    auto_applicable=auto,
+                ))
+            return proposals
+        except Exception as exc:  # noqa: BLE001
+            logger.info("consolidation review: could not parse model response (%s)", exc)
+            return []
+
+    async def _handle_proposals(self, proposals: list[ReviewProposal]) -> None:
+        """Store proposals for Doctor review; auto-apply those flagged as safe."""
+        auto_apply = bool(getattr(self.settings, "consolidation_auto_apply_reviews", False))
+        for proposal in proposals:
+            if self._store is not None:
+                doc = {
+                    "id": f"prop_{int(time.time() * 1000)}_{proposal.kind}",
+                    "kind": proposal.kind,
+                    "memory_ids": proposal.memory_ids,
+                    "content": proposal.content,
+                    "rationale": proposal.rationale,
+                    "auto_applicable": proposal.auto_applicable,
+                    "status": "pending",
+                    "created_at": datetime.now(UTC).isoformat(),
+                }
+                try:
+                    await self._store.insert("consolidation_proposals", doc)
+                except Exception as exc:  # noqa: BLE001
+                    logger.info("could not store consolidation proposal (%s)", exc)
+
+            if auto_apply and proposal.auto_applicable and proposal.kind == "merge" and proposal.content:
+                # Merge: replace the first memory with the new content, forget the rest.
+                ids = proposal.memory_ids
+                if len(ids) >= 2:
+                    try:
+                        await self.memory.update(ids[0], {"content": proposal.content})
+                        for extra in ids[1:]:
+                            await self.memory.forget(extra)
+                        logger.info("auto-applied merge proposal for %s", ids[0])
+                    except Exception as exc:  # noqa: BLE001
+                        logger.info("auto-apply merge failed (%s)", exc)
+
+    @property
+    def last_proposals(self) -> list[ReviewProposal]:
+        """Proposals from the most recent review pass — for Doctor/Settings to surface."""
+        return list(self._last_proposals)
 
     # ------------------------------------------------------------------ notes
 
@@ -388,7 +541,14 @@ def _parse(value: Any) -> datetime | None:
 
 
 def build_consolidator(
-    *, memory: Any, canonical: Any, identity: Any, settings: Any, journal: Any = None
+    *,
+    memory: Any,
+    canonical: Any,
+    identity: Any,
+    settings: Any,
+    journal: Any = None,
+    store: Any = None,
+    reasoner: Any = None,
 ) -> Consolidator:
     return Consolidator(
         memory=memory,
@@ -396,5 +556,7 @@ def build_consolidator(
         identity=identity,
         settings=settings,
         journal=journal,
+        store=store,
+        reasoner=reasoner,
         bus=get_event_bus(),
     )

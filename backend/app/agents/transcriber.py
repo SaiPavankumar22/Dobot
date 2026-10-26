@@ -241,7 +241,11 @@ class Transcriber:
                 if device == "cuda":
                     ensure_cuda_on_path()
                 model = WhisperModel(
-                    model_name, device=device, compute_type=compute, cpu_threads=self._cpu_threads()
+                    model_name,
+                    device=device,
+                    compute_type=compute,
+                    cpu_threads=self._cpu_threads(),
+                    download_root=str(self.settings.models_dir),
                 )
             except Exception as exc:  # noqa: BLE001 - bad download, OOM, no CUDA runtime…
                 self._failed = f"model load failed on {device}: {exc}"[:300]

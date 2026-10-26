@@ -53,6 +53,7 @@ class TaskStatus(str, Enum):
     RECOVERY_REQUIRED = "RECOVERY_REQUIRED"
     WAITING_APPROVAL = "WAITING_APPROVAL"
     WAITING_USER = "WAITING_USER"
+    PAUSED = "PAUSED"
     COMPLETED = "COMPLETED"
     FAILED = "FAILED"
     CANCELLED = "CANCELLED"
@@ -170,6 +171,11 @@ class Plan(BaseModel):
     model_tier: ModelTier = ModelTier.ULTRA
     used_model: str = ""
     degraded: bool = False
+    #: True only when a *configured* model was called and could not answer, so the offline rules had
+    #: to refuse. Deliberately distinct from ``degraded``: running with no key at all is the
+    #: documented keyless mode ("works without keys, and tells you what is missing"), which is a
+    #: completed run. A configured provider that failed is not — reporting it as success is a lie.
+    unanswered: bool = False
     raw: str = ""
 
 
@@ -260,6 +266,13 @@ class AttachmentBlock(BaseModel):
     truncated: bool = False
 
 
+class SessionTurn(BaseModel):
+    """One turn of a conversation, in the shape the planner prompt renders it."""
+
+    role: str = "user"  # user | dobot
+    content: str = ""
+
+
 class ContextBundle(BaseModel):
     task_id: str = ""
     user_message: str = ""
@@ -275,6 +288,12 @@ class ContextBundle(BaseModel):
     standing_rules: list[str] = Field(default_factory=list)
     #: Long-standing facts injected without a search, so identity never has to win a retrieval contest.
     canonical_facts: list[str] = Field(default_factory=list)
+    #: The rolling synopsis of everything older than ``history`` — so turns that left the prompt are
+    #: still known, rather than silently forgotten.
+    session_summary: str = ""
+    #: Recent turns of this conversation, oldest first, newest last. This is what lets "explain in
+    #: detail" mean "explain *the IPO you just mentioned*" instead of being a brand-new question.
+    history: list[SessionTurn] = Field(default_factory=list)
 
     def as_prompt_context(self, max_chars: int = 6000) -> str:
         """Render the bundle into a compact, budgeted block for the model prompt."""
@@ -292,12 +311,39 @@ class ContextBundle(BaseModel):
             for block in self.attachments:
                 size = f"{block.bytes / 1024:.1f} KB" if block.bytes >= 1024 else f"{block.bytes} B"
                 if block.kind == "image":
-                    described = block.text or "the vision model returned no description"
-                    lines.append(f"- IMAGE {block.name} ({block.mime or 'image'}, {size}): {described}")
+                    # Rendered as a block, not a bullet: packed behind "name (size):" the vision
+                    # description read like trailing prose and the planner concluded the entry
+                    # "only provides filename and size" — then tried to go and look at the file.
+                    if block.text:
+                        lines.append(
+                            f"--- IMAGE {block.name} ({block.mime or 'image'}, {size}) - what the picture "
+                            "shows, read by the vision model; these lines ARE its content, answer from them ---"
+                        )
+                        lines.append(block.text)
+                    else:
+                        lines.append(
+                            f"--- IMAGE {block.name} ({block.mime or 'image'}, {size}) - NOT read: the vision "
+                            "model could not describe it ---"
+                        )
+                        lines.append(
+                            "(no description was produced - say so plainly and name the reason; "
+                            "never try to find, open or capture the file)"
+                        )
                 else:
                     cut = " - TRUNCATED, the rest was not sent" if block.truncated else ""
                     lines.append(f"--- FILE {block.name} ({block.mime or 'text'}, {size}{cut}) ---")
                     lines.append(block.text)
+        # Placed ahead of everything the user did not write: the conversation is the referent for
+        # the current request, and a follow-up whose history was truncated is a worse failure than
+        # losing a slice of screen text.
+        if self.session_summary:
+            lines.append("[EARLIER IN THIS CONVERSATION - summary of turns no longer shown]")
+            lines.append(self.session_summary)
+        if self.history:
+            lines.append("[RECENT TURNS IN THIS CONVERSATION - oldest first, newest last]")
+            for turn in self.history:
+                speaker = "User" if turn.role == "user" else "Dobot"
+                lines.append(f"{speaker}: {turn.content}")
         if self.screen and (self.screen.ocr_text or self.screen.application):
             lines.append("[SCREEN]")
             if self.screen.application or self.screen.window_title:
@@ -338,6 +384,37 @@ class TaskStepRecord(BaseModel):
     result: dict[str, Any] | None = None
     verification: dict[str, Any] | None = None
     error: str | None = None
+
+
+class ConversationRecord(BaseModel):
+    """A chat: the durable header. The turns themselves live in ``messages``."""
+
+    id: str = Field(default_factory=lambda: new_id("conv"))
+    user_id: str = "local"
+    title: str = "New chat"
+    #: Rolling synopsis of the turns the prompt no longer shows verbatim.
+    summary: str = ""
+    #: How many of this conversation's messages the summary already covers.
+    summary_through: int = 0
+    message_count: int = 0
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
+class ChatMessageRecord(BaseModel):
+    """One durable turn. Never trimmed — trimming is a prompt concern, not a storage one."""
+
+    id: str = Field(default_factory=lambda: new_id("msg"))
+    user_id: str = "local"
+    conversation_id: str = ""
+    seq: int = 0
+    role: str = "user"  # user | dobot
+    content: str = ""
+    task_id: str = ""
+    #: The task status at the moment this turn was written, so a replayed thread renders the same
+    #: chip the live one did instead of guessing.
+    status: str = ""
+    created_at: datetime = Field(default_factory=utcnow)
 
 
 class TaskRecord(BaseModel):

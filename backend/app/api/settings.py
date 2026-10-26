@@ -18,7 +18,7 @@ from app.api.deps import ServicesDep
 
 router = APIRouter(prefix="/settings", tags=["settings"])
 
-MUTABLE = {"shadow_mode", "screen_capture", "jev_enabled", "ocr_enabled"}
+MUTABLE = {"shadow_mode", "screen_capture", "jev_enabled", "ocr_enabled", "voice_enabled"}
 
 # ------------------------------------------------------------------ who sets what
 #
@@ -36,13 +36,12 @@ KEY_FIELDS = {
     "nebius": "nebius_api_key",
     "tavily": "tavily_api_key",
     "novita": "novita_api_key",
-    "zilliz_token": "zilliz_token",
 }
 
 # Connection strings rather than secrets (masked differently, still writable by the user).
-URI_FIELDS = {
-    "zilliz_uri": "zilliz_uri",
-}
+#: Empty on purpose: semantic memory runs on the local index, so there is no hosted endpoint to
+#: configure. Kept as a mapping so the API's key list stays uniform.
+URI_FIELDS: dict[str, str] = {}
 
 # Environment-only values. Present in the request payload as a name so the UI can explain why they
 # are absent, never as a value, and never writable through this API. Wording stays neutral about
@@ -84,7 +83,7 @@ async def get_settings(services: ServicesDep) -> dict:
         "startup": True,
         "always_on_top": True,
         "screen_capture": settings.screen_capture,
-        "voice_enabled": False,
+        "voice_enabled": settings.voice_enabled,
         "shadow_mode": settings.shadow_mode,
         "jev_enabled": settings.jev_enabled,
         "kill_switch_hotkey": settings.kill_switch_hotkey,
@@ -103,7 +102,10 @@ async def get_settings(services: ServicesDep) -> dict:
             "api_key_set": bool((settings.hermes_api_key or "").strip()),
         },
         "sandbox": {"provider": settings.sandbox_provider, "sandbox": settings.nemoclaw_sandbox},
-        "memory": {"store": settings.mongodb_db if settings.has_mongo else "local", "vectors": "zilliz" if settings.has_zilliz else "local"},
+        "memory": {
+            "store": settings.mongodb_db if settings.has_mongo else "local",
+            "vectors": "local",
+        },
     }
 
 

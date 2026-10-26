@@ -82,6 +82,37 @@ async def cancel_task(task_id: str, services: ServicesDep) -> TaskRecord:
     return TaskRecord.model_validate(doc)
 
 
+@router.post("/{task_id}/pause", response_model=TaskRecord)
+async def pause_task(task_id: str, services: ServicesDep) -> TaskRecord:
+    doc = await services.store.get("tasks", task_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail={"code": "TASK_NOT_FOUND", "message": task_id})
+    if not await services.orchestrator.pause(task_id):
+        raise HTTPException(status_code=409, detail={"code": "TASK_NOT_RUNNING", "message": task_id})
+    doc["status"] = TaskStatus.PAUSED.value
+    return TaskRecord.model_validate(doc)
+
+
+@router.post("/{task_id}/resume", response_model=TaskRecord)
+async def resume_task(task_id: str, services: ServicesDep) -> TaskRecord:
+    doc = await services.store.get("tasks", task_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail={"code": "TASK_NOT_FOUND", "message": task_id})
+    await services.orchestrator.resume(task_id)
+    doc["status"] = TaskStatus.IN_PROGRESS.value
+    return TaskRecord.model_validate(doc)
+
+
+@router.post("/{task_id}/nudge", response_model=TaskRecord)
+async def nudge_task(task_id: str, payload: dict, services: ServicesDep) -> TaskRecord:
+    doc = await services.store.get("tasks", task_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail={"code": "TASK_NOT_FOUND", "message": task_id})
+    if not await services.orchestrator.nudge(task_id, str(payload.get("message", ""))):
+        raise HTTPException(status_code=422, detail={"code": "NUDGE_EMPTY", "message": "message is required"})
+    return TaskRecord.model_validate(doc)
+
+
 @router.delete("/{task_id}")
 async def delete_task(task_id: str, services: ServicesDep) -> dict:
     deleted = await services.store.delete("tasks", task_id)

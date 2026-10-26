@@ -52,10 +52,40 @@ def test_screen_context_uses_super(router: ModelRouter) -> None:
 @pytest.mark.asyncio
 async def test_remember_produces_memory_step(planner: Planner) -> None:
     plan = await planner.plan(
-        "remember that this project uses Zilliz for long-term memory", ContextBundle()
+        "remember that this project uses SQLite for long-term memory", ContextBundle()
     )
     assert any(step.action.tool == "remember" for step in plan.steps)
     assert plan.degraded  # offline path in tests
+
+
+def test_denying_inlined_attachment_content_is_detected(planner: Planner) -> None:
+    """"No description was provided" is wrong when the description IS in the bundle — and must
+    keep being accepted when the vision read genuinely failed, where the denial is the truth."""
+    from app.schemas import ActionSpec, AttachmentBlock, Plan, PlanStep
+
+    read = ContextBundle(
+        attachments=[
+            AttachmentBlock(name="diagram.png", kind="image", mime="image/png", bytes=10, text="This image shows: boxes and arrows")
+        ]
+    )
+    unread = ContextBundle(
+        attachments=[AttachmentBlock(name="diagram.png", kind="image", mime="image/png", bytes=10, text="")]
+    )
+    denied = Plan(summary="I cannot describe the image because no visual description was provided.")
+    honest = Plan(summary="I could not read this image: the vision provider is unavailable.")
+    answered = Plan(summary="The image shows boxes and arrows connected in a cycle.")
+    with_steps = Plan(
+        summary="no visual description was provided; I will open the file instead",
+        steps=[PlanStep(index=0, reason="look", action=ActionSpec(tool="fs_list", params={}))],
+    )
+
+    assert planner._denies_inlined_content(denied, read) is True
+    # Content was never read: saying so is correct, and a retry would only invite invention.
+    assert planner._denies_inlined_content(denied, unread) is False
+    assert planner._denies_inlined_content(honest, read) is False
+    assert planner._denies_inlined_content(answered, read) is False
+    # A plan that does work is not this failure mode at all.
+    assert planner._denies_inlined_content(with_steps, read) is False
 
 
 @pytest.mark.asyncio

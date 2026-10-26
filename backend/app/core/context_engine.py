@@ -47,6 +47,8 @@ class ContextRequestData:
     question: str = ""
     #: Files and images the user attached to this message (validated by the API, decoded here).
     attachments: list[Any] = field(default_factory=list)
+    #: Which conversation this turn belongs to — the key that lets prior turns reach the prompt.
+    conversation_id: str = ""
 
 
 class ContextEngine:
@@ -62,6 +64,7 @@ class ContextEngine:
         runtime: Any = None,
         identity: Any = None,
         canonical: Any = None,
+        sessions: Any = None,
     ) -> None:
         self.settings = settings or get_settings()
         self.memory = memory
@@ -74,6 +77,8 @@ class ContextEngine:
         # be *found* first.
         self.identity = identity
         self.canonical = canonical
+        #: Conversation history. Without it the planner sees one isolated request per turn.
+        self.sessions = sessions
         self.bus = bus or get_event_bus()
 
     # ------------------------------------------------------------------ screen
@@ -142,7 +147,17 @@ class ContextEngine:
                 text, engine = await vision_transcribe(
                     item.data,
                     self.settings,
-                    "Describe this image in detail. If it contains text, transcribe it verbatim first.",
+                    "Describe this image in detail. If it contains text, transcribe it verbatim first. "
+                    "Begin your reply with 'This image shows:' and then give the description directly — "
+                    "another model will read only your reply, so do not discuss what you are about to do.",
+                )
+                # An unreadable attachment is otherwise invisible: the planner just sees a line
+                # with no description and the operator has no way to tell why.
+                logger.info(
+                    "attachment %s: vision engine=%s, %d chars of description",
+                    item.name,
+                    engine,
+                    len(text),
                 )
                 try:
                     ref = save_ephemeral(item.data, self.settings)
@@ -267,6 +282,16 @@ class ContextEngine:
 
         attachments = await self.build_attachment_context(request.attachments)
 
+        session_summary = ""
+        history: list[Any] = []
+        if self.sessions is not None and request.conversation_id:
+            try:
+                buffer = await self.sessions.buffer(request.conversation_id)
+                session_summary = buffer.summary
+                history = buffer.turns
+            except Exception as exc:  # noqa: BLE001 - history is context, never a dependency
+                logger.info("session history unavailable (%s)", exc)
+
         bundle = ContextBundle(
             task_id=task_id,
             user_message=request.message,
@@ -279,6 +304,8 @@ class ContextEngine:
             recent_activity=recent,
             standing_rules=standing_rules,
             canonical_facts=canonical_facts,
+            session_summary=session_summary,
+            history=history,
         )
         await self.bus.emit(
             EventType.CONTEXT_BUILT,
@@ -289,6 +316,8 @@ class ContextEngine:
                 + (f", {len(open_tasks)} open tasks" if open_tasks else "")
                 + (f", {len(standing_rules)} standing rules" if standing_rules else "")
                 + (f", {len(canonical_facts)} canonical facts" if canonical_facts else "")
+                + (f", {len(history)} prior turns" if history else "")
+                + (", session summary" if session_summary else "")
             ),
             task_id=task_id,
             latency_ms=int((time.perf_counter() - started) * 1000),

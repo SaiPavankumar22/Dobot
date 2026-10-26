@@ -78,7 +78,6 @@ class _Env:
             "NEBIUS_PROJECT_ID": "",
             "TAVILY_API_KEY": "",
             "MONGODB_URI": "",
-            "ZILLIZ_URI": "",
             "SANDBOX_PROVIDER": "local",
             "AGENT_RUNTIME": "local",
             "SHADOW_MODE": "false",
@@ -107,11 +106,21 @@ class _Env:
         from app.config import reset_settings_cache
 
         reset_settings_cache()
+        # …and neither may the machine's credential store. ``build_services`` calls
+        # ``local_secrets.hydrate()``, which happily resurrects NEBIUS_API_KEY from the OS keyring
+        # right after the pin above cleared it — so the "offline" suite silently called a live
+        # provider, paid for it, and then failed on whatever state that left behind. Same pin as
+        # tests/conftest.py: an eval must measure Dobot, not a third party's uptime.
+        from unittest.mock import patch
+
+        self._keyring = patch("app.security.local_secrets._keyring", lambda: None)
+        self._keyring.start()
         return self
 
     def __exit__(self, *_exc: object) -> None:
         from app.config import reset_settings_cache
 
+        self._keyring.stop()
         for key, value in self._saved.items():
             if value is None:
                 os.environ.pop(key, None)

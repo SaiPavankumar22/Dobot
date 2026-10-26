@@ -26,8 +26,9 @@ def test_keys_are_listed_masked(client) -> None:
     test_client, _env = client
     body = test_client.get("/settings/keys").json()
     ids = {key["id"] for key in body["keys"]}
-    # Exactly the keys a person brings for themselves — nothing infrastructure-shaped.
-    assert ids == {"nebius", "tavily", "novita", "zilliz_token", "zilliz_uri"}
+    # Exactly the keys a person brings for themselves — nothing infrastructure-shaped. Semantic
+    # memory runs on the local index, so there is no hosted vector database to configure.
+    assert ids == {"nebius", "tavily", "novita"}
     for key in body["keys"]:
         assert "value" not in key  # raw secrets never cross the boundary
         assert isinstance(key["set"], bool)
@@ -114,8 +115,7 @@ def test_empty_value_is_rejected(client) -> None:
 
 def test_uri_fields_can_be_set(client) -> None:
     test_client, _env_path = client
-    uri = "https://in03-abc.serverless.gcp-us-west1.cloud.zilliz.com"
-    response = test_client.put("/settings/keys/zilliz_uri", json={"value": uri})
-    assert response.status_code == 200
-    assert response.json()["kind"] == "uri"
-    assert test_client.app.state.services.settings.zilliz_uri == uri
+    # No URI-shaped keys remain, so anything of that shape is unknown — and an unknown key must be
+    # refused rather than silently accepted.
+    response = test_client.put("/settings/keys/zilliz_uri", json={"value": "https://example.invalid"})
+    assert response.status_code == 404

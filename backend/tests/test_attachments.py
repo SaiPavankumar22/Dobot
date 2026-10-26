@@ -115,8 +115,25 @@ def test_attachments_reach_the_prompt_before_everything_else() -> None:
     assert "[ATTACHMENTS" in rendered
     assert "the answer is 42" in rendered
     assert "IMAGE shot.png" in rendered and "a red square" in rendered
+    # The image description is a block of its own, so a reader cannot mistake it for trailing prose.
+    assert "--- IMAGE shot.png" in rendered
     # They are rendered above memory/screen/etc, so a long context cannot cut them first.
     assert rendered.index("[ATTACHMENTS") < rendered.index("[ENVIRONMENT]")
+
+
+def test_planner_is_told_not_to_hunt_for_attachments() -> None:
+    """The planner sees attachment content inline; it must answer from it, not go looking.
+
+    Regression: asked "tell me about the attached image", the planner looked at its tool list
+    instead of the inlined vision description and planned list-files → open-image-viewer →
+    capture-screen, which then failed — while the picture was already described in its context.
+    """
+    from app.core.planner import PLANNER_SYSTEM
+
+    assert "[ATTACHMENTS]" in PLANNER_SYSTEM
+    assert "never plan steps that" in PLANNER_SYSTEM
+    # Matched on one line: the prompt wraps the sentence, so a phrase spanning the wrap would miss.
+    assert "no path on the user's disk to act on" in PLANNER_SYSTEM
 
 
 # ------------------------------------------------------------------ API

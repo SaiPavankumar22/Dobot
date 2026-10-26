@@ -106,7 +106,7 @@ def delete(name: str, state_dir: Path) -> None:
 
 def hydrate(settings: Any) -> None:
     """Load local keys only when environment configuration did not provide one."""
-    for field in ("nebius_api_key", "tavily_api_key", "novita_api_key", "zilliz_token", "zilliz_uri"):
+    for field in ("nebius_api_key", "tavily_api_key", "novita_api_key"):
         configured = str(getattr(settings, field, "") or "").strip()
         stored = get(field, settings.state_dir)
         if configured and not stored:

@@ -23,9 +23,9 @@ async def memory(settings, bus) -> MemoryManager:
 @pytest.mark.asyncio
 async def test_remember_then_recall(memory: MemoryManager) -> None:
     record = await memory.remember(
-        "Dobot uses Zilliz for long-term memory", type=MemoryType.FACT, importance=0.8
+        "Dobot uses a local vector index for long-term memory", type=MemoryType.FACT, importance=0.8
     )
-    hits = await memory.recall("Zilliz long-term memory", limit=3)
+    hits = await memory.recall("local vector index long-term memory", limit=3)
     assert hits
     assert hits[0].memory.id == record.id
     assert hits[0].score > 0.2
@@ -35,7 +35,7 @@ async def test_remember_then_recall(memory: MemoryManager) -> None:
 @pytest.mark.asyncio
 async def test_recall_ignores_unrelated_memories(memory: MemoryManager) -> None:
     await memory.remember("The user prefers Python for backend work", type=MemoryType.PREFERENCE)
-    hits = await memory.recall("Zilliz long-term memory vector database", limit=5)
+    hits = await memory.recall("local vector index long-term memory", limit=5)
     assert all("Python" not in hit.memory.content for hit in hits)
 
 

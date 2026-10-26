@@ -74,7 +74,11 @@ REVERSIBLE_TOOLS = {
 PLANNER_SYSTEM = """You are Dobot's planner. You run on the user's own computer and can act on it.
 
 Rules:
-1. Understand the user's real intent, including the selected screen context if present.
+1. Understand the user's real intent, including the selected screen context if present. CONTEXT
+   also carries this conversation's recent turns and a summary of the older ones — resolve
+   pronouns and follow-ups ("explain it", "do that", "the second one", "in detail") from them and
+   answer what was actually asked. Never ask the user to repeat something they already said, and
+   never substitute a different topic just because it appears in MEMORY or SKILLS.
 2. Use the smallest set of steps that accomplishes it. Prefer reading over writing, moving over deleting.
 3. Never invent tools. Use only the tools listed below.
 4. Prefer archiving/organising over deleting. Never delete more than the user explicitly asked for.
@@ -115,6 +119,16 @@ Rules:
 11. Do the part you can. If a request has several parts and one needs an unavailable runtime,
     still plan the steps that work (e.g. open the browser at the page), then say plainly which
     part is blocked and why. Do not skip to a no-steps answer when there are steps you can run.
+12. Attachments arrive already decoded and inlined in CONTEXT under [ATTACHMENTS]: for a file
+    that section carries the file's contents, and for an image the lines after the IMAGE header
+    are what the vision model read out of the picture — that text IS the image's content, so the
+    request can be answered from it directly. The bytes exist only inside this prompt — there is
+    no path on the user's disk to act on — so never plan steps that list, find, open, view,
+    screenshot or otherwise re-acquire an attached file. "Tell me about the attached image" is a
+    question: answer it from that content, with no steps (rule 7). Those lines may read as the
+    vision model thinking aloud — they are still the picture's content: never claim no description
+    was provided while that block exists. If the IMAGE header says it was NOT read, say so plainly
+    and name the reason instead of inventing a workflow to obtain it.
 
 Reply with ONLY a JSON object:
 {
@@ -141,6 +155,21 @@ Available tools:
 """
 
 STEP_SCHEMA_HINT = {"tool": "string", "params": "object", "description": "string", "expected": "string"}
+
+#: How the model phrases "the attachment content is not here". It is the wrong answer when the
+#: content IS inlined — and the right one when the vision read genuinely failed, which is why the
+#: detector is always paired with a check that inlined content actually exists.
+DENIES_ATTACHMENT_CONTENT = re.compile(
+    r"(?i)(?:"
+    r"no (?:visual )?description(?: lines?)? (?:was |were )?(?:provided|included|available|follows)"
+    r"|no descriptive text follows"
+    r"|(?:did|does) not (?:include|contain|provide|output|produce)\w* (?:any )?(?:descriptive text|description|content)\b"
+    r"|not been read by the vision"
+    r"|unable to (?:describe|view|interpret) the attached"
+    r"|cannot provide details about what"
+    r"|(?:visual )?content was not provided"
+    r")"
+)
 
 
 class Planner:
@@ -235,6 +264,14 @@ class Planner:
             prompt_parts.append(f"CONTEXT:\n{compression.text}")
         if extra_instruction:
             prompt_parts.append(extra_instruction)
+        if bundle.attachments:
+            # Placed last, next to the question: the system rule alone left the model free to
+            # conclude "no description was provided" while it sat in its own context.
+            prompt_parts.append(
+                "The [ATTACHMENTS] block in CONTEXT above already holds each attachment's content "
+                "(for an image: what the vision model read out of the picture). Answer from it "
+                "directly — no steps for it, and do not claim the content is missing."
+            )
         prompt_parts.append(
             "Respond with the JSON object only."
         )
@@ -267,7 +304,9 @@ class Planner:
             )
         if response.degraded:
             logger.info("planning degraded to offline rules (model unreachable)")
-            plan = self._offline_plan(message, bundle)
+            # A key was configured and the call failed: this is a broken provider, not the
+            # documented keyless mode, so the offline rules may only refuse — not report success.
+            plan = self._offline_plan(message, bundle, model_failed=True)
             plan.degraded = True
             plan.raw = response.content
             return plan
@@ -278,14 +317,61 @@ class Planner:
             # carries no plan at all. Falling through to _from_payload would yield an empty plan
             # that the final-answer pass then describes as if the work had happened.
             logger.warning("planner returned unparsable JSON; using offline rules")
-            plan = self._offline_plan(message, bundle)
+            plan = self._offline_plan(message, bundle, model_failed=True)
             plan.degraded = True
             plan.raw = response.content[:2000]
             return plan
         plan = self._from_payload(payload)
         plan.used_model = response.model
         plan.raw = response.content[:4000]
+        if self._denies_inlined_content(plan, bundle):
+            # The content verifiably sits in the CONTEXT rendered above, yet this sample claims it
+            # is missing (seen with the super tier: "no visual description was provided" while the
+            # description was in its own prompt). One corrective retry — and only then: a denial
+            # for an image the vision model failed to read is correct and must stand.
+            logger.info("planner denied attachment content that is inlined; retrying once")
+            inlined = "\n\n".join(
+                f"--- {block.name} ({block.kind}) ---\n{block.text}"
+                for block in bundle.attachments
+                if block.text
+            )
+            retry = await self.reasoner.chat(
+                [
+                    {"role": "system", "content": self.system_prompt},
+                    {
+                        "role": "user",
+                        "content": "\n\n".join(prompt_parts)
+                        + "\n\nCORRECTION: the content of this message's attachments IS part of "
+                        "this request and is reproduced below exactly as it was read (images by "
+                        "the vision model). Answer the user's question from it; do not claim it "
+                        "is missing."
+                        + (f"\n\n{inlined}" if inlined else ""),
+                    },
+                ],
+                tier=tier,
+                json_mode=True,
+                max_tokens=PLANNER_MAX_TOKENS * 2,
+                thinking=(tier is not ModelTier.LIGHT),
+            )
+            if not retry.degraded:
+                retry_payload = retry.json()
+                if retry_payload and (recognised & set(retry_payload)):
+                    candidate = self._from_payload(retry_payload)
+                    candidate.used_model = retry.model
+                    candidate.raw = retry.content[:4000]
+                    if not self._denies_inlined_content(candidate, bundle):
+                        plan = candidate
         return plan
+
+    def _denies_inlined_content(self, plan: Plan, bundle: ContextBundle) -> bool:
+        """True when the plan calls an attachment's content missing although it was inlined.
+
+        A plan that does actual work is a different failure mode; a bundle with nothing readable
+        in it means the denial is honest and must not be second-guessed.
+        """
+        if plan.steps or not any(block.text for block in bundle.attachments):
+            return False
+        return bool(DENIES_ATTACHMENT_CONTENT.search(f"{plan.summary} {plan.answer} {plan.reasoning}"))
 
     # ------------------------------------------------------------------ parsing
 
@@ -402,7 +488,16 @@ class Planner:
 
     # ------------------------------------------------------------------ offline
 
-    def _offline_plan(self, message: str, bundle: ContextBundle) -> Plan:
+    def _offline_plan(
+        self, message: str, bundle: ContextBundle, *, model_failed: bool = False
+    ) -> Plan:
+        """Deterministic rules, used when there is no model to ask.
+
+        ``model_failed`` distinguishes the two ways one gets here: no key configured (the documented
+        keyless mode — the rules do their best and that is a finished run) versus a configured model
+        that was called and could not answer (the rules can only refuse, and calling it COMPLETED
+        would report an outage as success).
+        """
         text = message.strip()
         lowered = text.lower()
         steps: list[PlanStep] = []
@@ -410,6 +505,7 @@ class Planner:
         intent = text[:200]
         needs_research = False
         research_query = ""
+        unanswered = False
 
         def add(tool: str, params: dict[str, Any], description: str, expected: str = "") -> None:
             steps.append(
@@ -603,6 +699,7 @@ class Planner:
                     "Offline mode: Nemotron is unreachable, so I cannot reason about this request yet. "
                     "Check NEBIUS_API_KEY and the endpoint, then try again."
                 )
+            unanswered = model_failed
 
         return Plan(
             intent=intent,
@@ -614,6 +711,7 @@ class Planner:
             research_query=research_query,
             confidence=0.3,
             degraded=True,
+            unanswered=unanswered,
         )
 
     @staticmethod

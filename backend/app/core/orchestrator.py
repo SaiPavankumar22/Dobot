@@ -11,6 +11,7 @@ external dependency is the event bus, so the desktop client can disconnect and r
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -59,6 +60,12 @@ logger = get_logger(__name__)
 MAX_RETRIES = 1
 RETRY_DELAY_SECONDS = 1.5
 MAX_REPLANS = 1
+MAX_TOTAL_ATTEMPTS = 12
+IDEMPOTENT_TOOLS = {
+    "fs_list", "fs_read", "browser_navigate", "browser_read", "browser_snapshot",
+    "screen_capture", "screen_analyze", "tavily_search", "tavily_research",
+    "deep_research", "app_open",
+}
 
 
 class ResumableState(BaseModel):
@@ -77,6 +84,8 @@ class ResumableState(BaseModel):
     approval_pending: str | None = None
     rejected: list[str] = field(default_factory=list)
     replans: int = 0
+    failure_signatures: dict[str, int] = {}
+    total_attempts: int = 0
 
 
 @dataclass
@@ -119,11 +128,20 @@ class Orchestrator:
         self._locks: dict[str, asyncio.Lock] = {}
         self._background_tasks: set[asyncio.Task[None]] = set()
         self._graph: Any = None  # compiled lifecycle graph, built once per orchestrator
+        self._paused: set[str] = set()
+        self._resume_events: dict[str, asyncio.Event] = {}
+        self._nudges: dict[str, str] = {}
 
     # ------------------------------------------------------------------ helpers
 
     def _lock(self, task_id: str) -> asyncio.Lock:
         return self._locks.setdefault(task_id, asyncio.Lock())
+
+    def _workspace_for(self, task_id: str) -> str:
+        """Per-task write root under state_dir/workspaces/{task_id}."""
+        ws = self.s.settings.state_dir / "workspaces" / task_id
+        ws.mkdir(parents=True, exist_ok=True)
+        return str(ws)
 
     def _tool_context(self, task_id: str, token) -> ToolContext:
         s = self.s
@@ -143,6 +161,7 @@ class Orchestrator:
             hermes=s.runtime,
             browser=s.browser,
             process_supervisor=getattr(s, "process_supervisor", None),
+            workspace_root=self._workspace_for(task_id),
         )
 
     async def _persist(self, task: TaskRecord) -> None:
@@ -182,6 +201,7 @@ class Orchestrator:
     async def submit(self, request: ChatRequest, *, automation_id: str | None = None) -> ChatResponse:
         """Run a request to completion (or to its first approval gate) and return the result."""
         task = self._new_task(request)
+        await self._record_user(task, request.message)
         token = get_kill_switch().register(task.id, asyncio.current_task())
         try:
             await self._run(task, request, token, automation_id=automation_id)
@@ -200,6 +220,7 @@ class Orchestrator:
     async def submit_background(self, request: ChatRequest, *, automation_id: str | None = None) -> str:
         """Start a task and return immediately; progress streams over the event bus."""
         task = self._new_task(request)
+        await self._record_user(task, request.message)
         task.background = True
         task.status = TaskStatus.PENDING
         await self._persist(task)
@@ -251,9 +272,87 @@ class Orchestrator:
         await self.s.bus.set_dot_status(DotStatus.KILLED, "stopped by user")
         return killed
 
+    async def pause(self, task_id: str) -> bool:
+        if not get_kill_switch().is_active(task_id):
+            return False
+        self._paused.add(task_id)
+        self._resume_events.setdefault(task_id, asyncio.Event()).clear()
+        task = await self.s.store.get("tasks", task_id)
+        if task:
+            task["status"] = TaskStatus.PAUSED.value
+            task["error"] = "paused by user"
+            await self.s.store.insert("tasks", task)
+        await self.s.bus.emit(EventType.TASK_UPDATED, message="Task paused", task_id=task_id)
+        return True
+
+    async def resume(self, task_id: str) -> bool:
+        self._paused.discard(task_id)
+        self._resume_events.setdefault(task_id, asyncio.Event()).set()
+        await self.s.bus.emit(EventType.TASK_UPDATED, message="Task resumed", task_id=task_id)
+        return True
+
+    async def nudge(self, task_id: str, message: str) -> bool:
+        if not message.strip():
+            return False
+        self._nudges[task_id] = message.strip()[:1000]
+        await self.s.bus.emit(EventType.NOTIFICATION, message=self._nudges[task_id], task_id=task_id, nudge=True)
+        return True
+
     async def run_automation(self, prompt: str, automation_id: str) -> None:
-        request = ChatRequest(message=prompt, background=True, source=f"automation:{automation_id}")
+        # Scheduled work gets its own conversation, so a recurring job cannot dump its turns into
+        # the interactive chat — but its history is still durable and still reaches the planner.
+        request = ChatRequest(
+            message=prompt,
+            background=True,
+            source=f"automation:{automation_id}",
+            conversation_id=f"auto-{automation_id}",
+        )
         await self.submit(request, automation_id=automation_id)
+
+    # ------------------------------------------------------------------ session turns
+
+    async def _record_user(self, task: TaskRecord, message: str) -> None:
+        """Persist the user's turn before anything runs — a request that dies still happened."""
+        sessions = getattr(self.s, "sessions", None)
+        if sessions is None:
+            return
+        try:
+            await sessions.record(task.conversation_id, "user", message, task_id=task.id)
+        except Exception as exc:  # noqa: BLE001 - a transcript write must never fail a request
+            logger.info("could not record user turn (%s)", exc)
+
+    async def _record_assistant(self, task: TaskRecord) -> None:
+        """Persist the answer, then fold old turns into the rolling summary."""
+        sessions = getattr(self.s, "sessions", None)
+        if sessions is None or not task.answer:
+            return
+        try:
+            await sessions.record(
+                task.conversation_id, "dobot", task.answer,
+                task_id=task.id, status=task.status.value,
+            )
+            await sessions.compact(task.conversation_id)
+        except Exception as exc:  # noqa: BLE001
+            logger.info("could not record assistant turn (%s)", exc)
+
+    async def _session_context(self, task: TaskRecord) -> str:
+        """What the answer pass needs to refer back to: the summary plus the newest turns."""
+        sessions = getattr(self.s, "sessions", None)
+        if sessions is None:
+            return ""
+        try:
+            buffer = await sessions.buffer(task.conversation_id)
+        except Exception:  # noqa: BLE001
+            return ""
+        if buffer.empty:
+            return ""
+        lines: list[str] = []
+        if buffer.summary:
+            lines.append(f"Earlier in this conversation: {buffer.summary}")
+        for turn in buffer.turns[-4:]:
+            speaker = "User" if turn.role == "user" else "Dobot"
+            lines.append(f"{speaker}: {turn.content[:400]}")
+        return "\n".join(lines)
 
     # ------------------------------------------------------------------ the loop
 
@@ -296,6 +395,7 @@ class Orchestrator:
         await s.bus.set_dot_status(DotStatus.THINKING, "understanding your request")
         context_request = s.context_request_factory(
             message=state["message"],
+            conversation_id=state.get("conversation_id", ""),
             region=state.get("region"),
             image_base64=state.get("image_base64"),
             attachments=state.get("attachments") or [],
@@ -462,6 +562,7 @@ class Orchestrator:
         state = new_lifecycle_state(
             task_id=task.id,
             message=request.message,
+            conversation_id=request.conversation_id,
             mode=mode,
             shadow=shadow,
             automation_id=automation_id,
@@ -487,6 +588,16 @@ class Orchestrator:
         for step in plan.steps:
             if step.id in state.executed:
                 continue
+            if task.id in self._paused:
+                task.status = TaskStatus.PAUSED
+                task.result = {"state": state.model_dump(mode="json")}
+                await self._persist(task)
+                await self._resume_events.setdefault(task.id, asyncio.Event()).wait()
+                self._resume_events[task.id].clear()
+                task.status = TaskStatus.IN_PROGRESS
+            nudge = self._nudges.pop(task.id, "")
+            if nudge:
+                state.message = f"{state.message}\nUser nudge: {nudge}"
             decision = state.decisions.get(step.id)
             if decision is None:
                 decision = await s.decision.evaluate_step(
@@ -649,8 +760,24 @@ class Orchestrator:
 
         attempt = 0
         result: ExecutionResult | None = None
-        while attempt <= MAX_RETRIES:
+        retry_allowed = step.action.tool in IDEMPOTENT_TOOLS
+        while attempt <= (MAX_RETRIES if retry_allowed else 0):
             ctx.check_cancelled()
+            state.total_attempts += 1
+            if state.total_attempts > MAX_TOTAL_ATTEMPTS:
+                step.status = StepStatus.FAILED
+                step.error = f"stuck loop: exceeded {MAX_TOTAL_ATTEMPTS} total attempts"
+                await s.bus.emit(
+                    EventType.STUCK,
+                    message=step.error,
+                    task_id=task.id,
+                    step_id=step.id,
+                    tool=step.action.tool,
+                )
+                return StepRun(
+                    step=step,
+                    result=ExecutionResult(ok=False, tool=step.action.tool, error=step.error),
+                )
             step.status = StepStatus.RUNNING
             await s.bus.emit(
                 EventType.EXECUTION_STARTED,
@@ -667,7 +794,26 @@ class Orchestrator:
             if result.ok:
                 break
             analysis = s.verifier.analyse_failure(result)
-            if analysis.retry_recommended and attempt < MAX_RETRIES:
+            signature = hashlib.sha256(
+                json.dumps(
+                    [step.action.tool, step.action.params, analysis.category, result.error or ""],
+                    sort_keys=True,
+                    default=str,
+                ).encode()
+            ).hexdigest()[:16]
+            state.failure_signatures[signature] = state.failure_signatures.get(signature, 0) + 1
+            repeated = state.failure_signatures[signature] >= 2
+            if repeated:
+                await s.bus.emit(
+                    EventType.STUCK,
+                    message=f"Stopped after repeating the same failure in {step.action.tool}",
+                    task_id=task.id,
+                    step_id=step.id,
+                    tool=step.action.tool,
+                    signature=signature,
+                )
+                break
+            if retry_allowed and analysis.retry_recommended and attempt < MAX_RETRIES:
                 attempt += 1
                 step.status = StepStatus.RETRYING
                 task.status = TaskStatus.RETRYING
@@ -805,7 +951,7 @@ class Orchestrator:
         return await self._response(task)
 
     async def _finalise_status_after_resume(self, task: TaskRecord, state: ResumableState) -> None:
-        if task.status in {TaskStatus.WAITING_APPROVAL, TaskStatus.CANCELLED}:
+        if task.status in {TaskStatus.WAITING_APPROVAL, TaskStatus.CANCELLED, TaskStatus.PAUSED}:
             return
         if task.status is not TaskStatus.COMPLETED and task.status is not TaskStatus.FAILED:
             await self._finalise_success(task, state.plan, state, [])
@@ -828,6 +974,22 @@ class Orchestrator:
             task.error = next(
                 (step.error for step in steps if step.status is StepStatus.FAILED), "step failed"
             )
+        elif verification.failed_checks:
+            # One or more verification checks explicitly failed — the task outcome is unreliable
+            # even if all steps reported COMPLETED. Never call a task done when checks say otherwise.
+            task.status = TaskStatus.FAILED
+            task.error = (
+                "completion could not be independently verified: "
+                + verification.summary_line()
+            )
+        elif plan.unanswered and not any(
+            step.status in {StepStatus.COMPLETED, StepStatus.FAILED} for step in steps
+        ):
+            # The model was configured, was called, and produced nothing usable — so the offline
+            # rules had to refuse. Calling that COMPLETED is what made a dead provider look like a
+            # finished task; keyless offline mode still completes, because that is by design.
+            task.status = TaskStatus.FAILED
+            task.error = "the reasoning model could not answer — check NEBIUS_API_KEY and the endpoint"
         else:
             task.status = TaskStatus.COMPLETED
 
@@ -842,6 +1004,7 @@ class Orchestrator:
             "usage": s.cost.for_task(task.id) if getattr(s, "cost", None) else None,
         }
         await self._persist(task)
+        await self._record_assistant(task)
         await s.journal.append(
             task.id,
             "completed" if task.status is TaskStatus.COMPLETED else "failed",
@@ -904,9 +1067,8 @@ class Orchestrator:
         task.steps = step_records(plan.steps)
         task.result = {"plan": plan.model_dump(mode="json"), "sources": state.sources}
         await self._persist(task)
-        await self.s.bus.emit(
-            EventType.FAILED, message=f"Task failed: {task.error}", task_id=task.id
-        )
+        await self._record_assistant(task)
+        await self.s.bus.emit(EventType.FAILED, message=f"Task failed: {task.error}", task_id=task.id)
         await self.s.bus.set_dot_status(DotStatus.ERROR, task.error or "failed")
 
     # ------------------------------------------------------------------ narration
@@ -964,6 +1126,7 @@ class Orchestrator:
         task.answer = self._shadow_answer(expanded, decisions, previews, mode)
         task.steps = step_records(expanded.steps)
         await self._persist(task)
+        await self._record_assistant(task)
         await s.journal.append(
             task.id,
             "shadow_plan",
@@ -999,6 +1162,7 @@ class Orchestrator:
         }
         task.steps = step_records(plan.steps)
         await self._persist(task)
+        await self._record_assistant(task)
         await s.bus.emit(
             EventType.FAILED,
             message="Refused: " + (task.answer.splitlines()[0][:160] if task.answer else "blocked"),
@@ -1197,26 +1361,31 @@ class Orchestrator:
         if reasoner.available:
             # Research findings are the one place raw scraped text reaches the model, so they are the
             # one place a structural trim actually pays for itself.
-            findings = research_summary
+            findings = research_summary or self._research_facts(executed, sources)
             juice = getattr(self.s, "tokenjuice", None)
             if findings and juice is not None:
                 findings = juice.compress(
                     "research-findings", findings, max_chars=2400, task_id=task.id
                 ).text
+            session_context = await self._session_context(task)
             prompt = (
                 f"The user asked: {plan.intent or task.title}\n\n"
-                "What actually happened:\n" + "\n".join(facts) + "\n\n"
+                + (f"Conversation so far:\n{session_context}\n\n" if session_context else "")
                 + (f"Research findings:\n{findings}\n\n" if findings else "")
+                + "What actually happened:\n" + "\n".join(facts) + "\n\n"
                 + (f"Draft answer from planning: {plan.answer}\n\n" if plan.answer else "")
-                + "Reply to the user in at most 120 words. Be concrete about what was done and what "
-                "was verified. If something failed or could not be verified, say so plainly. "
-                "Do not claim anything that is not in the facts above."
+                + "Write the answer the user asked for. Answer the question directly and completely "
+                "first; use the findings above rather than describing that a search happened. "
+                "Never narrate your process (\"I searched…\", \"the verification passed…\"), never "
+                "ask whether the user wants the answer, and do not claim anything the facts do not "
+                "support. If the facts are insufficient, say exactly what is missing. "
+                "Under 200 words unless the question genuinely needs more."
             )
             with cost_scope(task_id=task.id, purpose="answer"):
                 response = await reasoner.text(
                     prompt,
-                    system="You are Dobot, a desktop agent reporting back to its user. Be brief and honest.",
-                    max_tokens=400,
+                    system="You are Dobot, a desktop agent. Answer your user directly, briefly and honestly.",
+                    max_tokens=700,
                     # The answer is a summary of facts already gathered; a thinking trace here is
                     # pure latency on the most user-visible step of the whole loop.
                     thinking=False,
@@ -1239,6 +1408,29 @@ class Orchestrator:
                 for index, source in enumerate(sources[:6], start=1)
             )
         return "\n".join(lines)
+
+    @staticmethod
+    def _research_facts(steps: list[PlanStep], sources: list[dict]) -> str:
+        """Raw material for synthesis when the plan searched but ran no research pass.
+
+        ``_summarise_output`` reduces a search to "found 10 sources", which is all the narrator used
+        to see — the results themselves never reached it, so it could only report that a search had
+        happened. This hands the snippets over so the answer can actually be written.
+        """
+        chunks: list[str] = []
+        for step in steps:
+            output = (step.result or {}).get("output")
+            if not isinstance(output, dict):
+                continue
+            if output.get("answer"):
+                chunks.append(str(output["answer"]).strip())
+        for source in sources:
+            title = str(source.get("title") or "").strip()
+            snippet = str(source.get("snippet") or source.get("content") or "").strip()
+            chunk = "\n".join(part for part in (title, snippet) if part)
+            if chunk:
+                chunks.append(chunk)
+        return "\n\n".join(chunk for chunk in chunks if chunk)
 
     @staticmethod
     def _summarise_output(step: PlanStep, output: Any) -> str:

@@ -32,10 +32,10 @@ async def test_answer_only_request_completes_without_actions(services) -> None:
 @pytest.mark.asyncio
 async def test_remember_request_persists_memory(services) -> None:
     response = await services.orchestrator.submit(
-        ChatRequest(message="remember that this project uses Zilliz for long-term memory")
+        ChatRequest(message="remember that this project uses SQLite for long-term memory")
     )
     assert response.status is TaskStatus.COMPLETED
-    memories = await services.memory.list(search="Zilliz")
+    memories = await services.memory.list(search="SQLite")
     assert memories
     assert any(step.verification and step.verification["verified"] for step in response.plan.steps)
 

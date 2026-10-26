@@ -29,6 +29,7 @@ from app.core.planner import Planner
 from app.core.process_supervisor import ProcessSupervisor
 from app.core.router import ModelRouter
 from app.core.scheduler import Scheduler
+from app.core.sessions import SessionService
 from app.core.tokenjuice import TokenJuice, build_tokenjuice
 from app.core.trace_store import TraceStore
 from app.core.verifier import Verifier
@@ -89,6 +90,8 @@ class Services:
     voice: Voice
     #: Remembered permissions (allow once / always allow) shared by decision engine and sandbox.
     grants: GrantStore
+    #: Durable chat transcripts, the bounded message buffer and the rolling session summary.
+    sessions: SessionService
     #: Multi-user only (MULTI_USER=true): accounts, tokens, invites. None in single-user mode.
     user_manager: Any = None
     orchestrator: Any = None
@@ -108,6 +111,7 @@ class Services:
         application: str = "",
         window_title: str = "",
         attachments: list[Any] | None = None,
+        conversation_id: str = "",
     ) -> ContextRequestData:
         return ContextRequestData(
             message=message,
@@ -117,6 +121,7 @@ class Services:
             application=application,
             window_title=window_title,
             attachments=attachments or [],
+            conversation_id=conversation_id,
         )
 
     def tool_context(self, *, task_id: str = "", token: Any = None) -> ToolContext:
@@ -293,6 +298,8 @@ class Services:
             "kill_switch_hotkey": self.settings.kill_switch_hotkey,
             "active_tasks": self.kill_switch.active_ids,
             "allowed_paths": [str(path) for path in self.settings.allowed_paths],
+            "workspace_root": str(self.settings.state_dir / "workspaces"),
+            "network_allowlist": self.settings.allowed_hosts or [],
             "allowed_networks": self.settings.allowed_hosts,
             "policies": self.decision.policies.summarise(),
             "require_confirmation_for": (
@@ -510,6 +517,7 @@ async def build_services(settings: Settings | None = None, *, bus: EventBus | No
     identity = build_identity(settings)
     canonical = build_canonical_ledger(store, settings)
     journal = RunJournal(store, limit=int(getattr(settings, "run_journal_limit", 200) or 200))
+    sessions = SessionService(store, settings=settings, reasoner=reasoner)
 
     services = Services(
         settings=settings,
@@ -542,6 +550,7 @@ async def build_services(settings: Settings | None = None, *, bus: EventBus | No
             runtime=runtime,
             identity=identity,
             canonical=canonical,
+            sessions=sessions,
         ),
         tokenjuice=tokenjuice,
         cost=get_cost_ledger(),
@@ -552,12 +561,15 @@ async def build_services(settings: Settings | None = None, *, bus: EventBus | No
         identity=identity,
         interceptors=build_interceptors(settings),
         grants=grants,
+        sessions=sessions,
         consolidator=build_consolidator(
             memory=memory,
             canonical=canonical,
             identity=identity,
             settings=settings,
             journal=journal,
+            store=store,
+            reasoner=reasoner,
         ),
         voice=build_voice(settings),
         user_manager=user_manager,

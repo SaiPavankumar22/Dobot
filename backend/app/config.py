@@ -102,9 +102,22 @@ class Settings(BaseSettings):
     # --- memory --------------------------------------------------------------
     mongodb_uri: str = ""
     mongodb_db: str = "dobot"
-    zilliz_uri: str = ""
-    zilliz_token: str = ""
-    zilliz_collection: str = "dobot_memory"
+
+    # --- conversation sessions ------------------------------------------------
+    # The transcript is durable and unbounded; what reaches the model is not. These three numbers
+    # are the whole context policy: keep this many recent turns raw, in at most this many
+    # characters, and fold everything older into the rolling summary once the unsummarised tail
+    # grows past ``session_compact_after`` messages.
+    #: Recent turns handed to the planner verbatim. Follow-ups need these to resolve "it" / "that".
+    session_history_turns: int = 10
+    #: Character budget for that raw tail — a long session must not be able to blow the prompt.
+    session_history_chars: int = 4000
+    #: Cap on one stored message. The transcript is durable; it is not a context window.
+    session_message_chars: int = 8000
+    #: Unsummarised messages that trigger a compaction pass.
+    session_compact_after: int = 16
+    #: Target length of the rolling summary.
+    session_summary_chars: int = 1200
 
     # --- execution runtime: Hermes ------------------------------------------
     # local = Dobot's guarded in-process tools. cli = the `hermes` CLI. remote/api/hermes =
@@ -254,6 +267,13 @@ class Settings(BaseSettings):
     consolidation_interval_seconds: int = 21_600  # every 6 hours
     #: Promote a fact to the canonical ledger once it has been stated this many times.
     canonical_promote_after: int = 3
+    #: Pass B (LLM review): opt-in. When True the consolidator asks a cheap model to propose
+    #: near-duplicate merges, stale-fact flags, and canonical promotions. Secrets are stripped
+    #: before any prompt is built; proposals land in the 'consolidation_proposals' store table.
+    consolidation_review_enabled: bool = False
+    #: When True, pass B merges of low-importance (< 0.5) records are applied automatically
+    #: without waiting for a human to review them on the Doctor page.
+    consolidation_auto_apply_reviews: bool = False
 
     # --- identity -------------------------------------------------------------
     #: Your name and what Dobot should call you. Kept in config so the identity layer can render
@@ -428,10 +448,6 @@ class Settings(BaseSettings):
         return self.mongodb_enabled and bool(self.mongodb_uri.strip())
 
     @property
-    def has_zilliz(self) -> bool:
-        return bool(self.zilliz_uri.strip())
-
-    @property
     def secret_values(self) -> list[str]:
         """Secrets that must be redacted from logs."""
         return [
@@ -440,7 +456,6 @@ class Settings(BaseSettings):
                 self.nebius_api_key,
                 self.tavily_api_key,
                 self.novita_api_key,
-                self.zilliz_token,
                 self.dobot_api_token,
                 self.langsmith_api_key,
             )

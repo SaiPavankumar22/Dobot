@@ -189,13 +189,13 @@ async def test_remember_tool_persists_and_verifies(services) -> None:
     ctx = services.tool_context(task_id="task_remember")
     tool = RememberTool()
     result = await tool.run(
-        {"content": "Dobot uses Zilliz for long-term memory", "type": "fact", "importance": 0.8}, ctx
+        {"content": "Dobot uses a local vector index for long-term memory", "type": "fact", "importance": 0.8}, ctx
     )
     assert result.ok, result.error
     verification = await tool.verify({}, result, ctx)
     assert verification.verified
-    hits = await services.memory.recall("Zilliz long-term memory", limit=3)
-    assert hits and "Zilliz" in hits[0].memory.content
+    hits = await services.memory.recall("local vector index long-term memory", limit=3)
+    assert hits and "vector index" in hits[0].memory.content
 
 
 @pytest.mark.asyncio

@@ -123,6 +123,27 @@ async def consolidate(services: ServicesDep, dry_run: bool = False) -> dict:
     return report.as_dict()
 
 
+@router.get("/system/consolidation/proposals")
+async def consolidation_proposals(services: ServicesDep) -> dict:
+    """Review proposals from the last pass-B consolidation run (requires consolidation_review_enabled)."""
+    if services.consolidator is None:
+        return {"proposals": [], "note": "consolidator not available"}
+    proposals = services.consolidator.last_proposals
+    return {
+        "proposals": [
+            {
+                "kind": p.kind,
+                "memory_ids": p.memory_ids,
+                "content": p.content,
+                "rationale": p.rationale,
+                "auto_applicable": p.auto_applicable,
+            }
+            for p in proposals
+        ],
+        "count": len(proposals),
+    }
+
+
 @router.get("/system/journal/{task_id}")
 async def journal(services: ServicesDep, task_id: str, limit: int = 200) -> dict:
     """The ordered, replayable record of what a task did, read back from disk."""

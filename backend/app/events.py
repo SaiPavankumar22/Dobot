@@ -37,6 +37,7 @@ class EventType(str, Enum):
     TOOL_COMPLETED = "tool_completed"
     VERIFICATION = "verification"
     RETRYING = "retrying"
+    STUCK = "stuck"
     RECOVERY_REQUIRED = "recovery_required"
     MEMORY_WRITTEN = "memory_written"
     RESEARCH_PROGRESS = "research_progress"

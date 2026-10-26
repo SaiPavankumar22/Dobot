@@ -1,20 +1,37 @@
 """Vector index for semantic memory.
 
-Live path: Zilliz (Milvus-compatible). Fallback: an in-process cosine index, which is plenty for a
-single user's memory and keeps the system runnable with zero infrastructure.
+Local-only, by design. The Zilliz/Milvus path was removed rather than left half-configured: an
+optional dependency nobody switches on is a second code path that is never exercised, and this
+index is plenty for one person's memories with zero infrastructure.
+
+The index is *derived* data — every vector can be regenerated from the memory it belongs to — but it
+still has to survive a restart. The retriever only ever asks the index, never the record store, so an
+index that came back empty after a reboot would silently switch semantic recall off while every
+other part of the system still looked healthy. Hence the deliberate flush policy below: the
+transcript and the memories are the source of truth, and this file is a rebuildable cache that must
+not be lost casually.
 """
 
 from __future__ import annotations
 
+import json
+import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Protocol
 
 import numpy as np
 
-from app.config import Settings, get_settings
 from app.logging_setup import get_logger
 
 logger = get_logger(__name__)
+
+#: Flush at most this often during a burst of writes; `close()` always flushes what is left.
+SAVE_INTERVAL_SECONDS = 2.0
+#: …unless this many mutations have piled up, which bounds loss on a crash to one small batch.
+SAVE_AFTER_MUTATIONS = 25
+#: Cosine ranking on unit vectors does not need float32's full repr; this keeps the file small.
+VECTOR_DECIMALS = 5
 
 
 @dataclass
@@ -41,23 +58,95 @@ class VectorStore(Protocol):
 
 
 class LocalVectorStore:
-    """Cosine similarity index held in memory."""
+    """Cosine similarity index held in memory and flushed to a local JSON file.
+
+    Constructed with no ``path`` it is purely in-process, which is what the unit tests want.
+    """
 
     name = "local-vectors"
 
-    def __init__(self) -> None:
+    def __init__(self, path: Path | None = None) -> None:
+        self.path = path
         self._vectors: dict[str, np.ndarray] = {}
         self._metadata: dict[str, dict[str, Any]] = {}
+        self._loaded = path is None
+        self._mutations = 0
+        self._last_save = 0.0
+
+    # ------------------------------------------------------------------ persistence
+
+    def _load(self) -> None:
+        if self._loaded:
+            return
+        self._loaded = True
+        if self.path is None or not self.path.exists():
+            return
+        try:
+            payload = json.loads(self.path.read_text(encoding="utf-8"))
+        except Exception as exc:  # noqa: BLE001 - a corrupt index must not stop the app booting
+            logger.warning("could not read the vector index (%s); starting empty", exc)
+            return
+        for entry in payload.get("entries") or []:
+            doc_id = str(entry.get("id") or "")
+            vector = entry.get("vector") or []
+            if not doc_id or not isinstance(vector, list) or not vector:
+                continue
+            array = np.asarray(vector, dtype=np.float32)
+            norm = float(np.linalg.norm(array))
+            self._vectors[doc_id] = array / norm if norm else array
+            metadata = entry.get("metadata")
+            if isinstance(metadata, dict):
+                self._metadata[doc_id] = metadata
+
+    def _write(self) -> None:
+        if self.path is None:
+            return
+        payload = {
+            "version": 1,
+            "entries": [
+                {
+                    "id": doc_id,
+                    "vector": np.round(vector, VECTOR_DECIMALS).tolist(),
+                    "metadata": self._metadata.get(doc_id, {}),
+                }
+                for doc_id, vector in self._vectors.items()
+            ],
+        }
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            # Write beside the target then rename: a crash mid-write must not truncate the last
+            # good index, because there is nothing else to rebuild it from until the next embed.
+            temporary = self.path.with_suffix(f"{self.path.suffix}.tmp")
+            temporary.write_text(json.dumps(payload), encoding="utf-8")
+            temporary.replace(self.path)
+        except Exception as exc:  # noqa: BLE001 - failing to cache is not failing to serve
+            logger.warning("could not persist the vector index (%s)", exc)
+            return
+        self._mutations = 0
+        self._last_save = time.monotonic()
+
+    def _maybe_save(self) -> None:
+        if self.path is None or self._mutations == 0:
+            return
+        aged_out = (time.monotonic() - self._last_save) >= SAVE_INTERVAL_SECONDS
+        if self._mutations >= SAVE_AFTER_MUTATIONS or aged_out:
+            self._write()
+
+    # ------------------------------------------------------------------ VectorStore
 
     async def upsert(self, doc_id: str, vector: list[float], metadata: dict[str, Any]) -> None:
+        self._load()
         array = np.asarray(vector, dtype=np.float32)
         norm = float(np.linalg.norm(array))
         self._vectors[doc_id] = array / norm if norm else array
         self._metadata[doc_id] = dict(metadata)
+        self._mutations += 1
+        self._maybe_save()
 
     async def search(
         self, vector: list[float], limit: int = 6, filters: dict[str, Any] | None = None
     ) -> list[VectorHit]:
+        self._load()
         if not self._vectors:
             return []
         query = np.asarray(vector, dtype=np.float32)
@@ -76,156 +165,33 @@ class LocalVectorStore:
         return hits[:limit]
 
     async def delete(self, doc_id: str) -> bool:
+        self._load()
         self._metadata.pop(doc_id, None)
-        return self._vectors.pop(doc_id, None) is not None
+        removed = self._vectors.pop(doc_id, None) is not None
+        if removed:
+            self._mutations += 1
+            self._maybe_save()
+        return removed
 
     async def count(self) -> int:
+        self._load()
         return len(self._vectors)
 
     async def close(self) -> None:
+        if self._mutations:
+            self._write()
         self._vectors.clear()
         self._metadata.clear()
 
 
-class ZillizVectorStore:
-    """Zilliz Cloud / Milvus collection with a dynamic-dimension schema."""
+def build_vector_store(settings: Any = None, dim: int = 512) -> VectorStore:
+    """The one vector backend: a local cosine index, persisted under the state directory.
 
-    name = "zilliz"
-    _FIELD = "embedding"
+    ``dim`` is accepted because the caller learns it from the embedder; the local index infers each
+    vector's dimension on insert, so it is not needed here.
+    """
+    if settings is None:
+        from app.config import get_settings
 
-    def __init__(self, settings: Settings, dim: int) -> None:
-        self._settings = settings
-        self._dim = dim
-        self._client: Any = None
-        self._collection: Any = None
-
-    async def _ensure(self) -> None:
-        if self._collection is not None:
-            return
-        from pymilvus import CollectionSchema, DataType, FieldSchema, MilvusClient  # type: ignore
-
-        token = self._settings.zilliz_token or None
-        self._client = MilvusClient(uri=self._settings.zilliz_uri, token=token)
-        name = self._settings.zilliz_collection
-        if not self._client.has_collection(name):
-            fields = [
-                FieldSchema(name="id", dtype=DataType.VARCHAR, is_primary=True, max_length=128),
-                FieldSchema(name=self._FIELD, dtype=DataType.FLOAT_VECTOR, dim=self._dim),
-                FieldSchema(name="metadata", dtype=DataType.JSON),
-            ]
-            schema = CollectionSchema(fields=fields, description="Dobot semantic memory")
-            self._client.create_collection(collection_name=name, schema=schema)
-            index_params = self._client.prepare_index_params()
-            index_params.add_index(
-                field_name=self._FIELD, index_type="AUTOINDEX", metric_type="COSINE"
-            )
-            self._client.create_index(collection_name=name, index_params=index_params)
-        self._collection = name
-
-    async def upsert(self, doc_id: str, vector: list[float], metadata: dict[str, Any]) -> None:
-        await self._ensure()
-        self._client.upsert(
-            collection_name=self._collection,
-            data=[{"id": doc_id, self._FIELD: vector, "metadata": metadata or {}}],
-        )
-
-    async def search(
-        self, vector: list[float], limit: int = 6, filters: dict[str, Any] | None = None
-    ) -> list[VectorHit]:
-        await self._ensure()
-        expression = ""
-        if filters:
-            clauses = [
-                f'metadata["{key}"] == "{value}"'
-                for key, value in filters.items()
-                if isinstance(value, (str, int, float, bool))
-            ]
-            expression = " and ".join(clauses)
-        results = self._client.search(
-            collection_name=self._collection,
-            data=[vector],
-            limit=limit,
-            output_fields=["metadata"],
-            filter=expression or None,
-        )
-        hits: list[VectorHit] = []
-        for row in (results[0] if results else []):
-            hits.append(
-                VectorHit(
-                    id=str(row.get("id")),
-                    score=float(row.get("distance", 0.0)),
-                    metadata=dict(row.get("entity", {}).get("metadata") or {}),
-                )
-            )
-        return hits
-
-    async def delete(self, doc_id: str) -> bool:
-        await self._ensure()
-        self._client.delete(collection_name=self._collection, ids=[doc_id])
-        return True
-
-    async def count(self) -> int:
-        await self._ensure()
-        stats = self._client.get_collection_stats(collection_name=self._collection)
-        return int(stats.get("row_count", 0))
-
-    async def close(self) -> None:
-        if self._client is not None:
-            self._client.close()
-
-
-class FallbackVectorStore:
-    """Tries Zilliz once; on failure keeps working against the local index."""
-
-    def __init__(self, primary: VectorStore, fallback: VectorStore) -> None:
-        self._primary = primary
-        self._fallback = fallback
-        self.name = primary.name
-        self._degraded = False
-
-    async def _use_primary(self) -> bool:
-        return not self._degraded
-
-    async def _run(self, method: str, *args: Any, **kwargs: Any) -> Any:
-        if await self._use_primary():
-            try:
-                return await getattr(self._primary, method)(*args, **kwargs)
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("vector store %s failed (%s); using local index", self._primary.name, exc)
-                self._degraded = True
-                self.name = f"{self._primary.name}->{self._fallback.name}"
-        return await getattr(self._fallback, method)(*args, **kwargs)
-
-    async def upsert(self, doc_id: str, vector: list[float], metadata: dict[str, Any]) -> None:
-        await self._run("upsert", doc_id, vector, metadata)
-
-    async def search(
-        self, vector: list[float], limit: int = 6, filters: dict[str, Any] | None = None
-    ) -> list[VectorHit]:
-        result = await self._run("search", vector, limit=limit, filters=filters)
-        return list(result)
-
-    async def delete(self, doc_id: str) -> bool:
-        return bool(await self._run("delete", doc_id))
-
-    async def count(self) -> int:
-        return int(await self._run("count"))
-
-    async def close(self) -> None:
-        await self._primary.close()
-        await self._fallback.close()
-
-    @property
-    def degraded(self) -> bool:
-        return self._degraded
-
-
-def build_vector_store(settings: Settings | None = None, dim: int = 512) -> VectorStore:
-    settings = settings or get_settings()
-    local = LocalVectorStore()
-    if settings.has_zilliz:
-        try:
-            return FallbackVectorStore(ZillizVectorStore(settings, dim), local)
-        except Exception as exc:  # noqa: BLE001 - construction failure must not be fatal
-            logger.warning("could not construct Zilliz store (%s); using local index", exc)
-    return local
+        settings = get_settings()
+    return LocalVectorStore(path=settings.state_dir / "vectors.json")

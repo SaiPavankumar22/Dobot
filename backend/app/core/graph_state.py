@@ -16,6 +16,8 @@ class DobotGraphState(TypedDict, total=False):
     # inputs
     task_id: str
     message: str
+    #: Which conversation this turn belongs to, so SEE can load the prior turns.
+    conversation_id: str
     mode: str
     shadow: bool
     automation_id: str | None
@@ -43,6 +45,7 @@ def new_state(
     *,
     task_id: str,
     message: str,
+    conversation_id: str = "",
     mode: str,
     shadow: bool,
     automation_id: str | None = None,
@@ -54,6 +57,7 @@ def new_state(
     return DobotGraphState(
         task_id=task_id,
         message=message,
+        conversation_id=conversation_id,
         mode=mode,
         shadow=shadow,
         automation_id=automation_id,

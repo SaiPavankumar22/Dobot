@@ -40,6 +40,7 @@ class ToolContext:
     screen: Any = None
     browser: Any = None
     process_supervisor: Any = None
+    workspace_root: str = ""   # per-task write root; tools may use this as default cwd/output dir
 
     def check_cancelled(self) -> None:
         if self.token:
