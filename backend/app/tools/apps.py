@@ -199,17 +199,24 @@ class AppOpenTool(Tool):
         platform = _platform_key()
         resolved = _resolve_alias(app)
         looks_like_path = app.lower().endswith(_PATH_SUFFIXES) or "/" in app or "\\" in app
+        discovered_target = ""
+        discovered_name = ""
         if resolved:
             binary = APP_ALIASES[resolved].get(platform, app)
             if platform == "win32":
                 binary = _windows_installed_binary(binary)
+                # An alias is only a hint, not proof that the executable is on PATH. This
+                # fallback is what lets Store/Start-menu apps such as Telegram launch without
+                # adding every application's install location to Dobot.
+                if not shutil.which(binary) and not Path(binary).is_file():
+                    discovered = await _discover_windows_app(app, ctx)
+                    if discovered:
+                        binary, discovered_target, discovered_name = discovered
         elif looks_like_path:
             binary = app  # an explicit path to an executable: launch it as given
         else:
             # Let Windows resolve arbitrary installed applications through its own Start-menu
             # inventory, so every new app does not require an alias or a Dobot release.
-            discovered_target = ""
-            discovered_name = ""
             if platform == "win32":
                 path_binary = shutil.which(app)
                 discovered = (

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+import time
 from typing import Any
 
 from app.agents.nemotron import Reasoner
@@ -48,6 +49,7 @@ class ResearchAgent:
         self.tavily = tavily or TavilyClient(self.settings)
         self.reasoner = reasoner or Reasoner(self.settings)
         self.bus = bus or get_event_bus()
+        self._cache: dict[tuple[str, tuple[str, ...], int, str], tuple[float, dict[str, Any]]] = {}
 
     # ------------------------------------------------------------------ strategy
 
@@ -106,34 +108,49 @@ class ResearchAgent:
 
     # ------------------------------------------------------------------ retrieval
 
-    async def _search_one(self, query: str, max_results: int) -> list[ResearchSource]:
+    async def _search_one(
+        self, query: str, max_results: int, *, depth: str
+    ) -> tuple[list[ResearchSource], str]:
         try:
-            payload = await self.tavily.search(query, max_results=max_results, depth="deep")
+            payload = await self.tavily.search(
+                query,
+                max_results=max_results,
+                depth=depth,
+                include_answer=depth != "deep",
+            )
         except Exception as exc:  # noqa: BLE001 - one failing sub-query must not kill the research
             logger.info("sub-query failed (%s): %s", query, exc)
-            return []
-        return to_sources(payload)
+            return [], ""
+        return to_sources(payload), str(payload.get("answer") or "").strip()
 
     async def _collect(
-        self, queries: list[str], *, max_sources: int
-    ) -> list[ResearchSource]:
+        self, queries: list[str], *, max_sources: int, depth: str
+    ) -> tuple[list[ResearchSource], str]:
         per_query = max(3, min(6, max_sources))
         results = await asyncio.gather(
-            *(self._search_one(query, per_query) for query in queries), return_exceptions=True
+            *(
+                self._search_one(query, per_query, depth=depth)
+                for query in queries
+            ),
+            return_exceptions=True,
         )
         seen: set[str] = set()
         merged: list[ResearchSource] = []
+        answers: list[str] = []
         for batch in results:
             if isinstance(batch, BaseException):
                 continue
-            for source in batch:
+            batch_sources, answer = batch
+            if answer:
+                answers.append(answer)
+            for source in batch_sources:
                 key = source.url.rstrip("/").lower()
                 if not key or key in seen:
                     continue
                 seen.add(key)
                 merged.append(source)
         merged.sort(key=lambda source: source.score, reverse=True)
-        return merged[:max_sources]
+        return merged[:max_sources], answers[0] if answers else ""
 
     # ------------------------------------------------------------------ synthesis
 
@@ -188,6 +205,16 @@ class ResearchAgent:
         context_text: str = "",
         task_id: str = "",
     ) -> dict[str, Any]:
+        cache_key = (
+            topic.strip().lower(),
+            tuple(query.strip().lower() for query in (queries or [])),
+            max_sources,
+            depth,
+        )
+        cached = self._cache.get(cache_key)
+        if cached and time.monotonic() - cached[0] < 120:
+            return {**cached[1], "cached": True}
+
         await self.bus.emit(
             EventType.RESEARCH_PROGRESS,
             message=f"Planning research for: {topic[:80]}",
@@ -220,7 +247,11 @@ class ResearchAgent:
             stage="searching",
             queries=planned,
         )
-        sources = await self._collect(planned, max_sources=max_sources)
+        sources, tavily_answer = await self._collect(
+            planned,
+            max_sources=max_sources,
+            depth=depth,
+        )
         await self.bus.emit(
             EventType.RESEARCH_PROGRESS,
             message=f"Collected {len(sources)} sources",
@@ -228,7 +259,10 @@ class ResearchAgent:
             stage="collected",
             count=len(sources),
         )
-        summary, degraded = await self._synthesize(topic, sources, planned)
+        if depth != "deep" and tavily_answer:
+            summary, degraded = tavily_answer, False
+        else:
+            summary, degraded = await self._synthesize(topic, sources, planned)
         await self.bus.emit(
             EventType.RESEARCH_PROGRESS,
             message="Synthesised findings",
@@ -236,14 +270,17 @@ class ResearchAgent:
             stage="synthesised",
             degraded=degraded,
         )
-        return {
+        result = {
             "topic": topic,
             "summary": summary,
             "sources": [source.model_dump() for source in sources],
             "sub_queries": planned,
             "degraded": degraded,
             "cross_checked": len({source.url for source in sources}) >= 2,
+            "cached": False,
         }
+        self._cache[cache_key] = (time.monotonic(), result)
+        return result
 
     async def deep_research(self, topic: str, *, task_id: str = "", context_text: str = "") -> dict[str, Any]:
         return await self.research(

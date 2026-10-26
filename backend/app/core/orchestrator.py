@@ -117,6 +117,7 @@ class Orchestrator:
     def __init__(self, services: Services) -> None:
         self.s = services
         self._locks: dict[str, asyncio.Lock] = {}
+        self._background_tasks: set[asyncio.Task[None]] = set()
         self._graph: Any = None  # compiled lifecycle graph, built once per orchestrator
 
     # ------------------------------------------------------------------ helpers
@@ -211,10 +212,21 @@ class Orchestrator:
                 task.status = TaskStatus.CANCELLED
                 await self._persist(task)
                 await self.s.bus.emit(EventType.KILLED, message="Task stopped", task_id=task.id)
+            except Exception as exc:  # noqa: BLE001 - background tasks must never become orphaned
+                task.status = TaskStatus.FAILED
+                task.error = str(exc)[:500] or "background task failed"
+                task.answer = "The background task failed before it could finish."
+                await self._persist(task)
+                await self.s.bus.emit(EventType.FAILED, message=task.error, task_id=task.id)
             finally:
                 get_kill_switch().release(task.id)
 
-        asyncio.create_task(runner(), name=f"dobot-task-{task.id}")
+        background_task = asyncio.create_task(runner(), name=f"dobot-task-{task.id}")
+        # Keep a strong reference until completion. The event loop only keeps weak references to
+        # tasks, and an unreferenced background task can otherwise disappear during a busy test or
+        # long-running desktop session before it emits its terminal event.
+        self._background_tasks.add(background_task)
+        background_task.add_done_callback(self._background_tasks.discard)
         return task.id
 
     async def kill(self, task_id: str | None = None) -> list[str]:
@@ -1157,6 +1169,29 @@ class Orchestrator:
             ),
             "",
         )
+
+        # Research already performed the expensive synthesis pass. Do not send its answer through
+        # another generic narration call: that extra call adds latency and commonly turns a useful
+        # news summary into an internal "I searched..." verification report.
+        research_steps = [
+            step
+            for step in executed
+            if step.action.tool in {"tavily_research", "research"}
+        ]
+        if research_summary and research_steps:
+            lines = [research_summary.strip()]
+            if sources:
+                lines.extend(
+                    [
+                        "",
+                        "Sources:",
+                        *(
+                            f"[{index}] {source.get('title', '')} — {source.get('url', '')}"
+                            for index, source in enumerate(sources[:6], start=1)
+                        ),
+                    ]
+                )
+            return "\n".join(lines)
 
         reasoner = self.s.reasoner
         if reasoner.available:

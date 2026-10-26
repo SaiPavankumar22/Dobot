@@ -234,6 +234,39 @@ def test_telegram_resolves_from_standard_windows_install_location(
     assert _windows_installed_binary("telegram") == str(telegram)
 
 
+@pytest.mark.asyncio
+async def test_app_open_discovers_aliases_from_windows_start_menu(
+    ctx: ToolContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.tools import apps as apps_module
+
+    monkeypatch.setattr(apps_module, "_platform_key", lambda: "win32")
+    commands: list[str] = []
+
+    class _StubSandbox:
+        async def check_path(self, raw: str, *, write: bool = False) -> Path:
+            return Path(raw)
+
+        async def run_command(self, command: str, **kwargs):
+            commands.append(command)
+            if "Get-StartApps" in command:
+                return SimpleNamespace(
+                    ok=True,
+                    exit_code=0,
+                    stdout='[{"Name":"Telegram","AppID":"TelegramDesktop!Telegram"}]',
+                    stderr="",
+                )
+            return SimpleNamespace(ok=True, exit_code=0, stdout="", stderr="")
+
+    stub_ctx = ToolContext(settings=ctx.settings, sandbox=_StubSandbox(), task_id="task_test")
+    result = await AppOpenTool().run({"app": "Telegram"}, stub_ctx)
+
+    assert result.ok, result.error
+    assert result.output["discovered_name"] == "Telegram"
+    assert result.output["target_kind"] == "application"
+    assert "shell:AppsFolder\\TelegramDesktop!Telegram" in commands[-1]
+
+
 def test_app_open_process_hint_is_an_image_name_or_nothing() -> None:
     from app.tools.apps import AppOpenTool
 

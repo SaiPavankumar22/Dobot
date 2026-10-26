@@ -215,6 +215,7 @@ class TavilyResearchTool(Tool):
         topic = self.require(params, "topic")
         queries = [str(query) for query in (params.get("queries") or []) if str(query).strip()]
         max_results = int(params.get("max_results", 6) or 6)
+        depth = str(params.get("depth", "quick") or "quick").lower()
 
         if ctx.research is not None:
             result = await ctx.research.research(topic, queries=queries, max_sources=max_results)
@@ -226,6 +227,7 @@ class TavilyResearchTool(Tool):
                     "sources": result.get("sources", []),
                     "sub_queries": result.get("sub_queries", []),
                     "degraded": result.get("degraded", False),
+                    "cached": result.get("cached", False),
                 },
                 started,
             )
@@ -238,7 +240,12 @@ class TavilyResearchTool(Tool):
                 started,
             )
         try:
-            payload = await client.search(topic, max_results=max_results, depth="deep")
+            payload = await client.search(
+                topic,
+                max_results=max_results,
+                depth="deep" if depth == "deep" else "quick",
+                include_answer=depth != "deep",
+            )
         except Exception as exc:  # noqa: BLE001
             return self.fail(self.name, f"research failed: {exc}", started)
         sources = to_sources(payload)

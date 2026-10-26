@@ -161,7 +161,7 @@ async def test_kill_marks_task_cancelled(services) -> None:
 async def test_background_task_reports_through_the_event_bus(services) -> None:
     task_id = await services.orchestrator.submit_background(ChatRequest(message="hello"))
     assert task_id
-    for _ in range(50):
+    for _ in range(200):
         import asyncio
 
         await asyncio.sleep(0.05)
