@@ -66,16 +66,33 @@ jobs:
         id: version
         shell: bash
         run: |
+          normalize_semver() {
+            local raw="$1"
+            if [[ "$raw" =~ ^([0-9]+)$ ]]; then
+              echo "${BASH_REMATCH[1]}.0.0"
+            elif [[ "$raw" =~ ^([0-9]+)\.([0-9]+)$ ]]; then
+              echo "${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.0"
+            elif [[ "$raw" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+              echo "$raw"
+            else
+              return 1
+            fi
+          }
+
           current=$(jq -r .version desktop/src-tauri/tauri.conf.json)
           want="${{ github.event.inputs.version }}"
           if [ -n "$want" ]; then
-            v="$want"
+            candidate="$want"
           elif [ "$GITHUB_REF_TYPE" = "tag" ]; then
-            v="${GITHUB_REF_NAME#v}"
+            candidate="${GITHUB_REF_NAME#v}"
           else
             IFS=. read -r major minor patch <<< "$current"
-            v="$major.$minor.$((patch + 1))"
+            candidate="$major.$minor.$((patch + 1))"
           fi
+          v="$(normalize_semver "$candidate")" || {
+            echo "::error::Release version '$candidate' is invalid. Use semver like 1.2.3"
+            exit 1
+          }
           echo "v=$v" >> "$GITHUB_OUTPUT"
           echo "Releasing Dobot v$v (configured version was $current)"
 
