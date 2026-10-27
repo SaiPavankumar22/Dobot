@@ -219,6 +219,10 @@ async def test_write_confirmation_reaches_the_decision_engine(tmp_path: Path) ->
     assert "writes_require_approval" in decision.policies
 
 
+def test_fresh_settings_require_write_approval() -> None:
+    assert Settings().require_write_approval is True
+
+
 # ------------------------------------------------------------ decision engine
 
 

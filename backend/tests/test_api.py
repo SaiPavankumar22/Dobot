@@ -310,3 +310,15 @@ def test_websocket_stream_allows_the_webview_and_dev_origins(client: TestClient)
     for origin in allowed:
         with client.websocket_connect("/ws", headers={"origin": origin}) as stream:
             assert stream.receive_json()["type"] == "hello"
+
+
+def test_cors_rejects_arbitrary_localhost_port(client: TestClient) -> None:
+    response = client.get("/health", headers={"origin": "http://localhost:59999"})
+    assert response.status_code == 200
+    assert "access-control-allow-origin" not in response.headers
+
+
+def test_cors_allows_supported_desktop_origin(client: TestClient) -> None:
+    response = client.get("/health", headers={"origin": "http://localhost:1420"})
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "http://localhost:1420"
