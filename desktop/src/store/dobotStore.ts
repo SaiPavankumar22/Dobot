@@ -654,7 +654,8 @@ export const useDobot = create<DobotStore>((set, get) => ({
 
   loadConversations: async () => {
     try {
-      set({ conversations: await api.conversations(50) });
+      // 200 is the backend's cap: the sidebar promises every previous chat, like ChatGPT.
+      set({ conversations: await api.conversations(200) });
     } catch {
       /* backend may be starting; the sidebar keeps whatever it already had */
     }

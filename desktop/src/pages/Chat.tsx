@@ -4,7 +4,7 @@
 // The ambient part of Dobot (the always-on floating dot) is opt-in and lives behind one switch in the
 // header. With the switch off, nothing of Dobot is on screen but this window.
 
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { Activity } from "../pages/Activity";
 import { Approvals } from "../pages/Approvals";
 import { Automations } from "../pages/Automations";
@@ -74,6 +74,20 @@ const NAV = [
   { id: "settings", label: "Settings", hint: "Keys, connection, appearance" },
 ] as const;
 
+/** ChatGPT-style buckets for the Recent list — newest groups first, oldest last. */
+const THREAD_GROUPS = ["Today", "Yesterday", "Previous 7 days", "Older"] as const;
+
+function threadGroup(iso: string): string {
+  const stamp = new Date(iso).getTime();
+  if (!Number.isFinite(stamp)) return "Older";
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  if (stamp >= today) return "Today";
+  if (stamp >= today - 86_400_000) return "Yesterday";
+  if (stamp >= today - 7 * 86_400_000) return "Previous 7 days";
+  return "Older";
+}
+
 /** Workspace sections render inside the chat window — the sidebar must not spawn a second window. */
 function Section({ id, onBack }: { id: string; onBack: () => void }) {
   const body =
@@ -102,6 +116,48 @@ function Section({ id, onBack }: { id: string; onBack: () => void }) {
         )}
       </div>
       <div className="chat__section-body">{body}</div>
+    </div>
+  );
+}
+
+/**
+ * The workspace picker: every sidebar section as a card, opened from the footer's Workspace
+ * button. Cards navigate in-window (same as the old inline nav) so no second window ever spawns
+ * from here; the dashboard window stays one click away on the bar.
+ */
+function WorkspaceGrid({
+  onClose,
+  onPick,
+  onDashboard,
+}: {
+  onClose: () => void;
+  onPick: (id: string) => void;
+  onDashboard: () => void;
+}) {
+  const approvals = useDobot((state) => state.approvals);
+  return (
+    <div className="chat__workspace">
+      <div className="chat__section-bar">
+        <button className="ghost" onClick={onClose} title="Back to the conversation">← Chat</button>
+        <strong>Workspace</strong>
+        <span className="chat__composer-spacer" />
+        {native.isNative && (
+          <button className="ghost" onClick={onDashboard} title="Open the full dashboard window">Open dashboard ⧉</button>
+        )}
+      </div>
+      <div className="chat__workspace-grid">
+        {NAV.map((item) => (
+          <button key={item.id} className="chat__workspace-card" onClick={() => onPick(item.id)}>
+            <span className="chat__workspace-card-title">
+              {item.label}
+              {item.id === "approvals" && approvals.length > 0 && (
+                <span className="chat__nav-badge">{approvals.length}</span>
+              )}
+            </span>
+            <span className="chat__workspace-card-hint">{item.hint}</span>
+          </button>
+        ))}
+      </div>
     </div>
   );
 }
@@ -161,6 +217,7 @@ export function Chat() {
   const [draft, setDraft] = useState("");
   const [includeSelection, setIncludeSelection] = useState(true);
   const [section, setSection] = useState<string | null>(null);
+  const [workspaceOpen, setWorkspaceOpen] = useState(false);
   const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
   const [rejections, setRejections] = useState<Rejection[]>([]);
   const [limits, setLimits] = useState<AttachmentLimits>(DEFAULT_LIMITS);
@@ -263,49 +320,69 @@ export function Chat() {
           <img className="chat__brand-logo" src="/branding/dobot-logo.png" alt="Dobot" />
         </div>
 
-        <button className="chat__new" onClick={newConversation} title="Start a fresh conversation">
+        <button
+          className="chat__new"
+          onClick={() => {
+            setWorkspaceOpen(false);
+            setSection(null);
+            newConversation();
+          }}
+          title="Start a fresh conversation"
+        >
           ＋ New chat
         </button>
 
         <div className="chat__section-label">Recent</div>
         <div className="chat__threads">
           {conversations.length === 0 && <div className="chat__empty-hint">No conversations yet</div>}
-          {conversations.map((conversation) => (
-            <button
-              key={conversation.id}
-              className={`chat__thread${
-                conversation.id === activeConversationId ? " chat__thread--active" : ""
-              }`}
-              onClick={() => void openConversation(conversation.id)}
-              title={conversation.summary || conversation.title}
-            >
-              <span className="chat__thread-title">{conversation.title}</span>
-              <span className="chat__thread-time">
-                {new Date(conversation.updated_at).toLocaleTimeString([], {
-                  hour: "2-digit",
-                  minute: "2-digit",
-                })}
-              </span>
-            </button>
-          ))}
+          {THREAD_GROUPS.map((group) => {
+            const items = conversations.filter((item) => threadGroup(item.updated_at) === group);
+            if (items.length === 0) return null;
+            return (
+              <Fragment key={group}>
+                <div className="chat__threads-label">{group}</div>
+                {items.map((conversation) => (
+                  <button
+                    key={conversation.id}
+                    className={`chat__thread${
+                      conversation.id === activeConversationId ? " chat__thread--active" : ""
+                    }`}
+                    onClick={() => {
+                      setWorkspaceOpen(false);
+                      setSection(null);
+                      void openConversation(conversation.id);
+                    }}
+                    title={conversation.summary || conversation.title}
+                  >
+                    <span className="chat__thread-title">{conversation.title}</span>
+                    <span className="chat__thread-time">
+                      {new Date(conversation.updated_at).toLocaleTimeString([], {
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })}
+                    </span>
+                  </button>
+                ))}
+              </Fragment>
+            );
+          })}
         </div>
-
-        <div className="chat__section-label">Workspace</div>
-        <nav className="chat__nav">
-          {NAV.map((item) => (
-            <button key={item.id} className="chat__nav-item" onClick={() => openSection(item.id)}>
-              {item.label}
-              {item.id === "approvals" && approvals.length > 0 && (
-                <span className="chat__nav-badge">{approvals.length}</span>
-              )}
-            </button>
-          ))}
-        </nav>
 
         <div className="chat__sidebar-footer">
           <span className={`chip ${connected ? "chip--ok" : "chip--danger"}`} title={connectionDetail}>
             {connected ? "backend connected" : "backend offline"}
           </span>
+          <button
+            className="ghost chat__workspace-btn"
+            onClick={() => {
+              setSection(null);
+              setWorkspaceOpen(true);
+            }}
+            title="Every workspace section, as cards"
+          >
+            <span>🗂 Workspace</span>
+            {approvals.length > 0 && <span className="chat__nav-badge">{approvals.length}</span>}
+          </button>
           {native.isNative && (
             <button className="ghost" onClick={() => void native.quit()}>
               Quit Dobot
@@ -317,6 +394,15 @@ export function Chat() {
       <main className="chat__main">
         {section ? (
           <Section id={section} onBack={() => setSection(null)} />
+        ) : workspaceOpen ? (
+          <WorkspaceGrid
+            onClose={() => setWorkspaceOpen(false)}
+            onPick={(id) => {
+              setWorkspaceOpen(false);
+              openSection(id);
+            }}
+            onDashboard={openDashboard}
+          />
         ) : (
           <>
         <header className="chat__header">

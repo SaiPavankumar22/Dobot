@@ -829,6 +829,25 @@ a {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  /* The Recent list scrolls inside the sidebar so the footer (Workspace/Quit) stays put. */
+  flex: 1 1 auto;
+  min-height: 96px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* Group headers inside the scrolling Recent list: Today / Yesterday / Previous 7 days / Older. */
+.chat__threads-label {
+  margin: 10px 0 2px;
+  padding: 0 8px;
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text-dim);
+}
+
+.chat__threads-label:first-child {
+  margin-top: 2px;
 }
 
 .chat__thread {
@@ -910,6 +929,65 @@ a {
   font-weight: 700;
   display: grid;
   place-items: center;
+}
+
+/* The Workspace button sits directly above Quit Dobot and opens the card picker. */
+.chat__workspace-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-weight: 600;
+}
+
+.chat__workspace {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+.chat__workspace-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(216px, 1fr));
+  gap: 12px;
+  padding: 16px 20px 24px;
+  overflow-y: auto;
+}
+
+.chat__workspace-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  text-align: left;
+  padding: 14px 16px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--text);
+  transition: border-color 120ms ease, transform 120ms ease;
+}
+
+.chat__workspace-card:hover:not(:disabled) {
+  border-color: var(--accent);
+  transform: translateY(-1px);
+}
+
+.chat__workspace-card-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.chat__workspace-card-hint {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-dim);
 }
 
 .chat__sidebar-footer {
