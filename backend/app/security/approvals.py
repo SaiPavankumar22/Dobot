@@ -23,12 +23,18 @@ from app.schemas import (
 logger = get_logger(__name__)
 
 
+def _current_owner() -> str:
+    from app.core.tenancy import current_user_id
+
+    return current_user_id.get() or "local"
+
+
 class ApprovalStore:
     def __init__(self, store: RecordStore, bus: EventBus | None = None) -> None:
         self._store = store
         self._bus = bus or get_event_bus()
-        self._records: dict[str, ApprovalRecord] = {}
-        self._events: dict[str, asyncio.Event] = {}
+        self._records: dict[tuple[str, str], ApprovalRecord] = {}
+        self._events: dict[tuple[str, str], asyncio.Event] = {}
         self._lock = asyncio.Lock()
 
     async def create(
@@ -54,6 +60,7 @@ class ApprovalStore:
             # "allow once" vs "always allow" instead of a bare approve/reject.
             payload["grant"] = grant
         record = ApprovalRecord(
+            user_id=_current_owner(),
             task_id=task_id,
             step_id=step_id,
             action=action.tool,
@@ -63,8 +70,9 @@ class ApprovalStore:
             preview=preview or [],
         )
         async with self._lock:
-            self._records[record.id] = record
-            self._events[record.id] = asyncio.Event()
+            key = (record.user_id, record.id)
+            self._records[key] = record
+            self._events[key] = asyncio.Event()
         await self._store.insert("approvals", record.model_dump(mode="json"))
         await self._bus.emit(
             EventType.APPROVAL_REQUIRED,
@@ -76,14 +84,19 @@ class ApprovalStore:
         return record
 
     async def get(self, approval_id: str) -> ApprovalRecord | None:
-        if approval_id in self._records:
-            return self._records[approval_id]
+        owner = _current_owner()
+        key = (owner, approval_id)
+        if key in self._records:
+            return self._records[key]
         doc = await self._store.get("approvals", approval_id)
         if not doc:
             return None
         record = ApprovalRecord.model_validate(doc)
-        self._records[approval_id] = record
-        self._events.setdefault(approval_id, asyncio.Event())
+        record.user_id = record.user_id or owner
+        if record.user_id != owner and owner != "local":
+            return None
+        self._records[(owner, approval_id)] = record
+        self._events.setdefault((owner, approval_id), asyncio.Event())
         return record
 
     async def pending(self) -> list[ApprovalRecord]:
@@ -96,8 +109,10 @@ class ApprovalStore:
                 continue
             if record.status is ApprovalStatus.PENDING:
                 records.append(record)
-                self._records.setdefault(record.id, record)
-                self._events.setdefault(record.id, asyncio.Event())
+                owner = record.user_id or _current_owner()
+                record.user_id = owner
+                self._records.setdefault((owner, record.id), record)
+                self._events.setdefault((owner, record.id), asyncio.Event())
         records.sort(key=lambda item: item.created_at, reverse=True)
         return records
 
@@ -138,7 +153,8 @@ class ApprovalStore:
         if edits:
             record.payload = {**record.payload, "edits": edits}
 
-        self._records[approval_id] = record
+        owner = _current_owner()
+        self._records[(owner, approval_id)] = record
         await self._store.update(
             "approvals",
             approval_id,
@@ -149,7 +165,7 @@ class ApprovalStore:
                 "payload": record.payload,
             },
         )
-        event = self._events.setdefault(approval_id, asyncio.Event())
+        event = self._events.setdefault((owner, approval_id), asyncio.Event())
         event.set()
         await self._bus.emit(
             EventType.APPROVAL_RESOLVED,
@@ -162,7 +178,7 @@ class ApprovalStore:
 
     async def wait_for_decision(self, approval_id: str, timeout: float | None = None) -> ApprovalRecord | None:
         """Block until the user decides. Returns the resolved record, or None on timeout."""
-        event = self._events.setdefault(approval_id, asyncio.Event())
+        event = self._events.setdefault((_current_owner(), approval_id), asyncio.Event())
         if not event.is_set():
             try:
                 await asyncio.wait_for(event.wait(), timeout=timeout)
@@ -174,6 +190,7 @@ class ApprovalStore:
     def expired_pending(self) -> list[str]:
         return [
             approval_id
-            for approval_id, record in self._records.items()
+            for (owner, approval_id), record in self._records.items()
+            if owner == _current_owner()
             if record.status is ApprovalStatus.PENDING
         ]

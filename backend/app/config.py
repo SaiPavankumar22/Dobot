@@ -206,10 +206,10 @@ class Settings(BaseSettings):
     # default; when on, the planner can choose `deep_research` for questions that need multiple
     # searches synthesised into a cited report. Read-only; still gated by the decision engine.
     deepagents_enabled: bool = False
-    # Off by default, matching the specification's MEDIUM-auto-executes rule. Turn it on to be asked
-    # before *anything* changes your files, even at MEDIUM risk. Reads (fs_list, fs_read) stay
-    # automatic either way — this gates changes, not inspection.
-    require_write_approval: bool = False
+    # On by default so untrusted content cannot steer medium-risk mutations without a human check.
+    # Existing trusted deployments may explicitly set REQUIRE_WRITE_APPROVAL=false. Reads
+    # (fs_list, fs_read) stay automatic either way — this gates changes, not inspection.
+    require_write_approval: bool = True
     #: Execution mode when a request does not name one: ask | assist | agent. Each mode is a different
     #: approval threshold — see app/core/decision_engine.py. `agent` is the specification default.
     execution_mode: str = "agent"

@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException
 
 from app.api.deps import ServicesDep
 from app.schemas import ChatRequest, ChatResponse, SkillRecord
+from app.skills_loader import validate_skill_name
 
 router = APIRouter(prefix="/skills", tags=["skills"])
 
@@ -24,6 +25,13 @@ async def create_skill(payload: dict, services: ServicesDep) -> SkillRecord:
             status_code=422,
             detail={"code": "MISSING_NAME", "message": "skill name is required", "recoverable": True},
         )
+    try:
+        name = validate_skill_name(name)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "INVALID_NAME", "message": str(exc), "recoverable": True},
+        ) from exc
     return services.skills.save(
         name,
         str(payload.get("body", "")),
@@ -50,7 +58,13 @@ async def run_skill(name: str, services: ServicesDep, inputs: dict | None = None
 
 @router.delete("/{name}")
 async def delete_skill(name: str, services: ServicesDep) -> dict:
-    deleted = services.skills.delete(name)
+    try:
+        deleted = services.skills.delete(validate_skill_name(name))
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "INVALID_NAME", "message": str(exc), "recoverable": True},
+        ) from exc
     if not deleted:
         raise HTTPException(
             status_code=404,

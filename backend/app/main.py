@@ -60,11 +60,14 @@ ALLOWED_ORIGINS = [
     "https://tauri.localhost",
 ]
 
-#: The regex half of the same policy — any localhost port plus the Tauri webview origins.
+#: The regex half of the same policy — only the supported desktop/dev origins.
 #: One string, two gates: CORS applies it to fetch/XHR, and `/ws` re-applies it to WebSocket
-#: upgrades, which the CORS middleware never sees.
+#: upgrades, which the CORS middleware never sees. Do not broaden this to arbitrary localhost
+#: ports: any local web page could otherwise read and mutate the API when the optional bearer gate
+#: is disabled.
 ALLOWED_ORIGIN_REGEX = (
-    r"^(http://(localhost|127\.0\.0\.1)(:\d+)?|tauri://localhost|https?://tauri\.localhost)$"
+    r"^(http://localhost:1420|http://127\.0\.0\.1:1420|http://localhost:5173|"
+    r"http://127\.0\.0\.1:5173|tauri://localhost|https?://tauri\.localhost)$"
 )
 
 

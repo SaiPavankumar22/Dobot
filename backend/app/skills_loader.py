@@ -21,6 +21,20 @@ logger = get_logger(__name__)
 
 _FRONTMATTER = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.DOTALL)
 _KV = re.compile(r"^([A-Za-z_]+):\s*(.*)$")
+_SAFE_SKILL_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+
+
+def validate_skill_name(name: str) -> str:
+    """Return a safe skill identifier or raise ``ValueError``.
+
+    Skill names become directory names. Keep the accepted format deliberately narrow so neither
+    API callers nor model-generated skills can turn a skill write/delete into arbitrary filesystem
+    access.
+    """
+    value = str(name).strip()
+    if not _SAFE_SKILL_NAME.fullmatch(value) or value in {".", ".."}:
+        raise ValueError("skill name must be 1-64 characters using letters, digits, '.', '_' or '-'")
+    return value
 
 
 def _parse_frontmatter(text: str) -> tuple[dict[str, str], str]:
@@ -43,6 +57,7 @@ def _split_list(value: str) -> list[str]:
 @dataclass
 class SkillsLibrary:
     directory: Path
+    user_directory: Path | None = None
     #: None means "read from settings at call time", so constructing a library in a test is enough
     #: to control it without touching the environment.
     scan_mode: str | None = None
@@ -52,10 +67,23 @@ class SkillsLibrary:
     #: Runtime guards a skill ships for itself, keyed by skill name. Compiled by the interceptor
     #: engine, so a skill can carry enforceable rules rather than prose the model may ignore.
     _interceptors: dict[str, object] | None = None
+    _loaded_owner: str | None = None
 
     @classmethod
     def default(cls) -> SkillsLibrary:
         return cls(directory=get_settings().skills_dir)
+
+    def _owner(self) -> str:
+        if self.user_directory is None:
+            return ""
+        from app.core.tenancy import current_user_id
+
+        return current_user_id.get() or "local"
+
+    def _owned_directory(self) -> Path | None:
+        if self.user_directory is None:
+            return None
+        return self.user_directory / self._owner()
 
     # ------------------------------------------------------------------ scanning
 
@@ -84,53 +112,67 @@ class SkillsLibrary:
     # ------------------------------------------------------------------ loading
 
     def load(self, *, force: bool = False) -> dict[str, SkillRecord]:
-        if self._skills is not None and not force:
+        owner = self._owner()
+        if self._skills is not None and not force and self._loaded_owner == owner:
             return self._skills
         mode, allowlist = self._scan_settings()
         reports: dict[str, ScanReport] = {}
         skills: dict[str, SkillRecord] = {}
         interceptors: dict[str, object] = {}
-        if not self.directory.exists():
+        directories = [self.directory]
+        owned = self._owned_directory()
+        if owned is not None:
+            directories.append(owned)
+        if not any(directory.exists() for directory in directories):
             self._skills = skills
+            self._loaded_owner = owner
             return skills
-        for path in sorted(self.directory.iterdir()):
-            if not path.is_dir():
+        for root in directories:
+            if not root.exists():
                 continue
-            skill_file = path / "SKILL.md"
-            if not skill_file.exists():
-                continue
-            try:
-                raw = skill_file.read_text(encoding="utf-8")
-            except OSError as exc:
-                logger.warning("could not read skill %s (%s)", path.name, exc)
-                continue
-            meta, body = _parse_frontmatter(raw)
-            workflow: list[dict] = []
-            workflow_file = path / "workflow.json"
-            if workflow_file.exists():
+            for path in sorted(root.iterdir()):
+                if not path.is_dir() or not _SAFE_SKILL_NAME.fullmatch(path.name):
+                    continue
+                skill_file = path / "SKILL.md"
+                if not skill_file.exists():
+                    continue
                 try:
-                    payload = json.loads(workflow_file.read_text(encoding="utf-8"))
-                    workflow = payload.get("steps", payload) if isinstance(payload, dict) else payload
-                    if isinstance(payload, dict) and payload.get("interceptors"):
-                        interceptors[meta.get("name") or path.name] = payload["interceptors"]
-                except (json.JSONDecodeError, OSError) as exc:
-                    logger.warning("invalid workflow for %s (%s)", path.name, exc)
-            name = meta.get("name") or path.name
-            report = scan_skill(name, path, mode=mode, allowlist=allowlist)
-            reports[name] = report
-            skills[name] = SkillRecord(
-                name=name,
-                description=meta.get("description", "") or body.strip().splitlines()[0][:160] if body.strip() else "",
-                trigger=meta.get("trigger", ""),
-                required_tools=_split_list(meta.get("required_tools", "")) if meta.get("required_tools") else [],
-                safety=meta.get("safety", ""),
-                workflow=[step for step in workflow if isinstance(step, dict)],
-                path=str(path),
-                body=body.strip(),
-                scan_status=report.status,
-                scan_findings=[finding.as_dict() for finding in report.findings],
-            )
+                    raw = skill_file.read_text(encoding="utf-8")
+                except OSError as exc:
+                    logger.warning("could not read skill %s (%s)", path.name, exc)
+                    continue
+                meta, body = _parse_frontmatter(raw)
+                try:
+                    name = validate_skill_name(meta.get("name") or path.name)
+                except ValueError:
+                    logger.warning("ignoring skill with unsafe name %s", path)
+                    continue
+                workflow: list[dict] = []
+                workflow_file = path / "workflow.json"
+                if workflow_file.exists():
+                    try:
+                        payload = json.loads(workflow_file.read_text(encoding="utf-8"))
+                        workflow = payload.get("steps", payload) if isinstance(payload, dict) else payload
+                        if isinstance(payload, dict) and payload.get("interceptors"):
+                            interceptors[name] = payload["interceptors"]
+                    except (json.JSONDecodeError, OSError) as exc:
+                        logger.warning("invalid workflow for %s (%s)", path.name, exc)
+                report = scan_skill(name, path, mode=mode, allowlist=allowlist)
+                reports[name] = report
+                skills[name] = SkillRecord(
+                    name=name,
+                    description=meta.get("description", "") or body.strip().splitlines()[0][:160] if body.strip() else "",
+                    trigger=meta.get("trigger", ""),
+                    required_tools=_split_list(meta.get("required_tools", "")) if meta.get("required_tools") else [],
+                    safety=meta.get("safety", ""),
+                    workflow=[step for step in workflow if isinstance(step, dict)],
+                    path=str(path),
+                    body=body.strip(),
+                    scan_status=report.status,
+                    scan_findings=[finding.as_dict() for finding in report.findings],
+                )
         self._skills = skills
+        self._loaded_owner = owner
         # The reports from this pass are the cache: `scan()` and `load()` cannot disagree because
         # they are the same pass.
         self._reports = reports
@@ -190,7 +232,9 @@ class SkillsLibrary:
 
     def save(self, name: str, body: str, *, description: str = "", workflow: list[dict] | None = None,
              trigger: str = "", required_tools: list[str] | None = None, safety: str = "") -> SkillRecord:
-        directory = self.directory / name
+        name = validate_skill_name(name)
+        root = self._owned_directory() or self.directory
+        directory = root / name
         directory.mkdir(parents=True, exist_ok=True)
         frontmatter = ["---", f"name: {name}", f"description: {description}"]
         if trigger:
@@ -216,7 +260,9 @@ class SkillsLibrary:
         return record
 
     def delete(self, name: str) -> bool:
-        directory = self.directory / name
+        name = validate_skill_name(name)
+        root = self._owned_directory() or self.directory
+        directory = root / name
         if not directory.exists():
             return False
         for file in directory.iterdir():

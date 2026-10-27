@@ -42,6 +42,12 @@ def _covered(root: str, path: Path) -> bool:
         return False
 
 
+def _current_owner() -> str:
+    from app.core.tenancy import current_user_id
+
+    return current_user_id.get() or "local"
+
+
 class GrantStore:
     """In-memory view of every active grant, backed by the record store for lifetime ones.
 
@@ -60,7 +66,7 @@ class GrantStore:
         self._store = store
         self._bus = bus
         self._once_ttl = once_ttl_seconds
-        self._grants: dict[str, PermissionGrant] = {}
+        self._grants: dict[tuple[str, str], PermissionGrant] = {}
         self._lock = asyncio.Lock()
         self.loaded = store is None
 
@@ -81,7 +87,9 @@ class GrantStore:
                     continue
                 if grant.expired:
                     continue
-                self._grants[grant.id] = grant
+                owner = grant.user_id or _current_owner()
+                grant.user_id = owner
+                self._grants[(owner, grant.id)] = grant
             self.loaded = True
         logger.info("loaded %d lifetime permission grants", len(self._grants))
         return len(self._grants)
@@ -89,12 +97,19 @@ class GrantStore:
     # ------------------------------------------------------------------ queries
 
     def _prune(self) -> None:
-        for grant_id in [g.id for g in self._grants.values() if g.expired]:
-            self._grants.pop(grant_id, None)
+        owner = _current_owner()
+        for key, grant in list(self._grants.items()):
+            if key[0] == owner and grant.expired:
+                self._grants.pop(key, None)
 
     def active(self) -> list[PermissionGrant]:
         self._prune()
-        grants = sorted(self._grants.values(), key=lambda item: item.created_at, reverse=True)
+        owner = _current_owner()
+        grants = sorted(
+            (grant for (grant_owner, _), grant in self._grants.items() if grant_owner == owner),
+            key=lambda item: item.created_at,
+            reverse=True,
+        )
         return grants
 
     def covering(self, roots: list[str], policy: str) -> PermissionGrant | None:
@@ -144,6 +159,7 @@ class GrantStore:
     ) -> PermissionGrant:
         kind = "lifetime" if scope == "lifetime" else "once"
         grant = PermissionGrant(
+            user_id=_current_owner(),
             policy=policy,
             roots=[str(root) for root in roots],
             description=description,
@@ -153,7 +169,7 @@ class GrantStore:
             expires_at=None if kind == "lifetime" else utcnow() + timedelta(seconds=self._once_ttl),
         )
         async with self._lock:
-            self._grants[grant.id] = grant
+            self._grants[(grant.user_id, grant.id)] = grant
         if kind == "lifetime" and self._store is not None:
             await self._store.insert(COLLECTION, grant.model_dump(mode="json"))
         logger.info(
@@ -180,8 +196,9 @@ class GrantStore:
         return grant
 
     async def revoke(self, grant_id: str) -> bool:
+        owner = _current_owner()
         async with self._lock:
-            existed = self._grants.pop(grant_id, None) is not None
+            existed = self._grants.pop((owner, grant_id), None) is not None
         if self._store is not None:
             existed = await self._store.delete(COLLECTION, grant_id) or existed
         if existed:

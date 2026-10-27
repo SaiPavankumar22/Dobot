@@ -470,6 +470,7 @@ class AutomationRecord(BaseModel):
 
 class ApprovalRecord(BaseModel):
     id: str = Field(default_factory=lambda: new_id("appr"))
+    user_id: str = "local"
     task_id: str = ""
     step_id: str = ""
     action: str = ""
@@ -493,6 +494,7 @@ class PermissionGrant(BaseModel):
     """
 
     id: str = Field(default_factory=lambda: new_id("grant"))
+    user_id: str = "local"
     policy: str
     #: Folder roots the permission covers; an action is covered when every path it touches sits
     #: inside one of these roots.

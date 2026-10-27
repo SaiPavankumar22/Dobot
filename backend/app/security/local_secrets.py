@@ -12,6 +12,7 @@ import getpass
 import hashlib
 import json
 import platform
+import secrets
 from pathlib import Path
 from typing import Any
 
@@ -21,13 +22,62 @@ logger = get_logger(__name__)
 SERVICE = "Dobot"
 
 
-def _key(path: Path) -> bytes:
+def _legacy_key(path: Path) -> bytes:
     identity = f"{getpass.getuser()}|{platform.node()}|{path.parent.resolve()}".encode()
     return base64.urlsafe_b64encode(hashlib.sha256(identity).digest())
 
 
 def _fallback_path(state_dir: Path) -> Path:
     return state_dir / "secrets.enc"
+
+
+def _fallback_key_path(state_dir: Path) -> Path:
+    return state_dir / "secrets.key"
+
+
+def _fallback_key(state_dir: Path) -> bytes:
+    """Load a random fallback key, creating it with restrictive permissions.
+
+    The key is intentionally separate from ``secrets.enc``. Existing deterministic files are
+    accepted once for migration and immediately rewritten with this random key.
+    """
+    path = _fallback_key_path(state_dir)
+    if path.exists():
+        key = path.read_bytes().strip()
+        if len(key) == 44:
+            return key
+    key = base64.urlsafe_b64encode(secrets.token_bytes(32))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(key)
+    try:
+        path.chmod(0o600)
+    except OSError:
+        pass
+    return key
+
+
+def _read_values(path: Path, state_dir: Path) -> dict[str, Any]:
+    from cryptography.fernet import Fernet
+
+    encrypted = path.read_bytes()
+    try:
+        return json.loads(Fernet(_fallback_key(state_dir)).decrypt(encrypted))
+    except Exception:
+        # One-time compatibility path for files created before random fallback keys.
+        values = json.loads(Fernet(_legacy_key(path)).decrypt(encrypted))
+        path.write_bytes(Fernet(_fallback_key(state_dir)).encrypt(json.dumps(values).encode()))
+        return values
+
+
+def _write_values(path: Path, state_dir: Path, values: dict[str, Any]) -> None:
+    from cryptography.fernet import Fernet
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(Fernet(_fallback_key(state_dir)).encrypt(json.dumps(values).encode()))
+    try:
+        path.chmod(0o600)
+    except OSError:
+        pass
 
 
 def _keyring():
@@ -50,9 +100,7 @@ def get(name: str, state_dir: Path) -> str:
     if not path.exists():
         return ""
     try:
-        from cryptography.fernet import Fernet
-
-        values = json.loads(Fernet(_key(path)).decrypt(path.read_bytes()))
+        values = _read_values(path, state_dir)
         return str(values.get(name, ""))
     except Exception as exc:  # noqa: BLE001
         logger.warning("encrypted local secret read failed: %s", exc)
@@ -71,16 +119,11 @@ def set_value(name: str, value: str, state_dir: Path) -> str:
     values: dict[str, Any] = {}
     if path.exists():
         try:
-            from cryptography.fernet import Fernet
-
-            values = json.loads(Fernet(_key(path)).decrypt(path.read_bytes()))
+            values = _read_values(path, state_dir)
         except Exception:  # noqa: BLE001
             values = {}
     values[name] = value
-    from cryptography.fernet import Fernet
-
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(Fernet(_key(path)).encrypt(json.dumps(values).encode()))
+    _write_values(path, state_dir, values)
     return "encrypted-file"
 
 
@@ -95,11 +138,9 @@ def delete(name: str, state_dir: Path) -> None:
     if not path.exists():
         return
     try:
-        from cryptography.fernet import Fernet
-
-        values = json.loads(Fernet(_key(path)).decrypt(path.read_bytes()))
+        values = _read_values(path, state_dir)
         values.pop(name, None)
-        path.write_bytes(Fernet(_key(path)).encrypt(json.dumps(values).encode()))
+        _write_values(path, state_dir, values)
     except Exception as exc:  # noqa: BLE001
         logger.warning("encrypted local secret delete failed: %s", exc)
 

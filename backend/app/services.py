@@ -491,7 +491,10 @@ async def build_services(settings: Settings | None = None, *, bus: EventBus | No
         store = UserScopedStore(store)
         user_manager = UserManager(store)
     memory = build_memory_manager(store, bus)
-    skills = SkillsLibrary(directory=settings.skills_dir)
+    skills = SkillsLibrary(
+        directory=settings.skills_dir,
+        user_directory=settings.state_dir / "user_skills",
+    )
     skills.load()
     grants = GrantStore(store, bus)
     await grants.load()
