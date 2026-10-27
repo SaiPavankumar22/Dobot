@@ -147,7 +147,10 @@ export default function App() {
               window_title: "",
             });
           }}
-          onCancel={() => resolvePendingSelection(null)}
+          onCancel={() => {
+            resolvePendingSelection(null);
+            void native.cancelSelection();
+          }}
         />
       )}
       {windowKind === "chat" && (

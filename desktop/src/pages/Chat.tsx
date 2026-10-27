@@ -5,6 +5,7 @@
 // header. With the switch off, nothing of Dobot is on screen but this window.
 
 import { Fragment, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Activity } from "../pages/Activity";
 import { Approvals } from "../pages/Approvals";
 import { Automations } from "../pages/Automations";
@@ -13,6 +14,7 @@ import {
   IconClose,
   IconEye,
   IconFile,
+  IconGrid,
   IconImage,
   IconMic,
   IconMoon,
@@ -89,7 +91,7 @@ function threadGroup(iso: string): string {
 }
 
 /** Workspace sections render inside the chat window — the sidebar must not spawn a second window. */
-function Section({ id, onBack }: { id: string; onBack: () => void }) {
+function Section({ id, onBack, onWorkspace }: { id: string; onBack: () => void; onWorkspace: () => void }) {
   const body =
     id === "guide" ? <Guide /> :
     id === "overview" ? <Overview /> :
@@ -109,11 +111,9 @@ function Section({ id, onBack }: { id: string; onBack: () => void }) {
     <div className="chat__section-view">
       <div className="chat__section-bar">
         <button className="ghost" onClick={onBack} title="Back to the conversation">← Chat</button>
+        <button className="ghost" onClick={onWorkspace} title="Back to the workspace cards">← Workspace</button>
         <strong>{label}</strong>
         <span className="chat__composer-spacer" />
-        {native.isNative && (
-          <button className="ghost" onClick={() => void native.openDashboard(id)} title="Open this section in the full dashboard window">Open in dashboard ⧉</button>
-        )}
       </div>
       <div className="chat__section-body">{body}</div>
     </div>
@@ -123,17 +123,9 @@ function Section({ id, onBack }: { id: string; onBack: () => void }) {
 /**
  * The workspace picker: every sidebar section as a card, opened from the footer's Workspace
  * button. Cards navigate in-window (same as the old inline nav) so no second window ever spawns
- * from here; the dashboard window stays one click away on the bar.
+ * from here.
  */
-function WorkspaceGrid({
-  onClose,
-  onPick,
-  onDashboard,
-}: {
-  onClose: () => void;
-  onPick: (id: string) => void;
-  onDashboard: () => void;
-}) {
+function WorkspaceGrid({ onClose, onPick }: { onClose: () => void; onPick: (id: string) => void }) {
   const approvals = useDobot((state) => state.approvals);
   return (
     <div className="chat__workspace">
@@ -141,9 +133,6 @@ function WorkspaceGrid({
         <button className="ghost" onClick={onClose} title="Back to the conversation">← Chat</button>
         <strong>Workspace</strong>
         <span className="chat__composer-spacer" />
-        {native.isNative && (
-          <button className="ghost" onClick={onDashboard} title="Open the full dashboard window">Open dashboard ⧉</button>
-        )}
       </div>
       <div className="chat__workspace-grid">
         {NAV.map((item) => (
@@ -299,18 +288,8 @@ export function Chat() {
   }
 
   function openSection(id: string) {
-    // Sections open inside this window. The dashboard window stays reachable via the header button.
+    // Sections open inside this window — the dashboard window is not reachable from here anymore.
     setSection(id);
-  }
-
-  // The dashboard is its own window/route, not a chat section: sent through openSection("") it
-  // rendered "Unknown section."
-  function openDashboard() {
-    if (native.isNative) {
-      void native.openDashboard();
-      return;
-    }
-    window.location.hash = "#/dashboard";
   }
 
   return (
@@ -380,7 +359,10 @@ export function Chat() {
             }}
             title="Every workspace section, as cards"
           >
-            <span>🗂 Workspace</span>
+            <span className="chat__workspace-btn-label">
+              <IconGrid size={15} />
+              Workspace
+            </span>
             {approvals.length > 0 && <span className="chat__nav-badge">{approvals.length}</span>}
           </button>
           {native.isNative && (
@@ -393,7 +375,14 @@ export function Chat() {
 
       <main className="chat__main">
         {section ? (
-          <Section id={section} onBack={() => setSection(null)} />
+          <Section
+            id={section}
+            onBack={() => setSection(null)}
+            onWorkspace={() => {
+              setSection(null);
+              setWorkspaceOpen(true);
+            }}
+          />
         ) : workspaceOpen ? (
           <WorkspaceGrid
             onClose={() => setWorkspaceOpen(false)}
@@ -401,7 +390,6 @@ export function Chat() {
               setWorkspaceOpen(false);
               openSection(id);
             }}
-            onDashboard={openDashboard}
           />
         ) : (
           <>
@@ -422,13 +410,12 @@ export function Chat() {
                 hint="Keep Dobot's floating dot on screen above every window"
               />
             </div>
-            <button onClick={openDashboard}>Dashboard</button>
           </div>
         </header>
 
         {dotEnabled && (
           <div className="chat__banner">
-            The floating dot is on screen. Drag it anywhere, click it for a quick ask, or turn{" "}
+            The floating dot is on screen. Drag it anywhere, double-click it for a quick ask, or turn{" "}
             <strong>Always on</strong> off to go back to a plain chat window.
           </div>
         )}
@@ -559,8 +546,9 @@ export function Chat() {
 
           {!connected && (
             <div className="notice notice--warn">
-              The Dobot backend is not reachable at <span className="mono">{getBaseUrl()}</span>.
-              {getBaseUrl().includes("hf.space") ? (
+              {/^https?:\/\/(127\.0\.0\.1|localhost):8756\/?$/.test(getBaseUrl()) ? (
+                <>Dobot is starting the local backend. Please wait a moment…</>
+              ) : getBaseUrl().includes("hf.space") ? (
                 <>
                   {" "}
                   The Space may be asleep, still building (first wake takes ~30 s), or missing its
@@ -777,8 +765,129 @@ export function Chat() {
   );
 }
 
+/**
+ * Inline markdown: **bold**, *italic*, `code`, [links](url). Splits on a single pass so model
+ * output like **What's missing:** renders as formatted text instead of literal asterisks.
+ */
+const INLINE_MD = /(\*\*[^*]+\*\*|\*[^*\n]+\*|`[^`\n]+`|\[[^\]\n]+\]\([^)\s]+\))/g;
+
+function renderInline(text: string, keyBase: string): React.ReactNode[] {
+  const parts = text.split(INLINE_MD);
+  return parts.filter(Boolean).map((part, index) => {
+    const key = `${keyBase}-${index}`;
+    if (part.startsWith("**") && part.endsWith("**") && part.length > 4) {
+      return <strong key={key}>{part.slice(2, -2)}</strong>;
+    }
+    if (part.startsWith("*") && part.endsWith("*") && part.length > 2) {
+      return <em key={key}>{part.slice(1, -1)}</em>;
+    }
+    if (part.startsWith("`") && part.endsWith("`") && part.length > 2) {
+      return <code key={key}>{part.slice(1, -1)}</code>;
+    }
+    const link = /^\[([^\]]+)\]\(([^)\s]+)\)$/.exec(part);
+    if (link) {
+      return (
+        <a key={key} href={link[2]} target="_blank" rel="noreferrer">
+          {link[1]}
+        </a>
+      );
+    }
+    return <Fragment key={key}>{part}</Fragment>;
+  });
+}
+
+/** Block markdown: fenced code, headings, ordered/unordered lists, rules, paragraphs. */
+function renderMarkdown(body: string): React.ReactNode[] {
+  const lines = body.replace(/\r\n/g, "\n").split("\n");
+  const blocks: React.ReactNode[] = [];
+  let i = 0;
+  let key = 0;
+  const nextKey = () => `md-${key++}`;
+
+  while (i < lines.length) {
+    const line = lines[i];
+    if (!line.trim()) {
+      i += 1;
+      continue;
+    }
+
+    if (line.trimStart().startsWith("```")) {
+      const buf: string[] = [];
+      i += 1;
+      while (i < lines.length && !lines[i].trimStart().startsWith("```")) buf.push(lines[i++]);
+      i += 1;
+      blocks.push(
+        <pre key={nextKey()}>
+          <code>{buf.join("\n")}</code>
+        </pre>,
+      );
+      continue;
+    }
+
+    const heading = /^(#{1,6})\s+(.*)$/.exec(line);
+    if (heading) {
+      blocks.push(
+        <p key={nextKey()} className={`md-heading md-heading--${heading[1].length}`}>
+          {renderInline(heading[2], nextKey())}
+        </p>,
+      );
+      i += 1;
+      continue;
+    }
+
+    if (/^\s*(-{3,}|\*{3,})\s*$/.test(line)) {
+      blocks.push(<hr key={nextKey()} />);
+      i += 1;
+      continue;
+    }
+
+    const bullet = /^\s*([-*+]|\d+[.)])\s+(.*)$/.exec(line);
+    if (bullet) {
+      const ordered = /^\s*\d/.test(line);
+      const items: React.ReactNode[] = [];
+      while (i < lines.length) {
+        const next = /^\s*([-*+]|\d+[.)])\s+(.*)$/.exec(lines[i]);
+        if (!next || /^\s*([-*+])/.test(lines[i]) === ordered) break;
+        items.push(<li key={`${nextKey()}-${items.length}`}>{renderInline(next[2], `li-${items.length}`)}</li>);
+        i += 1;
+      }
+      blocks.push(ordered ? <ol key={nextKey()}>{items}</ol> : <ul key={nextKey()}>{items}</ul>);
+      continue;
+    }
+
+    // Paragraph: every consecutive non-blank, non-block line joined, with soft breaks kept.
+    const buf: string[] = [];
+    while (
+      i < lines.length &&
+      lines[i].trim() &&
+      !/^\s*([-*+]|\d+[.)])\s+/.test(lines[i]) &&
+      !/^(#{1,6})\s+/.test(lines[i]) &&
+      !lines[i].trimStart().startsWith("```") &&
+      !/^\s*(-{3,}|\*{3,})\s*$/.test(lines[i])
+    ) {
+      buf.push(lines[i]);
+      i += 1;
+    }
+    blocks.push(
+      <p key={nextKey()}>{renderInline(buf.join("\n"), nextKey())}</p>,
+    );
+  }
+  return blocks;
+}
+
 function Message({ message, onOpenDashboard }: { message: ChatMessage; onOpenDashboard: () => void }) {
   const isUser = message.role === "user";
+  const [lightbox, setLightbox] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!lightbox) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setLightbox(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [lightbox]);
+
   return (
     <div
       className={`chat__message ${isUser ? "chat__message--user" : ""}`}
@@ -804,7 +913,14 @@ function Message({ message, onOpenDashboard }: { message: ChatMessage; onOpenDas
             <div className="chat__bubble-attachments">
               {message.attachments.map((item) =>
                 item.kind === "image" && item.previewUrl ? (
-                  <img key={item.id} className="chat__bubble-image" src={item.previewUrl} alt={item.name} />
+                  <img
+                    key={item.id}
+                    className="chat__bubble-image"
+                    src={item.previewUrl}
+                    alt={item.name}
+                    title="Click to view full size"
+                    onClick={() => setLightbox(item.previewUrl!)}
+                  />
                 ) : (
                   <span key={item.id} className="chat__bubble-file" title={`${item.name} · ${formatBytes(item.size)}`}>
                     <IconFile size={13} />
@@ -814,7 +930,9 @@ function Message({ message, onOpenDashboard }: { message: ChatMessage; onOpenDas
               )}
             </div>
           )}
-          <div className="chat__bubble-text">{message.text}</div>
+          <div className={`chat__bubble-text${isUser ? "" : " chat__bubble-text--md"}`}>
+            {isUser ? message.text : renderMarkdown(message.text)}
+          </div>
           {message.plan && message.plan.steps.length > 0 && <PlanView plan={message.plan} />}
           {message.sources && message.sources.length > 0 && (
             <div className="sources">
@@ -833,6 +951,14 @@ function Message({ message, onOpenDashboard }: { message: ChatMessage; onOpenDas
           )}
         </div>
       </div>
+      {lightbox &&
+        createPortal(
+          <div className="chat__lightbox" onClick={() => setLightbox(null)} role="dialog" aria-label="Image preview">
+            <img src={lightbox} alt="Attachment preview" />
+            <span className="chat__lightbox-hint">Click anywhere or press Esc to close</span>
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }

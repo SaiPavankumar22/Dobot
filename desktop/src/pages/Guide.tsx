@@ -32,7 +32,7 @@ const QUICK_START: { title: string; body: string }[] = [
   },
   {
     title: "4 · Keep it always there (optional)",
-    body: "Turn on ‘Always on’ in the header for the floating dot: click it anywhere to ask something without finding this window.",
+    body: "Turn on ‘Always on’ in the header for the floating dot: double-click it anywhere to ask something without finding this window.",
   },
 ];
 
@@ -92,7 +92,7 @@ const TOPICS: Topic[] = [
     id: "alwayson",
     title: "The floating dot and the quick panel",
     where: "The 'Always on' switch in the chat header.",
-    what: "Turns Dobot into something always available: a small dot that floats above every window. Click it for a compact ask panel, drag it anywhere, right-click for the tray menu. Turn the switch off and Dobot is an ordinary chat window again.",
+    what: "Turns Dobot into something always available: a small dot that floats above every window. Double-click it for a compact ask panel, drag it anywhere, right-click for the tray menu. Turn the switch off and Dobot is an ordinary chat window again.",
     tip: "The dot's colour and motion show what it is doing — listening, thinking, executing, or waiting for your approval — and hovering it says what it is working on right now.",
   },
   {

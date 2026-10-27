@@ -75,6 +75,18 @@ export function IconEye(props: IconProps) {
   );
 }
 
+/** The workspace footer button's icon — replacing the 🗂 emoji that rendered as an unrecognizable mush. */
+export function IconGrid(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <rect x="3.5" y="3.5" width="7" height="7" rx="1.6" />
+      <rect x="13.5" y="3.5" width="7" height="7" rx="1.6" />
+      <rect x="3.5" y="13.5" width="7" height="7" rx="1.6" />
+      <rect x="13.5" y="13.5" width="7" height="7" rx="1.6" />
+    </Svg>
+  );
+}
+
 export function IconMoon(props: IconProps) {
   return (
     <Svg {...props}>

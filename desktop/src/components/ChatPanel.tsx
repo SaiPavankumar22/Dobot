@@ -135,9 +135,6 @@ export function ChatPanel() {
             : "reconnecting"}
         </span>
         <span className="panel__spacer" />
-        <button className="ghost" title="Open the dashboard" onClick={() => void native.openDashboard()}>
-          ⧉
-        </button>
         <button className="ghost" title="Hide the panel" onClick={() => void native.hidePanel()}>
           —
         </button>

@@ -36,10 +36,16 @@ export function DobotDot() {
   const approvals = useDobot((state) => state.approvals);
   const connected = useDobot((state) => state.connected);
   const [visibleStatus, setVisibleStatus] = useState<DotStatus>("IDLE");
-  // Windows enters the OS drag loop the moment `startDragging()` is called, which swallows the
-  // matching `mouseup` — so a click can never be detected from the mouse events alone. The pointer
-  // position is tracked instead, and a press that barely moves is treated as a click.
-  const pressPoint = useRef<{ x: number; y: number; dragging: boolean } | null>(null);
+  // A click on the dot is two quick `mousedown`s, not a `mouseup` pair: Windows enters the OS drag
+  // loop the moment `startDragging()` is called (which happens on the press, so the dot can be
+  // dragged from anywhere) and swallows the matching `mouseup` — a single click therefore used to be
+  // unreliable, and only the odd left+right chord landed. Successive presses always arrive, so the
+  // dialog now opens on a double left click and nothing else. Dragging still works: a press that
+  // moves past a few pixels asks the shell to drag the window instead.
+  const press = useRef<{ x: number; y: number; at: number; dragging: boolean } | null>(null);
+  /** Two left presses within this window (and a few pixels apart) open the dialog. */
+  const DOUBLE_MS = 420;
+  const DOUBLE_PX = 14;
 
   // Completed/error are transient: show the glyph for a moment, then fall back to idle.
   useEffect(() => {
@@ -62,31 +68,33 @@ export function DobotDot() {
   }, []);
 
   const onMouseDown = useCallback((event: React.MouseEvent) => {
-    pressPoint.current = { x: event.screenX, y: event.screenY, dragging: false };
+    if (event.button !== 0) return;
+    const now = Date.now();
+    const previous = press.current;
+    // The second press of a double click: open (or close) the chat dialog, and do not start a drag
+    // from the confirming press.
+    if (
+      previous &&
+      !previous.dragging &&
+      now - previous.at <= DOUBLE_MS &&
+      Math.abs(event.screenX - previous.x) + Math.abs(event.screenY - previous.y) < DOUBLE_PX
+    ) {
+      press.current = null;
+      void native.togglePanel();
+      return;
+    }
+    press.current = { x: event.screenX, y: event.screenY, at: now, dragging: false };
     if (native.isNative) {
       void native.startDragging();
     }
   }, []);
 
-  // A press that ends within a few pixels is a click, not a drag: toggle the chat dialog. The OS
-  // drag loop eats the mouseup on Windows, so this fires from both paths harmlessly.
-  const onMouseUp = useCallback(
-    (event: React.MouseEvent) => {
-      const press = pressPoint.current;
-      pressPoint.current = null;
-      if (!press || press.dragging) return;
-      const moved = Math.abs(event.screenX - press.x) + Math.abs(event.screenY - press.y);
-      if (moved < 6) {
-        void native.togglePanel();
-      }
-    },
-    [],
-  );
-
+  // A press that moves marks the press as a drag (best-effort: on Windows these moves are eaten by
+  // the OS loop, in which case the coordinates of the next press simply won't match).
   const onMouseMove = useCallback((event: React.MouseEvent) => {
-    const press = pressPoint.current;
-    if (press && Math.abs(event.screenX - press.x) + Math.abs(event.screenY - press.y) >= 6) {
-      press.dragging = true;
+    const current = press.current;
+    if (current && !current.dragging && Math.abs(event.screenX - current.x) + Math.abs(event.screenY - current.y) >= 6) {
+      current.dragging = true;
     }
   }, []);
 
@@ -101,7 +109,6 @@ export function DobotDot() {
     <div
       className="dot-shell"
       onMouseDown={onMouseDown}
-      onMouseUp={onMouseUp}
       onMouseMove={onMouseMove}
       title={label}
     >

@@ -81,7 +81,7 @@ export const native = {
   async openPanel(): Promise<void> {
     await this.invokeSafe("open_panel");
   },
-  /** Show the compact chat dialog if hidden, hide it if shown — the dot click behaviour. */
+  /** Show the compact chat dialog if hidden, hide it if shown — the dot double-click behaviour. */
   async togglePanel(): Promise<void> {
     await this.invokeSafe("toggle_panel");
   },

@@ -45,12 +45,16 @@ fn list_monitors() -> Result<Vec<MonitorInfo>, String> {
 }
 
 #[tauri::command]
-fn capture_region(region: Region) -> Result<CaptureResult, String> {
-    let image = capture::capture_region(&region)?;
+async fn capture_region(region: Region) -> Result<CaptureResult, String> {
+    let width = region.width;
+    let height = region.height;
+    let image = tauri::async_runtime::spawn_blocking(move || capture::capture_region(&region))
+        .await
+        .map_err(|error| format!("could not capture the selected region: {error}"))??;
     Ok(CaptureResult {
         image,
-        width: region.width,
-        height: region.height,
+        width,
+        height,
     })
 }
 
@@ -74,7 +78,7 @@ fn open_panel(app: AppHandle) {
     windows::open_panel(&app);
 }
 
-/// The dot click: show the compact chat dialog if hidden, hide it if shown.
+/// The dot's double-click: show the compact chat dialog if hidden, hide it if shown.
 #[tauri::command]
 fn toggle_panel(app: AppHandle) {
     windows::toggle_panel(&app);
@@ -301,9 +305,11 @@ pub fn run() {
                 Err(error) => eprintln!("dobot: {error}"),
             }
 
-            // Remember where the user drags the dot, and hide the panel instead of closing it.
+            // Remember where the user drags the dot — and keep the panel attached to it: the pair
+            // reads as one surface, so a dragged dot must carry the open dialog with it.
             if let Some(dot) = app.get_webview_window(windows::DOT) {
                 let dot_handle = handle.clone();
+                let last = std::sync::Mutex::new(dot.outer_position().ok());
                 dot.on_window_event(move |event| {
                     if let WindowEvent::Moved(position) = event {
                         state::remember_dot_position(
@@ -315,6 +321,23 @@ pub fn run() {
                                 scale: 0.0,
                             },
                         );
+                        let mut last = last.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+                        let previous = *last;
+                        *last = Some(*position);
+                        if let (Some(previous), Some(panel)) =
+                            (previous, dot_handle.get_webview_window(windows::PANEL))
+                        {
+                            if panel.is_visible().unwrap_or(false) {
+                                let dx = position.x - previous.x;
+                                let dy = position.y - previous.y;
+                                if let Ok(panel_pos) = panel.outer_position() {
+                                    let _ = panel.set_position(tauri::PhysicalPosition::new(
+                                        panel_pos.x + dx,
+                                        panel_pos.y + dy,
+                                    ));
+                                }
+                            }
+                        }
                     }
                 });
             }

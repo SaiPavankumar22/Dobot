@@ -41,27 +41,33 @@ export function ScreenSelector({ onDone, onCancel }: Props) {
       setBusy(true);
       setHint("Capturing…");
       if (native.isNative) {
-        const image = await native.captureRegion(region);
-        if (!image) {
-          setHint("Capture failed");
+        try {
+          const image = await native.captureRegion(region);
+          if (!image) {
+            throw new Error("Capture failed");
+          }
+          await native.finishSelection({
+            image,
+            region,
+            application: "",
+            window_title: "",
+          });
+        } catch (error) {
+          setHint(error instanceof Error ? error.message : "Capture failed");
           setBusy(false);
-          return;
         }
-        await native.finishSelection({
-          image,
-          region,
-          application: "",
-          window_title: "",
-        });
         return;
       }
-      const selection = await browserCapture(region);
-      if (!selection) {
-        setHint("Could not capture the screen in the browser");
+      try {
+        const selection = await browserCapture(region);
+        if (!selection) {
+          throw new Error("Could not capture the screen in the browser");
+        }
+        onDone(selection);
+      } catch (error) {
+        setHint(error instanceof Error ? error.message : "Capture failed");
         setBusy(false);
-        return;
       }
-      onDone(selection);
     },
     [onDone],
   );
@@ -100,6 +106,14 @@ export function ScreenSelector({ onDone, onCancel }: Props) {
           Sending to Dobot…
         </div>
       )}
+      <button
+        className="select-overlay__cancel"
+        onMouseDown={(event) => event.stopPropagation()}
+        onClick={onCancel}
+        type="button"
+      >
+        Cancel (Esc)
+      </button>
     </div>
   );
 }

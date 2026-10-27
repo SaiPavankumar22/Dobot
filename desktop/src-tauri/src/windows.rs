@@ -50,15 +50,21 @@ fn anchor_bottom_right(app: &AppHandle, label: &str) {
     let _ = window.set_position(tauri::PhysicalPosition::new(x, y));
 }
 
-/// Show the compact panel next to the dot, keeping it on screen.
+/// Show the compact panel attached to the dot's top-left corner: the dot stays just outside the
+/// panel's left edge (tangent, never covered — both are always-on-top and their z-order is not
+/// guaranteed), so the icon and the dialog read as one surface. While the panel is open, dragging
+/// the dot carries it along (see the dot's Moved handler in lib.rs).
 pub fn open_panel(app: &AppHandle) {
     if let Some(panel) = app.get_webview_window(PANEL) {
         let dot_enabled = state::is_dot_enabled(app);
         if let Some(dot) = app.get_webview_window(DOT) {
             if let (Ok(dot_pos), Ok(size)) = (dot.outer_position(), panel.outer_size()) {
                 let bounds = capture::virtual_bounds().unwrap_or((0, 0, 1920, 1080));
-                let mut x = dot_pos.x + 56;
-                let mut y = dot_pos.y - 40;
+                // The dot window is 72px with a 44px circle centred in it: the circle's right edge
+                // is at +58, so +60 parks the panel two pixels clear of it, and -6 lines the circle
+                // up with the panel's header instead of leaving it stranded below the bar.
+                let mut x = dot_pos.x + 60;
+                let mut y = dot_pos.y - 6;
                 let max_x = bounds.0 + bounds.2 as i32 - size.width as i32 - 8;
                 let max_y = bounds.1 + bounds.3 as i32 - size.height as i32 - 8;
                 x = x.clamp(bounds.0 + 8, max_x.max(bounds.0 + 8));
@@ -74,8 +80,9 @@ pub fn open_panel(app: &AppHandle) {
     }
 }
 
-/// The dot is a toggle: click it and the compact chat dialog appears next to it; click again and it
-/// disappears. Kept separate from `open_panel`, which always shows (the selection flow relies on it).
+/// The dot is a toggle: double-click it and the compact chat dialog appears next to it; double-click
+/// again and it disappears. Kept separate from `open_panel`, which always shows (the selection flow
+/// relies on it).
 pub fn toggle_panel(app: &AppHandle) {
     if let Some(panel) = app.get_webview_window(PANEL) {
         if panel.is_visible().unwrap_or(false) {

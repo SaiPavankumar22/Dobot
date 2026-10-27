@@ -505,34 +505,48 @@ export const useDobot = create<DobotStore>((set, get) => ({
   },
 
   captureScreen: async () => {
-    set({ lastError: null });
-    const selection = await captureSelection();
-    if (selection.source === "none") {
-      set({ lastError: selection.note ?? "selection cancelled" });
-      return;
+    set({ lastError: null, capturing: true });
+    try {
+      const selection = await captureSelection();
+      if (selection.source === "none") {
+        if (selection.note && !selection.note.toLowerCase().includes("cancel")) {
+          set({ lastError: selection.note });
+        }
+        return;
+      }
+      set({ selection });
+    } catch (error) {
+      set({ lastError: error instanceof Error ? error.message : "Screen capture failed." });
+    } finally {
+      set({ capturing: false });
     }
-    set({ selection });
   },
 
   setCapturing: (capturing) => set({ capturing, lastError: capturing ? null : get().lastError }),
 
   captureActiveWindow: async () => {
     if (!native.isNative) return;
-    set({ lastError: null });
-    const payload = await native.captureActiveWindow();
-    if (!payload || payload.error || !payload.image) {
-      set({ lastError: payload?.error ?? "Dobot couldn't take a picture of that window." });
-      return;
+    set({ lastError: null, capturing: true });
+    try {
+      const payload = await native.captureActiveWindow();
+      if (!payload || payload.error || !payload.image) {
+        set({ lastError: payload?.error ?? "Dobot couldn't take a picture of that window." });
+        return;
+      }
+      set({
+        selection: {
+          image: payload.image,
+          region: payload.region,
+          application: payload.application,
+          windowTitle: payload.window_title,
+          source: "native",
+        },
+      });
+    } catch (error) {
+      set({ lastError: error instanceof Error ? error.message : "Window capture failed." });
+    } finally {
+      set({ capturing: false });
     }
-    set({
-      selection: {
-        image: payload.image,
-        region: payload.region,
-        application: payload.application,
-        windowTitle: payload.window_title,
-        source: "native",
-      },
-    });
   },
 
   finishBrowserSelection: (selection) => set({ selection, capturing: false }),
