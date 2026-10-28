@@ -605,11 +605,13 @@ ocr = [
 ]
 voice = [
     { name = "faster-whisper" },
+    { name = "onnxruntime" },
 ]
 voice-gpu = [
     { name = "faster-whisper" },
     { name = "nvidia-cublas-cu12", marker = "sys_platform == 'win32'" },
     { name = "nvidia-cudnn-cu12", marker = "sys_platform == 'win32'" },
+    { name = "onnxruntime" },
 ]
 
 [package.metadata]
@@ -630,6 +632,8 @@ requires-dist = [
     { name = "numpy", specifier = ">=1.26" },
     { name = "nvidia-cublas-cu12", marker = "sys_platform == 'win32' and extra == 'voice-gpu'" },
     { name = "nvidia-cudnn-cu12", marker = "sys_platform == 'win32' and extra == 'voice-gpu'" },
+    { name = "onnxruntime", marker = "extra == 'voice'", specifier = ">=1.17" },
+    { name = "onnxruntime", marker = "extra == 'voice-gpu'", specifier = ">=1.17" },
     { name = "pillow", marker = "extra == 'ocr'", specifier = ">=10.3" },
     { name = "playwright", specifier = ">=1.63.0" },
     { name = "pydantic", specifier = ">=2.8" },

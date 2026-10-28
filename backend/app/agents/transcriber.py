@@ -31,9 +31,11 @@ Design, matching the rest of Dobot:
 
 from __future__ import annotations
 
+import asyncio
 import os
 import re
 import shutil
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -133,6 +135,8 @@ class Transcriber:
         self._note: str = ""
         #: Which entry of :meth:`_attempts` produced the live model (inference demotes to the next).
         self._attempt_index: int = 0
+        #: Loads run on worker threads now; one model, one loader.
+        self._lock = threading.RLock()
 
     # ------------------------------------------------------------------ capability
 
@@ -211,6 +215,16 @@ class Transcriber:
     # ------------------------------------------------------------------ model
 
     def _load(self, skip: int = 0) -> Any:
+        """Load the model once, serialised across threads. Returns the model or None; never raises.
+
+        The load happens on a worker thread (see :meth:`transcribe`), so two requests can arrive
+        here at once — a cold start is seconds long, and the one-time checkpoint download is
+        minutes. One model, one loader.
+        """
+        with self._lock:
+            return self._load_unlocked(skip)
+
+    def _load_unlocked(self, skip: int = 0) -> Any:
         """Load the model once. Returns the model or None; never raises.
 
         ``skip`` ignores the first N candidates — how a completed load that cannot *run* (the classic
@@ -282,19 +296,20 @@ class Transcriber:
 
     def _demote(self, reason: str) -> Any:
         """Drop the device that just failed and load the next candidate. None when there is no next."""
-        attempts = self._attempts()
-        next_index = self._attempt_index + 1
-        if self._model is None or next_index >= len(attempts):
-            return None
-        dropped = attempts[self._attempt_index][0]
-        promoted = attempts[next_index][0]
-        self._model = None
-        self._loaded_for = None
-        self._note = (
-            f"{dropped} failed during inference ({reason.strip()[:120]}) — continuing on {promoted}"
-        )
-        logger.warning("transcriber: %s", self._note)
-        return self._load(skip=next_index)
+        with self._lock:
+            attempts = self._attempts()
+            next_index = self._attempt_index + 1
+            if self._model is None or next_index >= len(attempts):
+                return None
+            dropped = attempts[self._attempt_index][0]
+            promoted = attempts[next_index][0]
+            self._model = None
+            self._loaded_for = None
+            self._note = (
+                f"{dropped} failed during inference ({reason.strip()[:120]}) — continuing on {promoted}"
+            )
+            logger.warning("transcriber: %s", self._note)
+            return self._load(skip=next_index)
 
     # ------------------------------------------------------------------ transcription
 
@@ -304,7 +319,7 @@ class Transcriber:
         audio = Path(path)
         if not audio.exists():
             return {"ok": False, "text": "", "language": "", "duration_ms": 0, "error": "audio file not found"}
-        model = self._load()
+        model = await asyncio.to_thread(self._load)
         if model is None:
             return {
                 "ok": False,
@@ -327,18 +342,28 @@ class Transcriber:
                         "duration_ms": int((time.perf_counter() - started) * 1000),
                         "error": "ffmpeg is required to decode this recording format",
                     }
-                import asyncio
-
                 temp_wav = audio.with_suffix(".decoded.wav")
                 proc = await asyncio.create_subprocess_exec(
                     "ffmpeg", "-y", "-i", str(audio), "-ar", "16000", "-ac", "1", str(temp_wav),
                     stdout=asyncio.subprocess.DEVNULL,
-                    stderr=asyncio.subprocess.DEVNULL,
+                    # Captured, not discarded: "ffmpeg failed to decode" with no reason is the
+                    # same dishonesty as a mic button that spins forever — the last line of the
+                    # decoder's own complaint is what makes the failure fixable.
+                    stderr=asyncio.subprocess.PIPE,
                     # ffmpeg resolves on PATH (kept below); unrelated shell-exported secrets
                     # stay out of the child, matching the sandbox's policy.
                     env=_safe_env(),
                 )
-                if await proc.wait() != 0 or not temp_wav.exists():
+                _, raw = await proc.communicate()
+                if proc.returncode != 0 or not temp_wav.exists():
+                    tail = (raw or b"").decode("utf-8", "replace").strip().splitlines()
+                    logger.warning(
+                        "ffmpeg decode failed (rc=%s, %s → %s): %s",
+                        proc.returncode,
+                        audio.name,
+                        temp_wav.name,
+                        tail[-1] if tail else "no output",
+                    )
                     return {
                         "ok": False,
                         "text": "",
@@ -352,7 +377,7 @@ class Transcriber:
             try:
                 result = await _run_inference(model, str(source), language)
             except Exception as exc:  # noqa: BLE001
-                demoted = self._demote(str(exc))
+                demoted = await asyncio.to_thread(self._demote, str(exc))
                 if demoted is None:
                     raise
                 result = await _run_inference(demoted, str(source), language)

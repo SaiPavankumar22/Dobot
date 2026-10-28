@@ -318,6 +318,51 @@ class Settings(BaseSettings):
     #: Threads for CPU inference. 0 = every logical core (faster-whisper would use 4).
     transcriber_cpu_threads: int = 0
 
+    # --- voice agent: the live call ---------------------------------------------------------------
+    # A full-duplex conversation in the shape of huggingface/speech-to-speech's cascade, run
+    # in-process so every stage streams into the next:
+    #   mic frames → VAD → local Whisper → streaming LLM → Sarvam TTS sentence by sentence
+    # The panel plays the audio as it arrives and can interrupt mid-word (barge-in cancels the LLM
+    # stream and the TTS request, exactly like that repo's `turn_detected` path).
+    voice_call_enabled: bool = True
+    # VAD: Silero v5 ONNX (2.3 MB, downloaded once into the models dir). Without onnxruntime — or
+    # if the model cannot be fetched — an adaptive energy detector does the same job, worse in
+    # noise; the call says which one is live instead of pretending they are equal.
+    voice_vad_model_url: str = (
+        "https://raw.githubusercontent.com/snakers4/silero-vad/master/src/silero_vad/data/silero_vad.onnx"
+    )
+    voice_vad_threshold: float = 0.5
+    #: Silence that ends a turn — long enough to keep a speaker's mid-sentence pause inside it.
+    voice_vad_silence_ms: int = 550
+    #: Audio kept from before the trigger so the first consonant is not clipped off the transcript.
+    voice_vad_pad_ms: int = 160
+
+    # --- voice agent TTS: Sarvam AI (bulbul) -------------------------------------------------------
+    # The key lives in `.env` (or Sites/Settings secrets) and is only ever read by this process —
+    # no window, log line or asset sees it. New Sarvam accounts carry ₹100 of credits.
+    sarvam_api_key: str = ""
+    sarvam_tts_base_url: str = "https://api.sarvam.ai"
+    sarvam_tts_model: str = "bulbul:v4-flash"
+    #: Empty = the model's documented default persona; set an id from the Sarvam voices page.
+    sarvam_tts_voice: str = ""
+    sarvam_tts_language: str = "en-IN"
+    #: Streaming supports 8/16/22.05/24 kHz; 24000 matches the panel's playback context.
+    sarvam_tts_sample_rate: int = 24000
+
+    # --- voice agent LLM ----------------------------------------------------------------------------
+    # Defaults to the reasoning stack — the NVIDIA Nemotron models the agent already plans with.
+    # To take the call straight to NVIDIA's own endpoint instead:
+    #   VOICE_LLM_BASE_URL=https://integrate.api.nvidia.com/v1
+    #   VOICE_LLM_API_KEY=<key from build.nvidia.com/settings/api-keys>
+    #   VOICE_LLM_MODEL=nvidia/nemotron-3-super-120b-a12b
+    voice_llm_base_url: str = ""
+    voice_llm_api_key: str = ""
+    #: Empty = NEMOTRON_SUPER_MODEL (nvidia/nemotron-3-super-120b-a12b).
+    voice_llm_model: str = ""
+    #: Spoken answers are short: 220 tokens is a few sentences, and stopping early is latency won.
+    voice_llm_max_tokens: int = 220
+    voice_llm_temperature: float = 0.5
+
     # --- local API auth -------------------------------------------------------
     # Empty means the loopback API is open (the default, for a single-user laptop). Set a token to
     # require `Authorization: Bearer <token>` on every request except /health. Generate one with

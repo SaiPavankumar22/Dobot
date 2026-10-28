@@ -109,3 +109,55 @@ def test_models_dir_used_for_download(tmp_path) -> None:
     assert calls[0].get("download_root") == expected_dir, (
         f"expected download_root={expected_dir!r}, got {calls[0].get('download_root')!r}"
     )
+
+
+def test_transcribe_loads_the_model_off_the_event_loop(tmp_path) -> None:
+    """The model load must never sit on the request loop.
+
+    Loading is seconds of blocking work — and the first-ever run downloads ~484 MB of weights.
+    On the loop it froze the whole gateway: the mic button said "Writing it down…" forever while
+    health, chat and every other endpoint stopped answering. The fake load blocks for four seconds;
+    if it ran on the loop, this exercise could not observe the loop free again in time.
+    """
+    import asyncio
+    import threading
+    import time
+
+    from app.agents.transcriber import Transcriber
+
+    settings = Settings(dobot_state_dir=str(tmp_path / ".dobot"))
+    settings.transcriber_enabled = True
+    audio = tmp_path / "clip.wav"
+    audio.write_bytes(b"RIFF0000WAVE")  # existence is checked before the load; decoding never runs
+
+    transcriber = Transcriber(settings)
+    started = threading.Event()
+    released = threading.Event()
+
+    def _slow_load(skip: int = 0) -> object:
+        started.set()
+        released.wait(timeout=4)  # a real load: seconds of blocking work
+        return object()
+
+    async def exercise() -> float:
+        watchdog = threading.Timer(4.0, released.set)  # the suite can never hang on this
+        watchdog.start()
+        try:
+            task = asyncio.create_task(transcriber.transcribe(audio))
+            began = time.perf_counter()
+            await asyncio.sleep(0.05)
+            elapsed = time.perf_counter() - began
+            released.set()
+            await task
+            return elapsed
+        finally:
+            watchdog.cancel()
+
+    with patch.object(Transcriber, "_load_unlocked", side_effect=_slow_load):
+        elapsed = asyncio.run(exercise())
+
+    assert started.is_set(), "the model load never ran"
+    assert elapsed < 1.0, (
+        f"the event loop stalled {elapsed:.1f}s inside the model load — "
+        "it must run on a worker thread, or every other request waits behind it"
+    )

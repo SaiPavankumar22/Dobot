@@ -32,6 +32,7 @@ from app.api import (
     skills,
     system,
     tasks,
+    voice_call,
     ws,
 )
 from app.api import (
@@ -134,6 +135,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         activity.router,
         system.router,
         ws.router,
+        voice_call.router,
     ):
         app.include_router(router)
 
