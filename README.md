@@ -12,7 +12,7 @@ It sees what you point at, plans the steps, asks before anything risky, does the
 ![Platform](https://img.shields.io/badge/platform-Windows-0078D6)
 ![Python](https://img.shields.io/badge/python-3.11%2B-3776AB)
 ![Tauri](https://img.shields.io/badge/desktop-Tauri%202-24C8DB)
-![Tests](https://img.shields.io/badge/tests-355%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-513%20passing-brightgreen)
 
 ![Dobot chat window](docs/screenshots/chat.png)
 
@@ -41,10 +41,12 @@ then go and do it yourself. Dobot closes that loop.
 
 ## What it can do
 
-- **Answer and plan.** Simple questions get a direct answer; bigger requests become a step-by-step plan.
+- **Answer and plan.** Simple questions get a direct answer; bigger requests become a step-by-step plan. Replies render formatted — headings, lists and code blocks, never raw markdown.
 - **See your screen.** Select a region (`Ctrl+Shift+S`) or share the window you are in (`Ctrl+Alt+L`) and ask about it.
 - **Listen.** Hold `Ctrl+Shift+Space`, speak, let go. Transcribed locally with Whisper.
-- **Read your files.** Drop in images, logs or code files and ask about them.
+- **Snip the screen.** Click the always-on dot and pick **Snip** — drag a box around any part of the screen and it lands in the chat, ready to ask about.
+- **Talk out loud.** The same menu's **Voice** starts a live call: Dobot listens, answers and speaks, and you can interrupt an answer mid-sentence. Transcription stays on your machine.
+- **Read your files.** Drop in images, logs or code files and ask about them — attachments open full size on click.
 - **Research the web.** Flip the **Research** chip in the composer: Tavily search plus synthesis, answered with sources — no full agent loop needed.
 - **Use your browser.** Opens a visible browser window and clicks, types and downloads like a person would.
 - **Run skills.** Ten built-in workflows, such as *tidy downloads*, *weekly report*, *CI autopsy*, *release checklist* and *disk report*.
@@ -64,8 +66,8 @@ then go and do it yourself. Dobot closes that loop.
 
 ### Two ways to use it
 
-- **A normal chat window** (default) — conversations on the left, the chat on the right.
-- **The always-on dot** — turn on **Always on** and a small floating dot sits above every app. Its colour shows whether Dobot is thinking, working or waiting for you. Click it for a quick-ask panel.
+- **A normal chat window** (default) — conversations on the left, the chat on the right, and a **Workspace** picker in the sidebar for tasks, skills, memory, security and the rest.
+- **The always-on dot** — turn on **Always on** and a small floating dot sits above every app. Its colour shows whether Dobot is thinking, working or waiting for you. A single click fans out a radial menu — **Chat**, **Snip** or **Voice** — a double click opens the quick-ask dialog straight away, and dragging the icon carries the open dialog with it, docked to its corner.
 
 ---
 
@@ -129,6 +131,7 @@ Full details: [`docs/security.md`](docs/security.md).
 | --- | --- |
 | Reasoning | **NVIDIA Nemotron 3** via **Nebius Token Factory** |
 | Web research | **Tavily** |
+| Voice calls | **Silero VAD** for turn detection · local **Whisper** for speech · **Sarvam** bulbul TTS |
 | Browser control | **Playwright** (built in) |
 | Desktop control | **Hermes** agent runtime (optional) |
 | Isolation | **NVIDIA NemoClaw / OpenShell** or **Nebius Sandboxes** (optional) |
@@ -168,6 +171,8 @@ cp .env.example .env
 ```
 
 Set `NEBIUS_API_KEY` (required for real answers) and `TAVILY_API_KEY` (for web research).
+Optional: `SARVAM_API_KEY` (from sarvam.ai) gives the voice call its spoken replies — without it the
+call still listens and answers in text.
 You can also paste them later in the app under **Settings → Your API keys**.
 
 Running MongoDB? Set `MONGO_URL` and the backend stores accounts, tasks, memory, automations and
@@ -204,7 +209,7 @@ npm run tauri dev
 <summary><b>Run the tests</b></summary>
 
 ```bash
-cd backend && uv run pytest -q          # 355 tests, no network needed
+cd backend && uv run pytest -q          # 513 tests, no network needed
 cd backend && uv run ruff check app tests
 cd desktop && npm run build
 ```
@@ -235,7 +240,7 @@ Listed plainly, because pretending something works is worse than admitting it do
 | **Browser logins** | Dobot uses its own browser profile, so you sign in once inside its window; existing Chrome logins do not carry over. |
 | **Isolation** | By default commands run on your PC behind Dobot's own rules. Full sandboxing needs NemoClaw or a Nebius sandbox. |
 | **Email and messages** | Dobot writes drafts but never sends anything. |
-| **Voice** | Needs a ~484 MB speech model and ffmpeg on your machine. |
+| **Voice** | Speech input — the talk chord, the mic button and a call's transcription — needs the ~484 MB Whisper model and ffmpeg on your machine. A call's *spoken* replies use Sarvam TTS, so they also need `SARVAM_API_KEY` in `.env`; without it the call listens and replies in text. |
 | **Backend autostart** | The app does not start the backend for you by default — see [`docs/install.md`](docs/install.md). |
 | **Multi-user** | Opt-in on the backend (`MULTI_USER=true` + `MONGO_URL`): accounts with invite codes, per-user memory/tasks/automations/API keys, per-user event streams. On a multi-user backend the desktop shell shows a sign-in / sign-up screen on its own and gates both windows until you're signed in; **Settings → Account** shows who you are and signs you out. See [`docs/security.md`](docs/security.md#accounts-and-multi-user-multi_usertrue). |
 | **Updates** | Installed builds check GitHub Releases and show an in-app banner + **Settings → Updates** with one-click install. Maintainers publish a release by pushing a version tag (`.github/workflows/release-tauri.yml`). |
