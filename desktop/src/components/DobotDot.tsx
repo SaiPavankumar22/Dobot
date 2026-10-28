@@ -36,16 +36,27 @@ export function DobotDot() {
   const approvals = useDobot((state) => state.approvals);
   const connected = useDobot((state) => state.connected);
   const [visibleStatus, setVisibleStatus] = useState<DotStatus>("IDLE");
-  // A click on the dot is two quick `mousedown`s, not a `mouseup` pair: Windows enters the OS drag
-  // loop the moment `startDragging()` is called (which happens on the press, so the dot can be
-  // dragged from anywhere) and swallows the matching `mouseup` — a single click therefore used to be
-  // unreliable, and only the odd left+right chord landed. Successive presses always arrive, so the
-  // dialog now opens on a double left click and nothing else. Dragging still works: a press that
-  // moves past a few pixels asks the shell to drag the window instead.
-  const press = useRef<{ x: number; y: number; at: number; dragging: boolean } | null>(null);
-  /** Two left presses within this window (and a few pixels apart) open the dialog. */
-  const DOUBLE_MS = 420;
+  // Three gestures, one window:
+  //
+  //   single left click   open the radial menu (chat · snip · voice)
+  //   double left click   open or close the compact chat dialog straight away
+  //   press and move      drag the dot (an open dialog comes with it)
+  //
+  // A drag is recognised from the shell's `dobot://dot-moved` event, not from the mouse: Windows
+  // enters its OS drag loop the moment `startDragging()` runs — on the press, so the dot can be
+  // moved from anywhere — and swallows the matching `mouseup`. So what is left of a press is either
+  // that shell event (it really moved: a drag) or silence (it didn't: a click, confirmed by the
+  // mouse-up when Windows does deliver it, or by CLICK_MS of nothing happening at all).
+  const press = useRef<{ x: number; y: number; timer: number; dragging: boolean; acted: boolean } | null>(
+    null,
+  );
+  /** The last press, outliving the menu delay, so even a slow double click still wins over it. */
+  const lastPress = useRef<{ x: number; y: number; at: number; dragged: boolean } | null>(null);
+  /** Two presses this close together (and this close on screen) mean "open the dialog". */
+  const DOUBLE_MS = 460;
   const DOUBLE_PX = 14;
+  /** How long a press may sit still before it counts as the menu's single click. */
+  const CLICK_MS = 380;
 
   // Completed/error are transient: show the glyph for a moment, then fall back to idle.
   useEffect(() => {
@@ -70,31 +81,81 @@ export function DobotDot() {
   const onMouseDown = useCallback((event: React.MouseEvent) => {
     if (event.button !== 0) return;
     const now = Date.now();
-    const previous = press.current;
-    // The second press of a double click: open (or close) the chat dialog, and do not start a drag
-    // from the confirming press.
+    const last = lastPress.current;
+    // The second press of a double click: the dialog — and any menu the first press raised goes
+    // down with it (toggle_panel retires the menu in the shell).
     if (
-      previous &&
-      !previous.dragging &&
-      now - previous.at <= DOUBLE_MS &&
-      Math.abs(event.screenX - previous.x) + Math.abs(event.screenY - previous.y) < DOUBLE_PX
+      last &&
+      !last.dragged &&
+      now - last.at <= DOUBLE_MS &&
+      Math.abs(event.screenX - last.x) + Math.abs(event.screenY - last.y) < DOUBLE_PX
     ) {
+      if (press.current) window.clearTimeout(press.current.timer);
       press.current = null;
+      lastPress.current = null;
       void native.togglePanel();
       return;
     }
-    press.current = { x: event.screenX, y: event.screenY, at: now, dragging: false };
+    if (press.current) window.clearTimeout(press.current.timer);
+    const current = { x: event.screenX, y: event.screenY, timer: 0, dragging: false, acted: false };
+    lastPress.current = { x: event.screenX, y: event.screenY, at: now, dragged: false };
+    current.timer = window.setTimeout(() => {
+      if (press.current !== current || current.dragging || current.acted) return;
+      current.acted = true;
+      // A press that never moved and never released is still a click — Windows ate the mouse-up.
+      void native.toggleMenu();
+    }, CLICK_MS);
+    press.current = current;
     if (native.isNative) {
       void native.startDragging();
     }
   }, []);
 
-  // A press that moves marks the press as a drag (best-effort: on Windows these moves are eaten by
-  // the OS loop, in which case the coordinates of the next press simply won't match).
+  const onMouseUp = useCallback((event: React.MouseEvent) => {
+    if (event.button !== 0) return;
+    const current = press.current;
+    if (!current) return;
+    window.clearTimeout(current.timer);
+    // A press-and-release that never moved opens the menu at once — the timer is only the fallback
+    // for the mouse-up Windows swallows inside the drag loop. A press that dragged simply ends.
+    if (!current.dragging && !current.acted) {
+      current.acted = true;
+      void native.toggleMenu();
+    }
+    press.current = null;
+  }, []);
+
+  // The shell's word that the dot really moved: this is where a drag becomes known. Mark the
+  // press (so it can never also count as a click), drop its pending timer, and retire any menu the
+  // icon is being carried away from.
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    void native
+      .onDotMoved(() => {
+        const current = press.current;
+        if (!current || current.dragging) return;
+        current.dragging = true;
+        window.clearTimeout(current.timer);
+        if (lastPress.current) lastPress.current.dragged = true;
+        void native.closeMenu();
+      })
+      .then((fn) => {
+        unlisten = fn ?? undefined;
+      });
+    return () => unlisten?.();
+  }, []);
+
+  // Best-effort supplement: on Windows these moves are usually eaten by the OS loop, in which case
+  // the shell event above does the work. Either way, once it moves this press is a drag, not a click.
   const onMouseMove = useCallback((event: React.MouseEvent) => {
     const current = press.current;
-    if (current && !current.dragging && Math.abs(event.screenX - current.x) + Math.abs(event.screenY - current.y) >= 6) {
-      current.dragging = true;
+    if (current && !current.dragging) {
+      if (Math.abs(event.screenX - current.x) + Math.abs(event.screenY - current.y) >= 6) {
+        current.dragging = true;
+        window.clearTimeout(current.timer);
+        if (lastPress.current) lastPress.current.dragged = true;
+        void native.closeMenu();
+      }
     }
   }, []);
 
@@ -109,7 +170,9 @@ export function DobotDot() {
     <div
       className="dot-shell"
       onMouseDown={onMouseDown}
+      onMouseUp={onMouseUp}
       onMouseMove={onMouseMove}
+      onContextMenu={(event) => event.preventDefault()}
       title={label}
     >
       <div className={`dot ${CLASSES[visibleStatus]}`} role="button" aria-label={label}>

@@ -17,9 +17,16 @@ use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 
 pub const CHAT: &str = "chat";
 pub const DOT: &str = "dot";
+pub const MENU: &str = "menu";
 pub const PANEL: &str = "panel";
 pub const DASHBOARD: &str = "dashboard";
 pub const OVERLAY: &str = "overlay";
+
+/// The dot window is 72px with the 44px circle centred in it: the circle's centre sits at +36.
+pub const DOT_HALF: i32 = 36;
+/// The radial menu window is a square whose centre must land on the dot's circle.
+pub const MENU_SIZE: i32 = 310;
+pub const MENU_HALF: i32 = MENU_SIZE / 2;
 
 pub fn show(app: &AppHandle, label: &str) {
     if let Some(window) = app.get_webview_window(label) {
@@ -50,21 +57,22 @@ fn anchor_bottom_right(app: &AppHandle, label: &str) {
     let _ = window.set_position(tauri::PhysicalPosition::new(x, y));
 }
 
-/// Show the compact panel attached to the dot's top-left corner: the dot stays just outside the
-/// panel's left edge (tangent, never covered — both are always-on-top and their z-order is not
-/// guaranteed), so the icon and the dialog read as one surface. While the panel is open, dragging
-/// the dot carries it along (see the dot's Moved handler in lib.rs).
+/// Show the compact panel with the dot pinned to its **top-right corner**: the circle starts 14px
+/// inside the dot's 72px window, so the panel's right edge lands on dot_x + 14 (the icon tangent
+/// to the corner, never over the header's buttons) and +14 down lines the 44px circle up with the
+/// 44px header. From here the pair is kept together by `Pair` (lib.rs): whichever of the two the
+/// user drags, the other keeps this exact relationship, so they can never drift apart.
 pub fn open_panel(app: &AppHandle) {
+    // The menu and the dialog are never up at the same time — the menu is the hub, the dialog
+    // what you pick from it (or the double click's shortcut to it).
+    hide(app, MENU);
     if let Some(panel) = app.get_webview_window(PANEL) {
         let dot_enabled = state::is_dot_enabled(app);
         if let Some(dot) = app.get_webview_window(DOT) {
             if let (Ok(dot_pos), Ok(size)) = (dot.outer_position(), panel.outer_size()) {
                 let bounds = capture::virtual_bounds().unwrap_or((0, 0, 1920, 1080));
-                // The dot window is 72px with a 44px circle centred in it: the circle's right edge
-                // is at +58, so +60 parks the panel two pixels clear of it, and -6 lines the circle
-                // up with the panel's header instead of leaving it stranded below the bar.
-                let mut x = dot_pos.x + 60;
-                let mut y = dot_pos.y - 6;
+                let mut x = dot_pos.x + 14 - size.width as i32;
+                let mut y = dot_pos.y + 14;
                 let max_x = bounds.0 + bounds.2 as i32 - size.width as i32 - 8;
                 let max_y = bounds.1 + bounds.3 as i32 - size.height as i32 - 8;
                 x = x.clamp(bounds.0 + 8, max_x.max(bounds.0 + 8));
@@ -77,13 +85,42 @@ pub fn open_panel(app: &AppHandle) {
             anchor_bottom_right(app, PANEL);
         }
         show(app, PANEL);
+        // Fix the pair's relationship at the positions they actually landed on (the clamp above
+        // may have moved the panel) — later drags preserve *this*, never accumulated deltas.
+        crate::anchor_pair(app);
     }
 }
 
-/// The dot is a toggle: double-click it and the compact chat dialog appears next to it; double-click
-/// again and it disappears. Kept separate from `open_panel`, which always shows (the selection flow
-/// relies on it).
+/// The dot's radial menu: a transparent window centred on the icon, so the dot itself is the hub
+/// the three options spring out of. Opening it retires whatever quick surface is showing — the menu
+/// replaces it, and picking Chat (or the dialog's own double click) brings that surface back.
+pub fn open_menu(app: &AppHandle) {
+    let Some(menu) = app.get_webview_window(MENU) else { return };
+    if menu.is_visible().unwrap_or(false) {
+        return;
+    }
+    if let Some(dot) = app.get_webview_window(DOT) {
+        if let Ok(pos) = dot.outer_position() {
+            let _ = menu.set_position(tauri::PhysicalPosition::new(
+                pos.x + DOT_HALF - MENU_HALF,
+                pos.y + DOT_HALF - MENU_HALF,
+            ));
+        }
+    }
+    hide(app, PANEL);
+    let _ = menu.show();
+}
+
+pub fn close_menu(app: &AppHandle) {
+    hide(app, MENU);
+}
+
+/// The dot is a toggle: double-click it and the compact chat dialog appears at its top-right
+/// corner; double-click again and it disappears. Kept separate from `open_panel`, which always
+/// shows (the selection flow relies on it).
 pub fn toggle_panel(app: &AppHandle) {
+    // Picking Chat from the menu lands here too, and the menu must not outlive that choice.
+    hide(app, MENU);
     if let Some(panel) = app.get_webview_window(PANEL) {
         if panel.is_visible().unwrap_or(false) {
             let _ = panel.hide();
@@ -104,11 +141,18 @@ pub fn open_dashboard(app: &AppHandle, route: Option<String>) {
 
 /// Turn the always-on floating dot on or off. Returns the resulting state.
 pub fn set_dot_enabled(app: &AppHandle, enabled: bool) -> bool {
+    // No dot on screen means no hub for the menu either.
+    hide(app, MENU);
     state::set_dot_enabled(app, enabled);
     if let Some(dot) = app.get_webview_window(DOT) {
         if enabled {
             restore_dot_position(app);
             let _ = dot.show();
+            // While the dot was off, the panel could still be dragged on its own — which leaves the
+            // stored offset describing where the pair *used* to be. Re-read it from where the two
+            // windows actually are now, so the next drag of either carries them together instead of
+            // throwing one to a stale corner.
+            crate::anchor_pair(app);
         } else {
             let _ = dot.hide();
         }
@@ -156,12 +200,13 @@ pub fn restore_dot_position(app: &AppHandle) {
 }
 
 /// Lift our own floating windows out of a screen shot for a moment. The dot and the panel sit on
-/// top of everything, so a picture of the desktop would otherwise have Dobot in it. Only windows
-/// that are actually visible are moved, and the caller puts back exactly those — nothing that was
-/// hidden gets shown by a screenshot.
+/// top of everything, and the selection overlay paints its own hint and marquee over the region it
+/// is about to grab — a picture of the desktop would otherwise have Dobot in it. Only windows that
+/// are actually visible are moved, and the caller puts back exactly those — nothing that was hidden
+/// gets shown by a screenshot.
 pub fn hide_for_capture(app: &AppHandle) -> Vec<&'static str> {
     let mut hidden = Vec::new();
-    for label in [DOT, PANEL] {
+    for label in [DOT, MENU, PANEL, OVERLAY] {
         if let Some(window) = app.get_webview_window(label) {
             if window.is_visible().unwrap_or(false) {
                 let _ = window.hide();
@@ -187,6 +232,8 @@ pub fn restore_after_capture(app: &AppHandle, hidden: Vec<&'static str>) {
 
 /// Create (or raise) the transparent selection overlay covering the whole virtual desktop.
 pub fn open_overlay(app: &AppHandle) -> Result<(), String> {
+    // Snipper, the Look chord's button, the hotkey: whoever wants a region, the menu steps aside.
+    hide(app, MENU);
     if let Some(existing) = app.get_webview_window(OVERLAY) {
         let _ = existing.show();
         let _ = existing.set_focus();

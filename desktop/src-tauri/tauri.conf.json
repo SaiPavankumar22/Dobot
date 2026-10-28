@@ -42,6 +42,21 @@
         "visible": false
       },
       {
+        "label": "menu",
+        "title": "Dobot",
+        "url": "index.html#/menu",
+        "width": 310,
+        "height": 310,
+        "resizable": false,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "shadow": false,
+        "focus": false,
+        "visible": false
+      },
+      {
         "label": "panel",
         "title": "Dobot",
         "url": "index.html#/panel",

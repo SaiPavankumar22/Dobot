@@ -415,7 +415,8 @@ export function Chat() {
 
         {dotEnabled && (
           <div className="chat__banner">
-            The floating dot is on screen. Drag it anywhere, double-click it for a quick ask, or turn{" "}
+            The floating dot is on screen. Drag it anywhere, single-click it for the quick menu
+            (chat · snip · voice), double-click it for a quick ask, or turn{" "}
             <strong>Always on</strong> off to go back to a plain chat window.
           </div>
         )}

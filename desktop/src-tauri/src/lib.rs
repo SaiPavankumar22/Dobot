@@ -39,18 +39,102 @@ pub struct CaptureResult {
     pub height: u32,
 }
 
+/// The dot and the compact panel are one surface — the icon rides at the panel's top-right corner —
+/// so the shell keeps them glued together: whichever of the two the user drags carries the other.
+///
+/// The relationship is stored as an *offset* (panel − dot in physical pixels), never as a stream of
+/// move deltas: a dropped or duplicated Moved event therefore cannot make the pair drift apart —
+/// every correction is an absolute recomputation that converges on the right place. And every
+/// position the shell sets for itself is remembered here, so its own repositioning is never
+/// mistaken for the user dragging something.
+#[derive(Default)]
+pub struct Pair {
+    inner: std::sync::Mutex<PairInner>,
+}
+
+#[derive(Default)]
+struct PairInner {
+    /// Panel position minus dot position; `None` while the two are not paired (no dot on screen).
+    offset: Option<(i32, i32)>,
+    /// The most recent positions the shell set for each window itself — a Moved that lands exactly
+    /// on one of them is the echo of that work, not a drag.
+    set_dot: Vec<(i32, i32)>,
+    set_panel: Vec<(i32, i32)>,
+}
+
+/// How many self-set positions are remembered per window. One dragged frame already produces more
+/// than this many, so an echo is matched with room to spare.
+const ECHOES: usize = 32;
+
+impl Pair {
+    fn inner(&self) -> std::sync::MutexGuard<'_, PairInner> {
+        self.inner.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// The dialog has been (re)anchored to the dot — fix their relationship at these positions.
+    pub fn anchor(&self, dot: (i32, i32), panel: (i32, i32)) {
+        let mut inner = self.inner();
+        inner.offset = Some((panel.0 - dot.0, panel.1 - dot.1));
+    }
+
+    pub fn offset(&self) -> Option<(i32, i32)> {
+        self.inner().offset
+    }
+
+    /// Note a position the shell is about to set for one of the pair, so its Moved is recognisable.
+    pub fn remember(&self, dot: bool, pos: (i32, i32)) {
+        let mut inner = self.inner();
+        let seen = if dot { &mut inner.set_dot } else { &mut inner.set_panel };
+        seen.push(pos);
+        if seen.len() > ECHOES {
+            seen.remove(0);
+        }
+    }
+
+    /// Is this Moved the echo of a position we set ourselves rather than a user drag?
+    pub fn is_echo(&self, dot: bool, pos: (i32, i32)) -> bool {
+        let inner = self.inner();
+        let seen = if dot { &inner.set_dot } else { &inner.set_panel };
+        seen.contains(&pos)
+    }
+}
+
+/// Record the panel's position relative to the dot, so every later move of either preserves it.
+pub fn anchor_pair(app: &AppHandle) {
+    let (Some(dot), Some(panel)) = (
+        app.get_webview_window(windows::DOT),
+        app.get_webview_window(windows::PANEL),
+    ) else {
+        return;
+    };
+    if let (Ok(dot_pos), Ok(panel_pos)) = (dot.outer_position(), panel.outer_position()) {
+        app.state::<Pair>()
+            .anchor((dot_pos.x, dot_pos.y), (panel_pos.x, panel_pos.y));
+    }
+}
+
 #[tauri::command]
 fn list_monitors() -> Result<Vec<MonitorInfo>, String> {
     capture::monitor_list()
 }
 
 #[tauri::command]
-async fn capture_region(region: Region) -> Result<CaptureResult, String> {
+async fn capture_region(app: AppHandle, region: Region) -> Result<CaptureResult, String> {
     let width = region.width;
     let height = region.height;
-    let image = tauri::async_runtime::spawn_blocking(move || capture::capture_region(&region))
-        .await
-        .map_err(|error| format!("could not capture the selected region: {error}"))??;
+    // Our own windows are on top of everything — the dot floats over the desktop, and the snip
+    // overlay paints its hint and marquee over the very rectangle being grabbed — so they are
+    // lifted out of the shot and put straight back, the same way the Look chord's screen fallback
+    // treats them. Capturing, hiding and restoring stay on one blocking thread so the restore can
+    // never be skipped, on success or on failure.
+    let image = tauri::async_runtime::spawn_blocking(move || {
+        let hidden = windows::hide_for_capture(&app);
+        let result = capture::capture_region(&region);
+        windows::restore_after_capture(&app, hidden);
+        result
+    })
+    .await
+    .map_err(|error| format!("could not capture the selected region: {error}"))??;
     Ok(CaptureResult {
         image,
         width,
@@ -141,6 +225,34 @@ async fn capture_active_window(app: AppHandle) -> Result<SelectionPayload, Strin
     tauri::async_runtime::spawn_blocking(move || look::capture(&app))
         .await
         .map_err(|error| format!("could not capture the active window: {error}"))
+}
+
+/// The dot's single click: raise the radial menu over the icon, or take it down if it is already up.
+#[tauri::command]
+fn toggle_menu(app: AppHandle) {
+    let open = app
+        .get_webview_window(windows::MENU)
+        .map(|menu| menu.is_visible().unwrap_or(false))
+        .unwrap_or(false);
+    if open {
+        windows::close_menu(&app);
+    } else {
+        windows::open_menu(&app);
+    }
+}
+
+#[tauri::command]
+fn close_menu(app: AppHandle) {
+    windows::close_menu(&app);
+}
+
+/// The radial menu's Voice option: raise the compact dialog as the call surface. No window is
+/// created or navigated — the panel hears this event and *becomes* the phone, so the call still
+/// opens on the dot's top-right corner like every other quick surface.
+#[tauri::command]
+fn start_voice_call(app: AppHandle) {
+    windows::open_panel(&app);
+    let _ = app.emit("dobot://start-call", ());
 }
 
 /// Is the talk chord currently holding the panel in a listening session? The panel asks on mount,
@@ -249,6 +361,7 @@ pub fn run() {
                 .build(),
         )
         .manage(backend::BackendProcess::default())
+        .manage(Pair::default())
         .invoke_handler(tauri::generate_handler![
             list_monitors,
             capture_region,
@@ -257,6 +370,9 @@ pub fn run() {
             open_chat,
             open_panel,
             toggle_panel,
+            toggle_menu,
+            close_menu,
+            start_voice_call,
             hide_panel,
             open_dashboard,
             dot_enabled,
@@ -305,53 +421,84 @@ pub fn run() {
                 Err(error) => eprintln!("dobot: {error}"),
             }
 
-            // Remember where the user drags the dot — and keep the panel attached to it: the pair
-            // reads as one surface, so a dragged dot must carry the open dialog with it.
+            // Remember where the user drags the dot, keep the open dialog pinned to its corner —
+            // and tell the dot window when it has *really* been dragged: on Windows a press enters
+            // the OS drag loop (so the dot can be moved from anywhere) and swallows its own
+            // mouse-up, which makes this event the only trustworthy drag signal it has. It uses it
+            // to tell a click from a drag, and to retire a menu the icon is being carried away from.
             if let Some(dot) = app.get_webview_window(windows::DOT) {
                 let dot_handle = handle.clone();
-                let last = std::sync::Mutex::new(dot.outer_position().ok());
                 dot.on_window_event(move |event| {
                     if let WindowEvent::Moved(position) = event {
+                        let pos = (position.x, position.y);
                         state::remember_dot_position(
                             &dot_handle,
                             DotPosition {
-                                x: position.x,
-                                y: position.y,
+                                x: pos.0,
+                                y: pos.1,
                                 monitor: 0,
                                 scale: 0.0,
                             },
                         );
-                        let mut last = last.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-                        let previous = *last;
-                        *last = Some(*position);
-                        if let (Some(previous), Some(panel)) =
-                            (previous, dot_handle.get_webview_window(windows::PANEL))
+                        let pair = dot_handle.state::<Pair>();
+                        // A move the shell made itself (the panel carrying the dot to its new
+                        // corner) is not a drag: no event, no follow, nothing to dismiss.
+                        if pair.is_echo(true, pos) {
+                            return;
+                        }
+                        let _ = dot_handle.emit("dobot://dot-moved", pos);
+                        if let (Some(offset), Some(panel)) =
+                            (pair.offset(), dot_handle.get_webview_window(windows::PANEL))
                         {
                             if panel.is_visible().unwrap_or(false) {
-                                let dx = position.x - previous.x;
-                                let dy = position.y - previous.y;
-                                if let Ok(panel_pos) = panel.outer_position() {
-                                    let _ = panel.set_position(tauri::PhysicalPosition::new(
-                                        panel_pos.x + dx,
-                                        panel_pos.y + dy,
-                                    ));
-                                }
+                                let target = (pos.0 + offset.0, pos.1 + offset.1);
+                                pair.remember(false, target);
+                                let _ = panel
+                                    .set_position(tauri::PhysicalPosition::new(target.0, target.1));
                             }
                         }
                     }
                 });
             }
-            for label in [windows::PANEL, windows::DASHBOARD] {
-                if let Some(window) = app.get_webview_window(label) {
-                    let label_owned = label.to_string();
-                    let window_handle = handle.clone();
-                    window.on_window_event(move |event| {
-                        if let WindowEvent::CloseRequested { api, .. } = event {
-                            api.prevent_close();
-                            windows::hide(&window_handle, &label_owned);
+            // The panel: closing hides it, dragging it carries the dot to the dialog's new
+            // top-right corner, and a resize moves that corner — so the pair re-reads its offset.
+            if let Some(panel) = app.get_webview_window(windows::PANEL) {
+                let panel_handle = handle.clone();
+                panel.on_window_event(move |event| match event {
+                    WindowEvent::CloseRequested { api, .. } => {
+                        api.prevent_close();
+                        windows::hide(&panel_handle, windows::PANEL);
+                    }
+                    WindowEvent::Moved(position) => {
+                        let pos = (position.x, position.y);
+                        let pair = panel_handle.state::<Pair>();
+                        if pair.is_echo(false, pos) {
+                            return;
                         }
-                    });
-                }
+                        // The user dragged the dialog: put the dot back on its top-right corner.
+                        if let (Some(offset), Some(dot)) =
+                            (pair.offset(), panel_handle.get_webview_window(windows::DOT))
+                        {
+                            if dot.is_visible().unwrap_or(false) {
+                                let target = (pos.0 - offset.0, pos.1 - offset.1);
+                                pair.remember(true, target);
+                                let _ =
+                                    dot.set_position(tauri::PhysicalPosition::new(target.0, target.1));
+                            }
+                        }
+                    }
+                    WindowEvent::Resized(_) => anchor_pair(&panel_handle),
+                    _ => {}
+                });
+            }
+            if let Some(window) = app.get_webview_window(windows::DASHBOARD) {
+                let window_handle = handle.clone();
+                window.on_window_event(move |event| {
+                    if let WindowEvent::CloseRequested { api, .. } = event {
+                        api.prevent_close();
+                        windows::hide(&window_handle, windows::DASHBOARD);
+                    }
+                });
             }
 
             // Closing the chat window behaves like any other app: quit — unless the dot is on,

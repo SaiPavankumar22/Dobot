@@ -23,6 +23,14 @@ export type TranscribeStatus = {
 
 /** Shorter than this was a tap, not something said. */
 const MIN_RECORDING_MS = 400;
+/**
+ * No transcription may spin forever. Warm, a turn takes seconds; the one exception is the first
+ * run ever on a machine, which downloads the local speech model (~484 MB) before it can answer.
+ * Past this ceiling the user gets that sentence instead of an endless "Writing it down…".
+ */
+const TRANSCRIBE_TIMEOUT_MS = 120_000;
+const TRANSCRIBE_TIMEOUT_ERROR =
+  "Transcription timed out. The first run on a machine downloads the local speech model (~484 MB) — give it a minute and try again.";
 /** Bars in the waveform. */
 const BARS = 24;
 /** How often the waveform samples the level, in milliseconds. */
@@ -56,14 +64,25 @@ export async function transcribeAudio(blob: Blob): Promise<{ text: string; error
         : "wav";
   form.append("file", blob, `recording.${extension}`);
   let response: Response;
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), TRANSCRIBE_TIMEOUT_MS);
   try {
     response = await fetch(`${getBaseUrl()}/voice/transcribe`, {
       method: "POST",
       body: form,
       headers: authHeader(),
+      signal: controller.signal,
     });
   } catch {
-    return { text: "", error: "The Dobot backend is not reachable, so the recording could not be transcribed." };
+    // An abort is a timeout, not a lost backend — the message must say which one happened.
+    return {
+      text: "",
+      error: controller.signal.aborted
+        ? TRANSCRIBE_TIMEOUT_ERROR
+        : "The Dobot backend is not reachable, so the recording could not be transcribed.",
+    };
+  } finally {
+    window.clearTimeout(timer);
   }
   const body = (await response.json().catch(() => ({}))) as {
     text?: string;

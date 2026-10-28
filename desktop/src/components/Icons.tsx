@@ -148,3 +148,33 @@ export function IconStopCircle(props: IconProps) {
     </Svg>
   );
 }
+
+/** The radial menu's Chat option — the quick dialog. */
+export function IconChat(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <rect x="3.5" y="5" width="17" height="12" rx="3" />
+      <path d="M8 17v3.2L12.2 17" />
+    </Svg>
+  );
+}
+
+/** The radial menu's Snip option — cut a piece out of the screen. */
+export function IconCrop(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <circle cx="6" cy="6.5" r="2.5" />
+      <circle cx="6" cy="17.5" r="2.5" />
+      <path d="M8.2 7.8 20 18M8.2 16.2 20 6" />
+    </Svg>
+  );
+}
+
+/** The radial menu's Voice option — talk to Dobot out loud. */
+export function IconPhone(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M6.5 3.5h3l1.5 4-2 1.5a12 12 0 0 0 6 6l1.5-2 4 1.5v3a2 2 0 0 1-2 2A16.5 16.5 0 0 1 4.5 5.5a2 2 0 0 1 2-2z" />
+    </Svg>
+  );
+}

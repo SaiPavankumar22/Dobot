@@ -3825,6 +3825,244 @@ button:active { transform: translateY(1px) scale(0.985); }
 .dot--listening, .dot--thinking, .dot--executing { animation: breathe 2.4s ease-in-out infinite; }
 .dot--approval, .dot--error { animation: halo 1.8s ease-out infinite; }
 
+/* The dot's radial menu: three options spring out on an arc that opens toward the middle of the
+   screen, with the always-on icon itself — visible through this transparent window — as the hub. */
+.radial {
+  position: fixed;
+  inset: 0;
+  --r: 90px;
+}
+.radial__item {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 46px;
+  height: 46px;
+  margin: -23px 0 0 -23px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--bg-glass);
+  color: var(--text);
+  cursor: pointer;
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.4);
+  opacity: 0;
+  transform: scale(0);
+  transition:
+    transform 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275),
+    opacity 0.3s,
+    border-color 0.2s;
+  transition-delay: calc((2 - var(--i)) * 0.05s);
+}
+.radial--open .radial__item {
+  opacity: 1;
+  transform:
+    rotate(var(--angle))
+    translate(var(--r))
+    rotate(calc(var(--angle) * -1))
+    scale(1);
+  transition-delay: calc(var(--i) * 0.06s);
+}
+.radial--open .radial__item:hover {
+  transform:
+    rotate(var(--angle))
+    translate(calc(var(--r) + 6px))
+    rotate(calc(var(--angle) * -1))
+    scale(1.1);
+  border-color: var(--accent);
+}
+.radial__item svg {
+  pointer-events: none;
+}
+.radial__label {
+  position: absolute;
+  top: calc(100% + 3px);
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 10px;
+  letter-spacing: 0.03em;
+  color: var(--text-dim);
+  white-space: nowrap;
+  pointer-events: none;
+}
+.radial__item:hover .radial__label {
+  color: var(--text);
+}
+/* The voice call — the panel in call mode: one status ring, one live caption, one row of buttons. */
+.panel--call .call {
+  flex: 1;
+  min-height: 0;
+}
+.call {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  height: 100%;
+  padding: 14px;
+}
+.call__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.call__ring {
+  position: relative;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 2px solid var(--border);
+  display: grid;
+  place-items: center;
+  flex: none;
+}
+.call__ring span {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--text-dim);
+  transition: background 0.2s ease;
+}
+.call__ring--listening span {
+  background: #34d399;
+}
+.call__ring--thinking span {
+  background: #a78bfa;
+}
+.call__ring--speaking span {
+  background: var(--accent);
+}
+.call__ring--listening,
+.call__ring--speaking {
+  animation: pulse 1.6s ease-in-out infinite;
+}
+.call__ring--thinking {
+  animation: halo 1.8s ease-out infinite;
+}
+.call__ident {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+.call__phase {
+  font-weight: 600;
+}
+.call__meta {
+  font-size: 11px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.call__hints {
+  margin: 0;
+  padding: 8px 12px 8px 26px;
+  border: 1px solid color-mix(in oklab, var(--warn, #f59e0b) 45%, transparent);
+  border-radius: 10px;
+  background: color-mix(in oklab, var(--warn, #f59e0b) 10%, transparent);
+  font-size: 12px;
+  color: var(--text-dim);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.call__error {
+  padding: 8px 12px;
+  border: 1px solid color-mix(in oklab, var(--danger, #ef4444) 45%, transparent);
+  border-radius: 10px;
+  background: color-mix(in oklab, var(--danger, #ef4444) 12%, transparent);
+  font-size: 12px;
+}
+.call__feed {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.call__empty {
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1.5;
+  padding: 8px 4px;
+}
+.call__line {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: color-mix(in oklab, var(--text) 5%, transparent);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.call__line--you {
+  background: color-mix(in oklab, var(--accent) 14%, transparent);
+}
+.call__speaker {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+}
+.call__line--live {
+  border: 1px dashed color-mix(in oklab, var(--accent) 40%, transparent);
+}
+.call__bar {
+  display: flex;
+  gap: 8px;
+}
+.call__btn {
+  flex: 1;
+  padding: 9px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg-glass);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.call__btn:hover {
+  border-color: var(--accent);
+}
+.call__btn--active {
+  border-color: var(--warn, #f59e0b);
+  color: var(--warn, #f59e0b);
+}
+.call__btn--danger {
+  background: color-mix(in oklab, var(--danger, #ef4444) 85%, black);
+  border-color: transparent;
+  color: #fff;
+}
+.call__btn--danger:hover {
+  background: var(--danger, #ef4444);
+}
+.call--ended {
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+.call__ended-mark {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: color-mix(in oklab, var(--danger, #ef4444) 18%, transparent);
+  color: var(--danger, #ef4444);
+  font-weight: 700;
+}
+.call--ended .call__btn {
+  flex: none;
+  padding: 9px 22px;
+  margin-top: 6px;
+}
+
 /* Guide: live tool surface + small entry animation. */
 .guide__tools {
   margin: 4px 0 10px;

@@ -85,6 +85,26 @@ export const native = {
   async togglePanel(): Promise<void> {
     await this.invokeSafe("toggle_panel");
   },
+  /** The dot's single click: raise the radial menu over the icon, or take it down if it is up. */
+  async toggleMenu(): Promise<void> {
+    await this.invokeSafe("toggle_menu");
+  },
+  async closeMenu(): Promise<void> {
+    await this.invokeSafe("close_menu");
+  },
+  /** The menu's Voice option: raise the dialog as the call surface (it switches mode on the event). */
+  async startVoiceCall(): Promise<void> {
+    await this.invokeSafe("start_voice_call");
+  },
+  async onStartCall(callback: () => void): Promise<UnlistenFn | null> {
+    if (!isNative) return null;
+    try {
+      return await listen("dobot://start-call", () => callback());
+    } catch (error) {
+      console.warn("could not subscribe to voice-call events", error);
+      return null;
+    }
+  },
   async hidePanel(): Promise<void> {
     await this.invokeSafe("hide_panel");
   },
@@ -113,6 +133,20 @@ export const native = {
       return await listen<boolean>("dobot://dot-enabled", (event) => callback(event.payload));
     } catch (error) {
       console.warn("could not subscribe to dot toggle events", error);
+      return null;
+    }
+  },
+
+  /**
+   * The shell says the dot really moved (a user drag). On Windows a press enters the OS drag loop
+   * and swallows its own mouse-up, so this is how the dot window tells a click from a drag.
+   */
+  async onDotMoved(callback: (position: [number, number]) => void): Promise<UnlistenFn | null> {
+    if (!isNative) return null;
+    try {
+      return await listen<[number, number]>("dobot://dot-moved", (event) => callback(event.payload));
+    } catch (error) {
+      console.warn("could not subscribe to dot move events", error);
       return null;
     }
   },

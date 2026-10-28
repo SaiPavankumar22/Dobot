@@ -8,6 +8,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { ApprovalCard } from "./ApprovalCard";
+import { CallView } from "./CallView";
 import { PlanView } from "./PlanView";
 import { statusLabel } from "./DobotDot";
 import { native } from "../services/native";
@@ -37,6 +38,18 @@ export function ChatPanel() {
   const [draft, setDraft] = useState("");
   const [useScreen, setUseScreen] = useState(true);
   const bodyRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+
+  // The dialog appearing (the dot's double click, the hotkey) or a snip landing is the user asking
+  // to type: put the cursor in the box, whether the window just showed or the picture just arrived.
+  useEffect(() => {
+    const focus = () => inputRef.current?.focus();
+    document.addEventListener("visibilitychange", focus);
+    return () => document.removeEventListener("visibilitychange", focus);
+  }, []);
+  useEffect(() => {
+    if (selection) inputRef.current?.focus();
+  }, [selection]);
   /** Always the words in the box now: a recording's callbacks land later than this render. */
   const draftRef = useRef(draft);
   draftRef.current = draft;
@@ -115,6 +128,27 @@ export function ChatPanel() {
     if (!text) return;
     setDraft("");
     await send(text, { shadow: shadowMode, useSelection: useScreen && Boolean(selection) });
+  }
+
+  // The dot menu's Voice option raises this window as the phone: the shell's event switches the
+  // panel into call mode, and End call in the CallView switches it straight back.
+  const [callMode, setCallMode] = useState(false);
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    void native
+      .onStartCall(() => setCallMode(true))
+      .then((fn) => {
+        unlisten = fn ?? undefined;
+      });
+    return () => unlisten?.();
+  }, []);
+
+  if (callMode) {
+    return (
+      <div className="panel panel--call">
+        <CallView onEnd={() => setCallMode(false)} />
+      </div>
+    );
   }
 
   return (
@@ -259,6 +293,8 @@ export function ChatPanel() {
             <>
               <textarea
                 value={draft}
+                ref={inputRef}
+                autoFocus
                 placeholder={selection ? "Ask about the selected region…" : "Ask Dobot — or tap the mic and speak…"}
                 onChange={(event) => setDraft(event.target.value)}
                 onKeyDown={(event) => {

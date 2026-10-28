@@ -13,6 +13,7 @@ import { useEffect, useState } from "react";
 import { ChatPanel } from "./components/ChatPanel";
 import { Confetti } from "./components/Confetti";
 import { DobotDot } from "./components/DobotDot";
+import { DotMenu } from "./components/DotMenu";
 import { ScreenSelector } from "./components/ScreenSelector";
 import { Toast } from "./components/Toast";
 import { Chat } from "./pages/Chat";
@@ -42,7 +43,7 @@ const DASHBOARD_HASHES = [
 function resolveWindow(): string {
   if (!native.isNative) {
     const hash = window.location.hash.replace(/^#\/?/, "");
-    if (["dot", "panel", "overlay"].includes(hash)) return hash;
+    if (["dot", "panel", "overlay", "menu"].includes(hash)) return hash;
     if (DASHBOARD_HASHES.includes(hash)) return "dashboard";
     return "chat";
   }
@@ -74,9 +75,14 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    // The dot and overlay windows are transparent; the panel is a translucent card. Chat paints its
-    // own background.
-    if (windowKind === "dot" || windowKind === "overlay" || windowKind === "panel") {
+    // The dot, its radial menu and the overlay windows are transparent; the panel is a translucent
+    // card. Chat paints its own background.
+    if (
+      windowKind === "dot" ||
+      windowKind === "overlay" ||
+      windowKind === "panel" ||
+      windowKind === "menu"
+    ) {
       document.body.classList.add("transparent");
     }
     connect();
@@ -88,6 +94,21 @@ export default function App() {
     let unlisten: (() => void) | undefined;
     void native.onSelection((payload) => {
       resolvePendingSelection(payload);
+      if (payload.image && !payload.error) {
+        // The picture lands in every window's store, so whichever surface opens next — after a
+        // snip from the dot's menu, say — already has it attached and ready to ask about.
+        useDobot.setState({
+          lastError: null,
+          selection: {
+            image: payload.image,
+            region: payload.region,
+            application: payload.application,
+            windowTitle: payload.window_title,
+            source: "native",
+          },
+        });
+        return;
+      }
       useDobot.setState({ selection: null });
     }).then((fn) => {
       unlisten = fn ?? undefined;
@@ -134,6 +155,13 @@ export default function App() {
   return (
     <>
       {windowKind === "dot" && <DobotDot />}
+      {windowKind === "dot" && capturing && (
+        <ScreenSelector
+          onDone={(selection) => finishBrowserSelection(selection as never)}
+          onCancel={() => useDobot.setState({ capturing: false })}
+        />
+      )}
+      {windowKind === "menu" && <DotMenu />}
       {windowKind === "panel" && <ChatPanel />}
       {windowKind === "overlay" && (
         <ScreenSelector
