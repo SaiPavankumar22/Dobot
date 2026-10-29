@@ -36,6 +36,7 @@ from app.tools.productivity import (
     RememberTool,
     ReminderCreateTool,
     SkillRunTool,
+    SkillViewTool,
     TaskCreateTool,
 )
 from app.tools.screen import ScreenAnalyzeTool, ScreenCaptureTool
@@ -122,6 +123,7 @@ def default_registry() -> ToolRegistry:
         TaskCreateTool(),
         ReminderCreateTool(),
         AutomationCreateTool(),
+        SkillViewTool(),
         SkillRunTool(),
         MessageSendTool(),
         *COMPUTER_TOOLS,

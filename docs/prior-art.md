@@ -79,6 +79,26 @@ memory validated Dobot's consolidation/canonical-facts pipeline rather than chan
 pair `skills/action_items` / `skills/disk_report` came out of the same pass — small, reusable
 workflows the planner can adopt without inventing them each run.
 
+## [NousResearch/hermes-agent](https://github.com/NousResearch/hermes-agent) — a skill library and a cron grammar
+
+**What it is.** Nous Research's self-hostable agent: a gateway with `computer_use`/browser/terminal
+toolsets, a directory of `SKILL.md` skills, and a cron subsystem that runs scheduled agent jobs.
+
+**Borrowed:** twenty-eight of its MIT skills, rewritten into Dobot's frontmatter with an adaptation
+header mapping its tool names (`terminal`, `file`, `browser`, `web`) onto ours and gated by Dobot's
+own scanner before they can be offered — `skills/systematic-debugging`, `skills/codebase-inspection`,
+`skills/github`, `skills/pdf`, `skills/microsoft-office`, `skills/arxiv`, `skills/obsidian` and the
+rest. Also its schedule grammar (`every monday 9am`, `weekdays at 9am`, `every 30m`, `in 30m`) and
+the missed-run rule — fire once if the run is still inside half a period, clamped to two minutes –
+two hours — adapted in `app/core/schedules.py`.
+
+**Rejected:** importing the cron subsystem itself. `cron/scheduler.py` alone is ~4,400 lines wired
+into Hermes' gateway, profiles, execution ledgers and delivery queue, while Dobot already has
+APScheduler with its own approvals — so only the parsing and the catch-up policy were taken. Not
+taken either: skills needing macOS, another agent's runtime, or credentials Dobot cannot assume
+(`computer-use`, `claude-code`, `google-workspace`, `xurl`, the Apple suite), and one skill the
+scanner refused outright (`blocked-page-recovery`).
+
 ## [huggingface/speech-to-speech](https://github.com/huggingface/speech-to-speech) — the voice pipeline
 
 **What it is.** HuggingFace's reference implementation of a spoken conversation: microphone in,
@@ -116,6 +136,8 @@ configure.
 | CI audit as a reusable workflow | eigent | `skills/ci_autopsy` |
 | Release evidence as a skill | ouroboros | `skills/release_checklist` |
 | Full-duplex voice loop with barge-in and a small realtime protocol | huggingface/speech-to-speech | `app/agents/call/*`, `/voice/call`, Voice in the dot's radial menu |
+| Twenty-eight ready-made skills | NousResearch/hermes-agent | `skills/*` (imported, scanner-gated, adaptation header) |
+| Natural-language schedules and missed-run catch-up | hermes-agent `cron/jobs.py` | `app/core/schedules.py`, `Scheduler._missed_run` |
 
 Related: the earlier production-readiness pass added `skills/action_items`, `skills/disk_report`,
 the shape-based credential matching in `app/security/risk.py`, and CI that installs the `dev`

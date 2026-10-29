@@ -12,7 +12,7 @@ It sees what you point at, plans the steps, asks before anything risky, does the
 ![Platform](https://img.shields.io/badge/platform-Windows-0078D6)
 ![Python](https://img.shields.io/badge/python-3.11%2B-3776AB)
 ![Tauri](https://img.shields.io/badge/desktop-Tauri%202-24C8DB)
-![Tests](https://img.shields.io/badge/tests-513%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-487%20passing-brightgreen)
 
 ![Dobot chat window](docs/screenshots/chat.png)
 
@@ -49,9 +49,9 @@ then go and do it yourself. Dobot closes that loop.
 - **Read your files.** Drop in images, logs or code files and ask about them — attachments open full size on click.
 - **Research the web.** Flip the **Research** chip in the composer: Tavily search plus synthesis, answered with sources — no full agent loop needed.
 - **Use your browser.** Opens a visible browser window and clicks, types and downloads like a person would.
-- **Run skills.** Ten built-in workflows, such as *tidy downloads*, *weekly report*, *CI autopsy*, *release checklist* and *disk report*.
+- **Run skills.** Thirty-eight workflows: ten of Dobot's own (*tidy downloads*, *weekly report*, *CI autopsy*, *release checklist*, *disk report*) plus twenty-eight imported from NousResearch' Hermes agent (*systematic-debugging*, *codebase-inspection*, *github*, *pdf*, *microsoft-office*, *arxiv* …), every one of them scanned before Dobot may touch it.
 - **Remember.** Preferences, projects and past tasks come back as context later.
-- **Automate.** Schedule recurring tasks and reminders.
+- **Automate.** Schedule tasks and reminders in plain words — `every monday at 9am`, `weekdays at 9am`, `every 30m`, `in 30m`, or a cron expression — and get a system notification when one finishes. Runs missed while the app was closed catch up on the next start.
 - **Progress you can see.** Finished tasks and completed research earn XP: a level badge, a shimmering XP bar and a daily streak on Overview — completion pops confetti.
 - **Updates itself.** New releases show an in-app banner and install from **Settings → Updates**, no `.exe` hunt.
 - **Stop instantly.** `Ctrl+Shift+Esc` cancels whatever is running.
@@ -208,7 +208,7 @@ npm run tauri dev
 <summary><b>Run the tests</b></summary>
 
 ```bash
-cd backend && uv run pytest -q          # 513 tests, no network needed
+cd backend && uv run pytest -q          # 488 tests, no network needed
 cd backend && uv run ruff check app tests
 cd desktop && npm run build
 ```

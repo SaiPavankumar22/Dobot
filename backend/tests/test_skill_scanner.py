@@ -48,10 +48,14 @@ def test_every_shipped_skill_survives_the_scanner() -> None:
     Deliberately reads the *repo* skills directory rather than ``settings.skills_dir``: "shipped"
     means what users receive, and a test that read a redirected directory could pass while the real
     skills were blocked.
+
+    The inventory is exact on purpose: ten Dobot skills plus the twenty-eight imported from
+    NousResearch/hermes-agent (MIT), each of which had to clear this same scanner before shipping.
     """
     library = SkillsLibrary(directory=REPO_ROOT / "skills")
     assert library.blocked_names() == []
     assert {skill.name for skill in library.active()} == {
+        # Dobot's own
         "clean_downloads",
         "research_topic",
         "weekly_report",
@@ -62,6 +66,35 @@ def test_every_shipped_skill_survives_the_scanner() -> None:
         "release_checklist",
         "action_items",
         "disk_report",
+        # imported from NousResearch/hermes-agent
+        "architecture-diagram",
+        "arxiv",
+        "ascii-video",
+        "baoyu-infographic",
+        "claude-design",
+        "codebase-inspection",
+        "competitor-news-monitor",
+        "document-to-action-items",
+        "github",
+        "grounded-citations",
+        "humanizer",
+        "manim-video",
+        "meeting-action-items",
+        "microsoft-office",
+        "obsidian",
+        "p5js",
+        "pdf",
+        "popular-web-designs",
+        "product-price-monitor",
+        "requesting-code-review",
+        "sdlc-review",
+        "simplify-code",
+        "songwriting-and-ai-music",
+        "spike",
+        "systematic-debugging",
+        "test-driven-development",
+        "weekly-review-planning",
+        "youtube-content",
     }
 
 

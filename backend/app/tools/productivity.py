@@ -184,15 +184,20 @@ class ReminderCreateTool(Tool):
 class AutomationCreateTool(Tool):
     name = "automation_create"
     description = (
-        "Create a recurring automation from a cron expression, e.g. '0 18 * * 5' for Fridays at 6pm. "
-        "Use when the user asks for something to happen on a schedule."
+        "Create something that runs on a schedule: a cron expression ('0 18 * * 5'), a natural "
+        "phrase the user said out loud ('every monday 9am', 'weekdays at 9am', 'every day at 8pm'), "
+        "a recurring interval ('every 30m', 'every 2h') or a one-off ('in 30m'). Missed runs are "
+        "caught up on the next start when they are still fresh."
     )
     risk_floor = RiskLevel.MEDIUM
     parameters = {
         "type": "object",
         "properties": {
             "name": {"type": "string"},
-            "schedule": {"type": "string", "description": "Five-field cron expression"},
+            "schedule": {
+                "type": "string",
+                "description": "Cron, natural phrase, interval or one-shot — exactly what the user said",
+            },
             "task": {"type": "string", "description": "The instruction Dobot should run each time"},
         },
         "required": ["name", "schedule", "task"],
@@ -210,7 +215,7 @@ class AutomationCreateTool(Tool):
                 prompt=self.require(params, "task"),
             )
         except Exception as exc:  # noqa: BLE001
-            return self.fail(self.name, f"invalid cron expression: {exc}", started)
+            return self.fail(self.name, f"invalid schedule: {exc}", started)
         return self.ok(self.name, record.model_dump(mode="json"), started)
 
     async def verify(
@@ -243,6 +248,76 @@ class AutomationCreateTool(Tool):
         ]
 
 
+class SkillViewTool(Tool):
+    name = "skill_view"
+    description = (
+        "Read a saved skill's complete instructions by name (progressive disclosure): the full "
+        "SKILL.md, plus optionally one reference file from that skill's folder. Call this before "
+        "skill_run whenever you need the exact steps, and whenever a skill's description is too "
+        "thin to decide whether it fits the task."
+    )
+    risk_floor = RiskLevel.LOW
+    proactive_ok = True
+    parameters: dict[str, Any] = {
+        "type": "object",
+        "properties": {
+            "name": {"type": "string", "description": "Skill name, as listed in the planner prompt"},
+            "file": {
+                "type": "string",
+                "description": "Optional file inside that skill's folder, e.g. 'references/api.md'",
+            },
+        },
+        "required": ["name"],
+    }
+    #: Long enough for the biggest imported skill, short enough not to blow up a plan's context.
+    MAX_BODY = 30_000
+    MAX_FILE = 60_000
+
+    async def run(self, params: dict[str, Any], ctx: ToolContext) -> ExecutionResult:
+        started = time.perf_counter()
+        ctx.check_cancelled()
+        if ctx.skills is None:
+            return self.fail(self.name, "skill library unavailable", started)
+        name = self.require(params, "name")
+        skill = ctx.skills.get(name)
+        if skill is None:
+            available = ", ".join(ctx.skills.names()) or "none"
+            return self.fail(self.name, f"unknown skill '{name}' (available: {available})", started)
+
+        output: dict[str, Any] = {
+            "skill": skill.name,
+            "description": skill.description,
+            "required_tools": skill.required_tools,
+            "body": skill.body[: self.MAX_BODY],
+            "truncated": len(skill.body) > self.MAX_BODY,
+        }
+
+        requested = str(params.get("file") or "").strip().strip("/\\")
+        if requested:
+
+            # A skill folder is the boundary: the name may not walk out of it, and only a file
+            # that exists is worth returning — a missing reference is reported, not guessed at.
+            root = Path(skill.path).resolve()
+            target = (root / requested).resolve()
+            if not target.is_relative_to(root) or target == root:
+                return self.fail(
+                    self.name,
+                    f"'{requested}' is outside the {skill.name} skill folder",
+                    started,
+                )
+            if not target.is_file():
+                return self.fail(self.name, f"no such file in {skill.name}: {requested}", started)
+            try:
+                text = target.read_text(encoding="utf-8", errors="replace")
+            except OSError as exc:
+                return self.fail(self.name, f"could not read {requested}: {exc}", started)
+            output["file"] = requested
+            output["content"] = text[: self.MAX_FILE]
+            output["file_truncated"] = len(text) > self.MAX_FILE
+
+        return self.ok(self.name, output, started)
+
+
 class SkillRunTool(Tool):
     name = "skill_run"
     description = (
@@ -269,17 +344,21 @@ class SkillRunTool(Tool):
         if skill is None:
             available = ", ".join(ctx.skills.names()) or "none"
             return self.fail(self.name, f"unknown skill '{name}' (available: {available})", started)
-        return self.ok(
-            self.name,
-            {
-                "skill": skill.name,
-                "instruction": skill.body[:4000],
-                "workflow": skill.workflow,
-                "inputs": params.get("inputs") or {},
-                "replan": True,
-            },
-            started,
-        )
+        output: dict[str, Any] = {
+            "skill": skill.name,
+            "instruction": skill.body[:4000],
+            "workflow": skill.workflow,
+            "inputs": params.get("inputs") or {},
+            "replan": True,
+        }
+        if len(skill.body) > 4000:
+            # Imported skills run past 14 KB. Half a procedure is worse than none, so say the
+            # document was cut rather than let a plan follow a severed list of steps.
+            output["note"] = (
+                f"'{skill.name}' holds {len(skill.body)} characters of instructions and only the "
+                "first 4000 are here — call skill_view(name) for the whole document before acting."
+            )
+        return self.ok(self.name, output, started)
 
     async def verify(
         self, params: dict[str, Any], result: ExecutionResult, ctx: ToolContext
