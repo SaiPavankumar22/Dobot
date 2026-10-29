@@ -161,15 +161,20 @@ async def test_kill_marks_task_cancelled(services) -> None:
 async def test_background_task_reports_through_the_event_bus(services) -> None:
     task_id = await services.orchestrator.submit_background(ChatRequest(message="hello"))
     assert task_id
-    for _ in range(200):
-        import asyncio
+    import asyncio
 
+    # Poll the bus itself, not the task record: the record is persisted as COMPLETED *before* the
+    # terminal event is emitted, so watching the record can observe completion and still return
+    # before the event this test exists to assert has been published. (This raced roughly half the
+    # time before, which made the suite's result depend on scheduling rather than behaviour.)
+    types: set[str] = set()
+    for _ in range(200):
         await asyncio.sleep(0.05)
-        doc = await services.store.get("tasks", task_id)
-        if doc and doc["status"] in {TaskStatus.COMPLETED.value, TaskStatus.FAILED.value}:
+        types = {
+            event.type.value for event in services.bus.history(limit=100, task_id=task_id)
+        }
+        if "completed" in types or "failed" in types:
             break
-    events = services.bus.history(limit=100, task_id=task_id)
-    types = {event.type.value for event in events}
     assert "task_received" in types
     assert "completed" in types or "failed" in types
 

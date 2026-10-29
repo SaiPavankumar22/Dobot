@@ -153,7 +153,17 @@ async function notifyIfAway(task: TaskRecord): Promise<void> {
       ? `${answer.slice(0, 180)}…`
       : answer
     : "Open Dobot to see what it did.";
-  await native.notify(task.status === "FAILED" ? "Dobot hit a snag" : "Dobot finished", body);
+  // Which hat Dobot is wearing when it speaks: a reminder and a recurring job deserve a title that
+  // says so, because the toast is all the user sees of a task that ran while they were elsewhere.
+  const title =
+    task.status === "FAILED"
+      ? "Dobot hit a snag"
+      : task.source.startsWith("reminder:")
+        ? "Dobot reminder"
+        : task.source.startsWith("automation:")
+          ? "Dobot scheduled task"
+          : "Dobot finished";
+  await native.notify(title, body);
 }
 
 /** The mode chosen last time, defaulting to the specification's `agent`. */

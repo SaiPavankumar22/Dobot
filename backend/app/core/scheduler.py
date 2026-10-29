@@ -16,8 +16,14 @@ from typing import Any
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.date import DateTrigger
+from apscheduler.triggers.interval import IntervalTrigger
 
 from app.config import Settings, get_settings
+from app.core.schedules import (  # noqa: F401 - re-exported: callers import it from here
+    catch_up_grace_seconds,
+    parse_schedule,
+    validate_cron,
+)
 from app.events import EventBus, EventType, get_event_bus
 from app.logging_setup import get_logger
 from app.memory.store import RecordStore
@@ -35,7 +41,11 @@ def _current_user() -> str:
     return current_user_id.get() or "local"
 
 _DURATION = re.compile(r"^(\d+)\s*(s|sec|secs|seconds|m|min|mins|minutes|h|hr|hrs|hours|d|day|days)$", re.I)
-_FIELD_COUNT = 5
+#: One-shot catch-up window while restoring (Hermes clamps its grace to 2 minutes – 2 hours).
+_ONESHOT_GRACE_SECONDS = 7200
+#: How far a restore walks a trigger looking for runs Dobot slept through. A 5-minute job that was
+#: off for a week is 2016 occurrences; past this the walk stops and the run counts as missed.
+_CATCH_UP_STEPS = 500
 
 
 def parse_when(value: str, *, now: datetime | None = None) -> datetime:
@@ -87,14 +97,6 @@ def parse_when(value: str, *, now: datetime | None = None) -> datetime:
     return parsed.replace(tzinfo=None) if parsed.tzinfo else parsed
 
 
-def validate_cron(expression: str) -> str:
-    fields = expression.split()
-    if len(fields) != _FIELD_COUNT:
-        raise ValueError(f"cron expression needs {_FIELD_COUNT} fields, got {len(fields)}")
-    CronTrigger.from_crontab(expression)  # raises on invalid syntax
-    return expression
-
-
 class Scheduler:
     def __init__(
         self,
@@ -128,6 +130,17 @@ class Scheduler:
                 count += 1
             except Exception as exc:  # noqa: BLE001
                 logger.warning("could not restore automation %s (%s)", record.id, exc)
+                continue
+            # A run Dobot slept through, still fresh enough to be worth firing now. Exactly once:
+            # accumulated misses are skipped, as in Hermes' catch-up rule.
+            missed = self._missed_run(record)
+            if missed is not None:
+                logger.info(
+                    "catching up %s: the run due %s was missed while Dobot was off",
+                    record.id,
+                    missed.isoformat(),
+                )
+                asyncio.create_task(self._fire(record.id, record.prompt))
         if count:
             logger.info("restored %d scheduled job(s)", count)
         return count
@@ -141,15 +154,32 @@ class Scheduler:
     async def create_automation(
         self, *, name: str, schedule: str, prompt: str, kind: AutomationKind = AutomationKind.CRON
     ) -> AutomationRecord:
-        validate_cron(schedule)
-        record = AutomationRecord(
-            name=name.strip()[:120],
-            schedule=schedule.strip(),
-            prompt=prompt.strip(),
-            kind=AutomationKind.CRON,
-            status="active",
-            user_id=_current_user(),
-        )
+        if kind is AutomationKind.REMINDER:
+            fire_at = parse_when(schedule)
+            record = AutomationRecord(
+                name=name.strip()[:120],
+                schedule=fire_at.isoformat(),
+                prompt=prompt.strip(),
+                kind=AutomationKind.REMINDER,
+                status="active",
+                next_run_at=fire_at,
+                user_id=_current_user(),
+            )
+        else:
+            # Accepts everything `parse_schedule` does — cron, 'every monday 9am', 'every 30m',
+            # 'in 30m', a timestamp — and raises ValueError with the help text if it cannot read it.
+            parsed = parse_schedule(schedule)
+            # A one-shot stored as "in 30m" would drift by the downtime on every restart, so it is
+            # persisted as the instant it resolved to. Recurring forms keep the user's own words.
+            stored = parsed.run_at.isoformat() if parsed.kind == "once" else schedule.strip()
+            record = AutomationRecord(
+                name=name.strip()[:120],
+                schedule=stored,
+                prompt=prompt.strip(),
+                kind=AutomationKind.CRON,
+                status="active",
+                user_id=_current_user(),
+            )
         self._schedule_record(record)
         await self._persist(record)
         return record
@@ -181,21 +211,86 @@ class Scheduler:
                 fire_at = parse_when(record.schedule)
             except ValueError:
                 return
-            self._scheduler.add_job(
-                self._fire,
-                trigger=DateTrigger(run_date=fire_at),
-                args=[record.id, record.prompt],
-                id=record.id,
-                replace_existing=True,
-            )
+            trigger: CronTrigger | DateTrigger | IntervalTrigger = DateTrigger(run_date=fire_at)
         else:
-            self._scheduler.add_job(
-                self._fire,
-                trigger=CronTrigger.from_crontab(record.schedule),
-                args=[record.id, record.prompt],
-                id=record.id,
-                replace_existing=True,
-            )
+            parsed = parse_schedule(record.schedule)
+            if parsed.kind == "cron":
+                trigger = CronTrigger.from_crontab(parsed.cron)
+            elif parsed.kind == "interval":
+                trigger = IntervalTrigger(minutes=parsed.minutes)
+            else:
+                trigger = DateTrigger(run_date=parsed.run_at)
+        self._scheduler.add_job(
+            self._fire,
+            trigger=trigger,
+            args=[record.id, record.prompt],
+            id=record.id,
+            replace_existing=True,
+        )
+
+    def _is_one_shot(self, record: AutomationRecord) -> bool:
+        """Reminders and one-off automations: they fire once and must never be re-armed."""
+        if record.kind is AutomationKind.REMINDER:
+            return True
+        try:
+            return not parse_schedule(record.schedule).recurring
+        except ValueError:
+            return False
+
+    def _missed_run(
+        self, record: AutomationRecord, *, now: datetime | None = None
+    ) -> datetime | None:
+        """The newest run Dobot slept through — but only when it is still fresh enough to fire.
+
+        Fresh means inside the catch-up grace window: half a period, clamped to 2 minutes – 2 hours
+        (Hermes' rule), with one-shots getting the 2-hour ceiling. Anything older is skipped rather
+        than fired late — a three-day-old reminder is worse than no reminder at all. Returns the
+        instant to fire at, or ``None`` when there is nothing worth catching up.
+        """
+        now = now or datetime.now(UTC)
+
+        if self._is_one_shot(record):
+            try:
+                if record.kind is AutomationKind.REMINDER:
+                    target = parse_when(record.schedule)
+                else:
+                    target = parse_schedule(record.schedule).run_at
+            except ValueError:
+                return None
+            if target is None:
+                return None
+            if target.tzinfo is None:
+                target = target.replace(tzinfo=now.tzinfo)
+            lateness = (now - target).total_seconds()
+            return target if 0 < lateness <= _ONESHOT_GRACE_SECONDS else None
+
+        job = self._scheduler.get_job(record.id)
+        trigger = job.trigger if job else None
+        if trigger is None:
+            return None
+        anchor = record.last_run_at or record.created_at
+        if anchor is None:
+            return None
+        if anchor.tzinfo is None:
+            anchor = anchor.replace(tzinfo=now.tzinfo)
+        timezone = getattr(trigger, "timezone", None) or now.tzinfo
+        cursor = anchor.astimezone(timezone)
+        end = now.astimezone(timezone)
+
+        missed: datetime | None = None
+        for _ in range(_CATCH_UP_STEPS):
+            following = trigger.get_next_fire_time(cursor, cursor + timedelta(microseconds=1))
+            if following is None or following > end:
+                break
+            missed = following
+            cursor = following
+        if missed is None:
+            return None
+
+        next_after = trigger.get_next_fire_time(missed, missed + timedelta(microseconds=1))
+        cadence = (next_after - missed).total_seconds() if next_after else None
+        lateness = (now - missed.astimezone(UTC)).total_seconds()
+        return missed if lateness <= catch_up_grace_seconds(cadence) else None
 
     # ------------------------------------------------------------------ firing
 
@@ -247,7 +342,8 @@ class Scheduler:
             "run_count": record.run_count + 1,
             "next_run_at": next_run.isoformat() if next_run else None,
         }
-        if record.kind is AutomationKind.REMINDER:
+        # One-shots are done after their single run; recurring jobs keep their active status.
+        if self._is_one_shot(record):
             patch["status"] = "completed"
         await self.store.update("automations", automation_id, patch)
 

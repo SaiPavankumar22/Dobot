@@ -301,10 +301,21 @@ class Orchestrator:
     async def run_automation(self, prompt: str, automation_id: str) -> None:
         # Scheduled work gets its own conversation, so a recurring job cannot dump its turns into
         # the interactive chat — but its history is still durable and still reaches the planner.
+        # The source tells the shell whether this was a reminder or a recurring job, so the system
+        # notification can say "Dobot reminder" rather than a generic "finished".
+        source = f"automation:{automation_id}"
+        scheduler = getattr(self.s, "scheduler", None)
+        if scheduler is not None:
+            try:
+                record = await scheduler.get(automation_id)
+            except Exception:  # noqa: BLE001 - never fail a scheduled run over a label
+                record = None
+            if record is not None and record.kind.value == "reminder":
+                source = f"reminder:{automation_id}"
         request = ChatRequest(
             message=prompt,
             background=True,
-            source=f"automation:{automation_id}",
+            source=source,
             conversation_id=f"auto-{automation_id}",
         )
         await self.submit(request, automation_id=automation_id)
@@ -420,11 +431,15 @@ class Orchestrator:
         matched = s.skills.matching(state["message"])
         if matched:
             skill_hint = (
-                "The user may be asking for one of these saved skills. If one fits, use `skill_run` "
-                f"with its name:\n{s.skills.prompt_section(matched)}"
+                "The user may be asking for one of these saved skills. Read one with `skill_view` "
+                "when you need its exact steps, then execute it with `skill_run` by name:\n"
+                f"{s.skills.prompt_section(matched)}"
             )
         elif s.skills.records():
-            skill_hint = "Available saved skills:\n" + s.skills.prompt_section()
+            skill_hint = (
+                "Available saved skills — `skill_view(name)` reads one, `skill_run(name)` executes "
+                f"it:\n{s.skills.prompt_section()}"
+            )
 
         with cost_scope(task_id=state["task_id"], purpose="plan"):
             plan = await s.planner.plan(
