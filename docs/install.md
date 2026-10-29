@@ -433,6 +433,34 @@ checkpoint (the GPU attempt just fails to load or run and the CPU carries on) or
 missing-DLL case above). An explicit `TRANSCRIBER_DEVICE=cuda` is honoured literally instead, so a
 setting that says cuda never quietly means something else.
 
+**The first transcription after each backend start loads the model** — the checkpoint itself is
+~484 MB and downloads once, on the very first run ever; afterwards the warm-up is seconds. The load
+runs on a worker thread, so chat and the socket keep answering while it happens, and the mic button
+says what it is doing (including "The first run on a machine downloads the local speech model
+(~484 MB) — give it a minute and try again") instead of spinning forever.
+
+### Optional: voice calls (the dot menu's **Voice**)
+
+A single click on the always-on dot fans out **Chat / Snip / Voice**; **Voice** starts a live call.
+Every stage streams through your own backend:
+
+    mic → Silero VAD (turn detection) → local Whisper → your reasoning models → Sarvam TTS → speakers
+
+Talking over an answer cancels it mid-sentence (barge-in), the way a phone call does. It needs the
+same `voice` extra as the mic button (`uv sync --all-extras` above) plus ffmpeg; the ~2 MB Silero
+model is fetched once, on the first call.
+
+Spoken replies need `SARVAM_API_KEY` in `.env` — create one at https://console.sarvam.ai (new
+accounts get ₹100 of credits). Without it the call still listens and answers, but in text only, and
+the call says so. Whatever you say is transcribed locally first; only the reply text is sent to
+Sarvam to be spoken.
+
+`VOICE_CALL_ENABLED=true` is the default. The reply model is your normal reasoning stack — a
+working `NEBIUS_API_KEY` is enough — and `VOICE_LLM_BASE_URL` / `VOICE_LLM_API_KEY` /
+`VOICE_LLM_MODEL` point it at another OpenAI-compatible endpoint (NVIDIA's own, for example) if
+you prefer. If the call speaks too early or cuts you off, `VOICE_VAD_THRESHOLD` (0.5),
+`VOICE_VAD_SILENCE_MS` (550) and `VOICE_VAD_PAD_MS` (160) are the knobs.
+
 ### Attaching images and files in chat
 
 Clip a file onto the composer — the paperclip, a drag-and-drop onto the chat, or a paste — and Dobot

@@ -100,8 +100,7 @@ class Settings(BaseSettings):
     tavily_base_url: str = "https://api.tavily.com"
 
     # --- memory --------------------------------------------------------------
-    mongodb_uri: str = ""
-    mongodb_db: str = "dobot"
+    # Structured records and vector memory are always local SQLite/filesystem stores.
 
     # --- conversation sessions ------------------------------------------------
     # The transcript is durable and unbounded; what reaches the model is not. These three numbers
@@ -376,9 +375,6 @@ class Settings(BaseSettings):
     # multi_user_open_registration is true. DOBOT_API_TOKEN keeps working as the operator gate.
     multi_user: bool = False
     multi_user_open_registration: bool = False
-    #: MongoDB is intentionally opt-in; the packaged local desktop uses SQLite.
-    mongodb_enabled: bool = False
-
     # --- screen / ocr --------------------------------------------------------
     screen_capture: str = "on_demand"
     ocr_enabled: bool = True
@@ -487,10 +483,6 @@ class Settings(BaseSettings):
     @property
     def has_novita(self) -> bool:
         return bool(self.novita_api_key.strip())
-
-    @property
-    def has_mongo(self) -> bool:
-        return self.mongodb_enabled and bool(self.mongodb_uri.strip())
 
     @property
     def secret_values(self) -> list[str]:

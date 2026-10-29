@@ -33,18 +33,14 @@ export const LOCAL_BACKEND_URL = "http://127.0.0.1:8756";
 /**
  * Where the app points before Settings overrides it: this machine's own backend, in every build —
  * so a fresh install is useful the moment it opens, and no repo or binary names a deployment.
- * A backend hosted anywhere else (your own server, container, or Space) is a URL pasted into
- * Settings → Backend, stored per machine in localStorage (`dobot.baseUrl`) along with the token
- * every call carries (`dobot.apiToken`).
+ * The desktop is intentionally local-only; the URL points to the loopback backend.
  */
 export const DEFAULT_BASE_URL = LOCAL_BACKEND_URL;
 
-let baseUrl = localStorage.getItem("dobot.baseUrl") || DEFAULT_BASE_URL;
+const baseUrl = DEFAULT_BASE_URL;
 
 /**
- * The bearer token sent with every call: the connected backend's `DOBOT_API_TOKEN`, or — for a
- * private Hugging Face Space — your HF read token (its proxy demands the token on every request,
- * WS handshake included).
+ * The optional bearer token sent with every call when the local backend enables authentication.
  *
  * Held in localStorage rather than baked into the build: it is a per-machine secret, and the whole
  * point of both gates is that it is not shipped in the app.
@@ -53,11 +49,6 @@ let apiToken = localStorage.getItem("dobot.apiToken") || "";
 
 export function getBaseUrl(): string {
   return baseUrl;
-}
-
-export function setBaseUrl(url: string): void {
-  baseUrl = url.replace(/\/$/, "");
-  localStorage.setItem("dobot.baseUrl", baseUrl);
 }
 
 export function getApiToken(): string {
@@ -90,7 +81,7 @@ export function getBearerToken(): string {
 
 /**
  * The bearer header alone, for raw `fetch`es that do not go through `request()` (voice, onboarding).
- * A private Hugging Face Space rejects every call without it.
+ * Local voice and onboarding calls use the same optional token.
  */
 export function authHeader(): Record<string, string> {
   const token = getBearerToken();
@@ -184,7 +175,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   } catch (error) {
     throw new ApiError(
       "BACKEND_UNREACHABLE",
-      `Dobot's backend is not reachable at ${baseUrl}. Is it running?`,
+      "Dobot is starting the local backend. Please wait a moment and try again.",
       true,
     );
   }
@@ -204,7 +195,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     }
     if (response.status === 401) {
       message =
-        "This backend requires an API token. For a Hugging Face Space, paste your HF read token in Settings; for a local backend, generate one with `uv run python -m app.selftest --new-token`, add it to .env, then paste it in Settings.";
+        "The local backend requires an API token. Generate one with `uv run python -m app.selftest --new-token`, add it to .env, then paste it in Settings.";
     }
     throw new ApiError(code, message, recoverable);
   }

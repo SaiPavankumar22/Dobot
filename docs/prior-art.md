@@ -1,7 +1,9 @@
 # Prior art: what Dobot borrowed, and what it rejected on purpose
 
 Four open-source projects were studied closely (September 2026) while pushing Dobot from
-prototype to production-ready. This record states what was taken, where it landed in the
+prototype to production-ready, and a fifth —
+[`huggingface/speech-to-speech`](https://github.com/huggingface/speech-to-speech), October 2026 —
+shaped the voice agent. This record states what was taken, where it landed in the
 codebase, and what was deliberately left behind — a borrow without provenance is just a feature
 nobody can explain.
 
@@ -57,8 +59,8 @@ action into an inline Allow/Deny decision.
   boundary Dobot would keep if it exposes its own external control surface later.
 
 **Rejected on purpose:** bring-your-own-CLI engines (Dobot owns its runtime and model tiers),
-channels/roster UX, the Composio app marketplace, and voice-call flows (Dobot's voice work is
-local-first: OS speech + Whisper).
+channels/roster UX and the Composio app marketplace. (Its voice work was passed over too — Dobot's
+call was rebuilt from `speech-to-speech`, below.)
 
 ## [eigent-ai/eigent](https://github.com/eigent-ai/eigent) — a coworking desktop of agents
 
@@ -81,6 +83,32 @@ memory validated Dobot's consolidation/canonical-facts pipeline rather than chan
 pair `skills/action_items` / `skills/disk_report` came out of the same pass — small, reusable
 workflows the planner can adopt without inventing them each run.
 
+## [huggingface/speech-to-speech](https://github.com/huggingface/speech-to-speech) — the voice pipeline
+
+**What it is.** HuggingFace's reference implementation of a spoken conversation: microphone in,
+speakers out, with voice activity detection, speech recognition, a language model and text-to-speech
+chained into one streaming loop, plus the realtime channel that carries it.
+
+**Borrowed:**
+
+- **The cascade, and a wire protocol shaped like it.** Dobot's voice agent (`app/agents/call/*`,
+  one WebSocket at `/voice/call`) is the same loop — mic frames in; `call_status`, `call_transcript`,
+  streamed caption text and audio frames out — with the reference pipeline's realtime channel as
+  the stated model for the message vocabulary.
+- **Barge-in as a first-class behaviour.** Talking over an answer cancels it mid-flight, the way a
+  phone call does, instead of waiting for the machine to finish its sentence.
+- **Turn detection as its own stage.** Voice activity detection decides whose turn it is before any
+  model runs, which is what keeps a conversational loop from racing itself.
+
+**Changed on purpose:** every part is swapped to Dobot's stack — local faster-whisper (what it
+hears never leaves the machine), the Nemotron reasoning models through the existing router, Sarvam
+bulbul TTS for speech — and the loop runs inside the backend next to the chat socket, so a call is
+the same agent as the window: same memory, same policy, same kill switch, no second service to run.
+
+**Rejected on purpose:** shipping the reference server itself, and its cloud ASR/TTS arrangement —
+Dobot's degrade-honestly rule would rather answer in text than send audio to a service it cannot
+configure.
+
 ## Where this landed, in one table
 
 | Borrow | Source | Landed in |
@@ -91,6 +119,7 @@ workflows the planner can adopt without inventing them each run.
 | Allow-once / always-allow permission grants | OpenMausBot permission broker | `app/security/grants.py`, ApprovalCard, Security → Granted permissions |
 | CI audit as a reusable workflow | eigent | `skills/ci_autopsy` |
 | Release evidence as a skill | ouroboros | `skills/release_checklist` |
+| Full-duplex voice loop with barge-in and a small realtime protocol | huggingface/speech-to-speech | `app/agents/call/*`, `/voice/call`, Voice in the dot's radial menu |
 
 Related: the earlier production-readiness pass added `skills/action_items`, `skills/disk_report`,
 the shape-based credential matching in `app/security/risk.py`, and CI that installs the `dev`

@@ -43,6 +43,10 @@ security theatre. Turn it on the moment one deployment serves more than one pers
 - **Anonymous requests are refused** (401) on every non-public route. `DOBOT_API_TOKEN`
   keeps working as the operator gate, and with `MULTI_USER` unset the behaviour is the
   single-user one, unchanged.
+- **WebSockets take the same door.** `/ws` and the voice-call socket `/voice/call` check the
+  origin by hand (CORS never sees an upgrade) and compare the operator or user token explicitly —
+  a refusal is an application-level close (4403 origin, 4401 token), and no audio or event flows
+  before the gate answers.
 
 Not isolated, by design: provider health, the kill switch and operator-only settings are
 process-wide. The desktop shell probes `/auth/status` at startup and shows a sign-in /

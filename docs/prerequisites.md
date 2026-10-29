@@ -152,6 +152,22 @@ becomes a searchable run with inputs, outputs, token counts, latency and errors 
 - `PRICE_PER_MTOK_INPUT/OUTPUT` — set them and the cost ledger reports real USD estimates instead of `UNKNOWN`.
 - `MEMORY_*`, `CONSOLIDATION_*`, `CANONICAL_*` — memory decay/consolidation tuning. Defaults are sane.
 - `VOICE_ENABLED` — text-to-speech via the OS engine. Off by default.
+- `TRANSCRIBER_*` — local Whisper behind the talk chord, the composer's mic and every call.
+  `TRANSCRIBER_DEVICE=auto` prefers the GPU and demotes itself to the CPU when the card cannot load
+  or run the checkpoint; needs the `voice` extra and ffmpeg ([install.md](install.md)).
+- `VOICE_CALL_ENABLED` — the live call behind the dot menu's **Voice**. On by default; it needs the
+  same `voice` extra as the mic.
+- `SARVAM_API_KEY` — speaks the call's replies (bulbul voices; https://console.sarvam.ai — new
+  accounts get ₹100 of credits). Without it the call still listens and answers, but in text only,
+  and says so. `SARVAM_TTS_MODEL` / `SARVAM_TTS_VOICE` / `SARVAM_TTS_LANGUAGE` /
+  `SARVAM_TTS_SAMPLE_RATE` tune it (defaults: `bulbul:v4-flash`, the model's default voice, `en-IN`,
+  24000).
+- `VOICE_LLM_BASE_URL` / `VOICE_LLM_API_KEY` / `VOICE_LLM_MODEL` — the model behind the call. All
+  empty = your reasoning stack (the same Nebius Nemotron models chat uses), so a working
+  `NEBIUS_API_KEY` alone is enough; point them at any OpenAI-compatible endpoint (NVIDIA's own, for
+  example) to override.
+- `VOICE_VAD_THRESHOLD` (0.5), `VOICE_VAD_SILENCE_MS` (550), `VOICE_VAD_PAD_MS` (160) — turn
+  detection for the call. Only touch them if the call speaks too early or cuts you off.
 - `DOBOT_HOST`/`DOBOT_PORT` — loopback `127.0.0.1:8756` by default; keep it loopback on a laptop.
 - `DOBOT_SKILLS_DIR` — empty = the repo's `skills/` folder.
 

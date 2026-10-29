@@ -30,8 +30,7 @@ export class DobotSocket {
     this.socket = null;
     this.closedByUs = false;
     // A WebSocket handshake cannot carry an Authorization header, so the token rides in the query:
-    // the backend's gate reads `access_token`, and it is also how a private Hugging Face Space
-    // authenticates the upgrade if its proxy asks for one.
+    // The local backend's gate reads `access_token`.
     let url = getBaseUrl().replace(/^http/, "ws") + "/ws";
     // A signed-in user session takes precedence, same rule as every HTTP call.
     const token = getBearerToken();
@@ -94,9 +93,7 @@ export class DobotSocket {
   }
 
   private scheduleReconnect(detail: string): void {
-    // The handshake is being refused (a private Hugging Face Space rejects it — the proxy wants an
-    // Authorization header and a browser WebSocket cannot send one). Keep the event stream alive
-    // over HTTP meanwhile; the socket keeps retrying underneath and takes over the moment it opens.
+    // Keep the event stream alive over HTTP while the socket retries.
     this.startPolling();
     this.retry = Math.min(this.retry + 1, 6);
     const delay = Math.min(1000 * 2 ** (this.retry - 1), 15000);

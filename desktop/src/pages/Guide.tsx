@@ -73,7 +73,7 @@ const TOPICS: Topic[] = [
     where: "The microphone button in the composer (and on the quick panel), or Ctrl+Shift+Space anywhere.",
     what: "Your speech is transcribed locally by Whisper (faster-whisper) — audio goes only to your own backend, never to a third party. It needs the faster-whisper package (and ffmpeg for browser recordings) installed on the machine running the backend. Hold Ctrl+Shift+Space and speak from any application: the quick panel comes up already listening, letting go sends what you said (a short tap waits for the next press to send); Esc cancels, and a press too short to be words is ignored.",
     steps: ["Hold Ctrl+Shift+Space (or click the mic and speak)", "Talk — the waveform shows it hears you", "Let go to send, or press Esc and edit the words first"],
-    tip: "If the mic reports 'not installed', the Doctor page shows the exact command. A Hugging Face Space backend does not ship the ~484 MB model, so voice input is a local-backend feature unless you add it to the Space.",
+    tip: "If the mic reports 'not installed', the Doctor page shows the exact command. The model runs locally and audio stays on this machine.",
   },
   {
     id: "speak",
@@ -126,7 +126,7 @@ const TOPICS: Topic[] = [
     title: "Memory",
     where: "Sidebar → Workspace → Memory.",
     what: "What Dobot has decided is worth remembering about you and your work: preferences, projects, facts, episodes. Memories fade if unused and are reinforced when recalled. Search, add, or forget any of them.",
-    tip: "Durable memory across reinstalls needs a MongoDB connection, which is configured on the backend (see 'Your keys').",
+    tip: "Memory is stored locally in SQLite and the local vector index. Back up the .dobot directory if you need to preserve it across reinstalls.",
   },
   {
     id: "identity",
@@ -162,17 +162,17 @@ const TOPICS: Topic[] = [
   },
   {
     id: "keys",
-    title: "Your keys vs the backend's keys",
+    title: "Your keys and local backend settings",
     where: "Settings → Your API keys (and the read-only 'Managed for you' list under it).",
     what: "You provide the keys that belong to you: Nebius (reasoning — required), Tavily (web research), Novita (the JEV-27B-VL judgement model that scores every proposed action). They are stored by the backend you are connected to, never displayed back — a saved field shows only a mask — and applied immediately.",
-    tip: "MongoDB and LangSmith are infrastructure, not user settings: when you use a shared backend (a Hugging Face Space) they are set there as secrets by whoever runs it. The app lists them as read-only and refuses to overwrite them, so your keys and theirs cannot collide.",
+    tip: "Local SQLite storage and backend infrastructure are managed on this device. Only provider keys that you choose to configure appear here.",
   },
   {
     id: "backend",
     title: "Backend and connection",
     where: "Settings → Backend.",
-    what: "Where the brain runs. The default is the deployed backend; point it at http://127.0.0.1:8756 to use one on this machine instead. A private deployed backend also needs its access token in the field below the address, or nothing will answer.",
-    tip: "If the sidebar says 'backend offline', the address or the token is the first thing to check.",
+    what: "The brain runs in the local backend at http://127.0.0.1:8756. The optional local API token is used only when backend authentication is enabled.",
+    tip: "If the sidebar says 'backend offline', wait for the local backend to finish starting, then retry.",
   },
   {
     id: "appearance",

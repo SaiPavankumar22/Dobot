@@ -331,9 +331,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def events_after(after: int = -1) -> dict:
         """Cursor-based event poll — the desktop shell's fallback when the WebSocket is blocked.
 
-        On a private Hugging Face Space the proxy refuses the WebSocket upgrade unless an
-        Authorization header is present, and a browser WebSocket cannot send one. This endpoint
-        carries the same events over plain HTTP, where the bearer token rides along.
+        This endpoint carries the same events over plain HTTP when a WebSocket reconnects.
 
         ``after`` is the last sequence the client saw: ``-1`` means "give me the recent replay"
         (mirroring the WebSocket hello), otherwise only newer events come back. A cursor from the

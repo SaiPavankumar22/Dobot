@@ -61,14 +61,14 @@ class UserScopedStore:
 
     @property
     def name(self) -> str:
-        # "user-scoped(mongodb)" — the scoping layer must never hide WHICH physical store
+        # The scoping layer must never hide which physical store is in use.
         # is serving reads (mongo vs local-file-store); the startup log, /memory/stats and
         # the Doctor all read this.
         return f"user-scoped({getattr(self._base, 'name', '?')})"
 
     @property
     def degraded(self) -> bool:
-        # Doctor checks `store.degraded` to explain a MongoDB outage; without this proxy it
+        # Doctor checks `store.degraded` to explain a storage outage; without this proxy it
         # silently reported healthy whenever multi-user wrapping was active.
         return bool(getattr(self._base, "degraded", False))
 

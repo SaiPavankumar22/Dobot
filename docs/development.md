@@ -68,13 +68,14 @@ native-only controls are hidden, so `npm run dev` is a fully usable development 
 
 ### Windows, and the two modes
 
-One bundle renders five Tauri windows, chosen by window label (or, in the browser, by hash):
+One bundle renders six Tauri windows, chosen by window label (or, in the browser, by hash):
 
 | Window | Default | Purpose |
 | --- | --- | --- |
 | `chat` | visible | The ordinary chatbot surface — sidebar, thread, composer. What a fresh install opens. |
 | `dot` | **hidden** | The always-on floating dot. Shown only when the user turns **Always on** on. |
 | `panel` | hidden | Compact quick-ask surface, anchored to the dot. |
+| `menu` | hidden | The radial fan-out from a single click on the dot — Chat / Snip / Voice. |
 | `dashboard` | hidden | Tasks, automations, approvals, memory, skills, activity, security, settings. |
 | `overlay` | created on demand | Temporary transparent region-selection layer. |
 

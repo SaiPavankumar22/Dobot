@@ -249,25 +249,6 @@ class Doctor:
 
     async def _record_store(self) -> list[Capability]:
         name = str(getattr(self.s.store, "name", "unknown"))
-        degraded = bool(getattr(self.s.store, "degraded", False))
-        if name.startswith("mongodb"):
-            state = "stale" if degraded else "live"
-            detail = (
-                "MongoDB request failed at runtime; writes are going to the local file store."
-                if degraded
-                else "MongoDB is serving all reads and writes."
-            )
-            return [
-                Capability(
-                    id="record_store",
-                    label="Record store (MongoDB)",
-                    state=state,
-                    detail=detail,
-                    fix="Check MONGODB_URI and that the server is running." if degraded else "",
-                    env="MONGODB_URI",
-                    meta={"store": name},
-                )
-            ]
         return [
             Capability(
                 id="record_store",

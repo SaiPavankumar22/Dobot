@@ -37,15 +37,14 @@ def test_keys_are_listed_masked(client) -> None:
 def test_operator_managed_values_are_reported_but_not_writable(client) -> None:
     test_client, _env = client
     reasons = {item["id"]: item["why"] for item in test_client.get("/settings/keys").json()["operator"]}
-    assert "mongodb_uri" in reasons and "langsmith_api_key" in reasons
+    assert "langsmith_api_key" in reasons
     # The judgement key belongs to the person, not the operator — Laya's old operator entries are gone.
     assert "laya_api_key" not in reasons and "laya_server_url" not in reasons
     assert all("value" not in item for item in test_client.get("/settings/keys").json()["operator"])
-    for name in ("mongodb_uri", "langsmith", "dobot_api_token"):
+    for name in ("langsmith", "dobot_api_token"):
         response = test_client.put(f"/settings/keys/{name}", json={"value": "x"})
         assert response.status_code == 403, name
         assert response.json()["error"]["code"] == "OPERATOR_MANAGED"
-    assert test_client.delete("/settings/keys/mongodb_uri").status_code == 403
 
 
 def test_setting_a_key_persists_and_applies(client) -> None:

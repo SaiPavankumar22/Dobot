@@ -495,7 +495,7 @@ cd desktop && npm run typecheck && npm run build
 cd desktop/src-tauri && cargo check
 
 # 2. tests
-cd backend && uv run pytest -q                       # expect 106 passed
+cd backend && uv run pytest -q                  # expect 513 passed (106 at the time of V2)
 
 # 3. live
 cd backend && uv run uvicorn app.main:app --host 127.0.0.1 --port 8756

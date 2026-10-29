@@ -43,7 +43,7 @@ then go and do it yourself. Dobot closes that loop.
 
 - **Answer and plan.** Simple questions get a direct answer; bigger requests become a step-by-step plan. Replies render formatted — headings, lists and code blocks, never raw markdown.
 - **See your screen.** Select a region (`Ctrl+Shift+S`) or share the window you are in (`Ctrl+Alt+L`) and ask about it.
-- **Listen.** Hold `Ctrl+Shift+Space`, speak, let go. Transcribed locally with Whisper.
+- **Listen.** Hold `Ctrl+Shift+Space`, speak, let go — or click the mic in the composer. Either way it is transcribed locally with Whisper.
 - **Snip the screen.** Click the always-on dot and pick **Snip** — drag a box around any part of the screen and it lands in the chat, ready to ask about.
 - **Talk out loud.** The same menu's **Voice** starts a live call: Dobot listens, answers and speaks, and you can interrupt an answer mid-sentence. Transcription stays on your machine.
 - **Read your files.** Drop in images, logs or code files and ask about them — attachments open full size on click.
@@ -138,7 +138,7 @@ Full details: [`docs/security.md`](docs/security.md).
 | Risk signals | **AutoTrust JEV-27B-VL** decision model on Novita (optional, bring your own key) |
 | Backend | Python · FastAPI · LangGraph |
 | Desktop app | Tauri 2 · React · TypeScript |
-| Memory | Local by default (SQLite + a local vector index) · MongoDB optional |
+| Memory | Local SQLite + local vector index |
 
 <details>
 <summary><b>Models in use</b></summary>
@@ -175,9 +175,8 @@ Optional: `SARVAM_API_KEY` (from sarvam.ai) gives the voice call its spoken repl
 call still listens and answers in text.
 You can also paste them later in the app under **Settings → Your API keys**.
 
-Running MongoDB? Set `MONGO_URL` and the backend stores accounts, tasks, memory, automations and
-settings in it instead of local JSON files. `MULTI_USER=true` turns on accounts (invite-gated) — the
-desktop app then shows a sign-in / sign-up screen automatically.
+Memory and chat history are stored locally in SQLite and the local vector index. `MULTI_USER=true`
+can still enable local account isolation when needed.
 
 **2. Start the backend**
 

@@ -9,7 +9,6 @@ import {
   getApiToken,
   getBaseUrl,
   setApiToken,
-  setBaseUrl,
   type KeyRecord,
   type OperatorKey,
 } from "../services/api";
@@ -58,7 +57,6 @@ const KEY_COPY: Record<string, { label: string; hint: string; placeholder: strin
 
 /** Friendly names for the environment-only values shown as read-only. */
 const OPERATOR_COPY: Record<string, string> = {
-  mongodb_uri: "Durable memory database",
   langsmith_api_key: "LangSmith tracing key",
   langsmith_api_url: "LangSmith host",
   langsmith_project: "LangSmith project",
@@ -78,7 +76,6 @@ export function Settings() {
   const disconnect = useDobot((state) => state.disconnect);
   const [updateBusy, setUpdateBusy] = useState(false);
   const [updateNote, setUpdateNote] = useState("");
-  const [baseUrl, setBase] = useState(getBaseUrl());
   const [token, setToken] = useState(getApiToken());
   const [connNote, setConnNote] = useState<{ ok: boolean; text: string } | null>(null);
   const [settings, setSettings] = useState<Record<string, unknown> | null>(null);
@@ -142,26 +139,13 @@ export function Settings() {
 
       <h2>Backend</h2>
       <div className="row">
-        <input value={baseUrl} onChange={(event) => setBase(event.target.value)} style={{ maxWidth: 320 }} />
-        <button
-          onClick={() => {
-            setBaseUrl(baseUrl);
-            setApiToken(token);
-            // The live socket still points at the previous backend (and carries the previous token
-            // in its handshake), so hand the stream over: close, then connect against the new URL.
-            disconnect();
-            connect();
-            void load();
-          }}
-        >
-          Save and reconnect
-        </button>
+        <span className="mono">Local backend · {getBaseUrl()}</span>
       </div>
       <div className="row" style={{ marginTop: 8, alignItems: "flex-start" }}>
         <input
           value={token}
           type="password"
-          placeholder="hf_…  (Hugging Face token)"
+          placeholder="optional local API token"
           onChange={(event) => setToken(event.target.value)}
           style={{ maxWidth: 320 }}
           autoComplete="off"
@@ -208,14 +192,8 @@ export function Settings() {
         </p>
       )}
       <p className="subtle">
-        A <strong>Hugging Face token</strong> (read scope is enough) is what lets the app reach the
-        private Hugging Face Space — HF's proxy checks it on every request, WebSocket included.
-        Create one at{" "}
-        <a href="https://huggingface.co/settings/tokens" target="_blank" rel="noreferrer">
-          huggingface.co/settings/tokens
-        </a>
-        . The same field is the <span className="mono">DOBOT_API_TOKEN</span> when the backend is one
-        you run yourself: generate it with{" "}
+        The local API token is optional. If <span className="mono">DOBOT_API_TOKEN</span> is enabled,
+        generate it with{" "}
         <span className="mono">uv run python -m app.selftest --new-token</span>.{" "}
         {authRequired
           ? "This backend requires a token."
@@ -489,7 +467,7 @@ export function Settings() {
         <>
           <h3>Managed for you</h3>
           <p className="subtle">
-            These belong to the backend's operator (on the Hugging Face Space, its secrets). They are
+            These belong to the local backend operator. They are
             intentionally not editable here — nothing on this page can read or overwrite them.
           </p>
           <div className="card keys">

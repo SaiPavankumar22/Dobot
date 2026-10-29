@@ -26,10 +26,8 @@ MUTABLE = {"shadow_mode", "screen_capture", "jev_enabled", "ocr_enabled", "voice
 #
 # * **User keys** (below) are the ones a person brings for themselves. The app's Settings page
 #   writes them to the backend's `.env` and applies them live.
-# * **Operator values** are infrastructure: the tracing account, the plaintext-schema memory
-#   database, the local API gate. They belong to whoever runs the backend
-#   — on a deployed Hugging Face Space that means Space **secrets**, i.e. environment variables —
-#   and the app must not solicit them from an end user.
+# * **Operator values** are infrastructure: the tracing account and local API gate. They belong
+#   in the backend environment and the app must not solicit them from an end user.
 
 # Credential names the API may manage, mapped to the Settings field they populate.
 KEY_FIELDS = {
@@ -48,7 +46,6 @@ URI_FIELDS: dict[str, str] = {}
 # *where* that environment is: `.env` for a backend you run yourself, a Space secret when the
 # backend is hosted for you. Either way the app does not ask an end user for these.
 OPERATOR_FIELDS = {
-    "mongodb_uri": "durable memory database — belongs to whoever runs the backend (its .env, or a Space secret)",
     "langsmith_api_key": "usage tracing — belongs to whoever runs the backend (its .env, or a Space secret)",
     "langsmith_api_url": "usage tracing host — backend environment only",
     "langsmith_project": "usage tracing project — backend environment only",
@@ -103,7 +100,7 @@ async def get_settings(services: ServicesDep) -> dict:
         },
         "sandbox": {"provider": settings.sandbox_provider, "sandbox": settings.nemoclaw_sandbox},
         "memory": {
-            "store": settings.mongodb_db if settings.has_mongo else "local",
+            "store": "sqlite",
             "vectors": "local",
         },
     }

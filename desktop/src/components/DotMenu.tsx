@@ -34,16 +34,10 @@ export function DotMenu() {
   const [open, setOpen] = useState(false);
   const openedAt = useRef(Date.now());
 
-  // The arc opens toward the middle of the screen: wherever the dot is parked — a corner, an edge,
-  // a second monitor — the options fan into the space the user is actually looking at.
-  const base = useMemo(() => {
-    const cx = window.screenX + window.innerWidth / 2;
-    const cy = window.screenY + window.innerHeight / 2;
-    const tx = (window.screen.availWidth || window.screen.width) / 2 - cx;
-    const ty = (window.screen.availHeight || window.screen.height) / 2 - cy;
-    const angle = (Math.atan2(ty, tx) * 180) / Math.PI;
-    return Number.isFinite(angle) ? Math.round(angle) : 180;
-  }, []);
+  // Keep the fan on the left of the always-on dot. The menu window is intentionally small and
+  // transparent, so this avoids covering the user's working area and never creates a screen-wide
+  // input shield.
+  const base = useMemo(() => 180, []);
 
   useEffect(() => {
     document.body.classList.add("transparent");

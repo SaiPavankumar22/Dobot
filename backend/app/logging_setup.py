@@ -105,7 +105,7 @@ def configure_logging() -> None:
     root.setLevel(settings.log_level)
 
     # Third-party chatter that would drown out the agent timeline.
-    for noisy in ("httpx", "httpcore", "apscheduler", "uvicorn.access", "motor"):
+    for noisy in ("httpx", "httpcore", "apscheduler", "uvicorn.access"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
 
 

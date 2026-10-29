@@ -3831,6 +3831,28 @@ button:active { transform: translateY(1px) scale(0.985); }
   position: fixed;
   inset: 0;
   --r: 90px;
+  pointer-events: auto;
+}
+.radial::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 112px;
+  height: 112px;
+  margin: -56px;
+  border: 1px solid color-mix(in oklab, var(--accent) 28%, transparent);
+  border-radius: 50%;
+  background: radial-gradient(circle, color-mix(in oklab, var(--accent) 12%, transparent), transparent 68%);
+  box-shadow: 0 0 30px color-mix(in oklab, var(--accent) 20%, transparent);
+  opacity: 0;
+  transform: scale(.72);
+  transition: opacity .35s ease, transform .5s cubic-bezier(.22, 1, .36, 1);
+  pointer-events: none;
+}
+.radial--open::before {
+  opacity: 1;
+  transform: scale(1);
 }
 .radial__item {
   position: absolute;
@@ -3850,9 +3872,10 @@ button:active { transform: translateY(1px) scale(0.985); }
   opacity: 0;
   transform: scale(0);
   transition:
-    transform 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275),
-    opacity 0.3s,
-    border-color 0.2s;
+    transform 0.48s cubic-bezier(.22, 1, .36, 1),
+    opacity 0.26s ease,
+    border-color 0.2s,
+    box-shadow 0.2s;
   transition-delay: calc((2 - var(--i)) * 0.05s);
 }
 .radial--open .radial__item {
@@ -3871,6 +3894,7 @@ button:active { transform: translateY(1px) scale(0.985); }
     rotate(calc(var(--angle) * -1))
     scale(1.1);
   border-color: var(--accent);
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.5), 0 0 16px color-mix(in oklab, var(--accent) 35%, transparent);
 }
 .radial__item svg {
   pointer-events: none;

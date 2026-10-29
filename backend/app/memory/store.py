@@ -1,8 +1,7 @@
-"""Structured record storage.
+"""Local structured record storage.
 
-Live path: MongoDB. Fallback: a file-backed store under ``DOBOT_STATE_DIR`` that keeps working
-offline and survives restarts. Both implement the same small interface so nothing else in the
-codebase knows which one is in use.
+SQLite is the only durable record store. It runs entirely on the user's machine, needs no server,
+and is migrated from the legacy JSON collection files on first startup.
 """
 
 from __future__ import annotations
@@ -11,7 +10,6 @@ import asyncio
 import json
 import os
 from collections.abc import Callable, Iterable
-from datetime import datetime
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -32,8 +30,6 @@ COLLECTIONS = (
     "runs",
     "traces",
     "grants",
-    # Identity itself: when MongoDB is configured, accounts and invites must migrate with
-    # everything else — a new database has to receive existing users too.
     "users",
     "invites",
 )
@@ -43,21 +39,17 @@ class RecordStore(Protocol):
     name: str
 
     async def insert(self, collection: str, doc: dict[str, Any]) -> dict[str, Any]: ...
-
     async def get(self, collection: str, doc_id: str) -> dict[str, Any] | None: ...
-
     async def all(self, collection: str, limit: int = 500) -> list[dict[str, Any]]: ...
-
-    async def update(self, collection: str, doc_id: str, patch: dict[str, Any]) -> dict[str, Any] | None: ...
-
+    async def update(
+        self, collection: str, doc_id: str, patch: dict[str, Any]
+    ) -> dict[str, Any] | None: ...
     async def update_many(self, collection: str, patches: dict[str, dict[str, Any]]) -> int: ...
-
     async def delete(self, collection: str, doc_id: str) -> bool: ...
-
-    async def delete_many(self, collection: str, predicate: Callable[[dict[str, Any]], bool]) -> int: ...
-
+    async def delete_many(
+        self, collection: str, predicate: Callable[[dict[str, Any]], bool]
+    ) -> int: ...
     async def count(self, collection: str) -> int: ...
-
     async def close(self) -> None: ...
 
 
@@ -69,7 +61,7 @@ def _matches(doc: dict[str, Any], predicate: Callable[[dict[str, Any]], bool]) -
 
 
 class LocalFileStore:
-    """JSON-per-collection store with atomic writes and an in-process cache."""
+    """Legacy JSON-per-collection store retained only for migration and compatibility."""
 
     name = "local-file-store"
 
@@ -133,11 +125,6 @@ class LocalFileStore:
             return dict(data[doc_id])
 
     async def update_many(self, collection: str, patches: dict[str, dict[str, Any]]) -> int:
-        """Apply many patches in one lock and one flush.
-
-        Recall touches several memories at once; doing that as N single updates would rewrite the
-        whole collection file N times per turn, which is why this exists.
-        """
         if not patches:
             return 0
         async with self._lock:
@@ -182,189 +169,6 @@ class LocalFileStore:
                 self._flush(collection)
 
 
-class MongoRecordStore:
-    """MongoDB-backed store (documents keyed by Dobot's own string id)."""
-
-    name = "mongodb"
-
-    def __init__(self, uri: str, database: str) -> None:
-        from motor.motor_asyncio import AsyncIOMotorClient  # type: ignore
-
-        self._client = AsyncIOMotorClient(uri, serverSelectionTimeoutMS=2500)
-        self._db = self._client[database]
-
-    def _collection(self, name: str) -> Any:
-        return self._db[name]
-
-    async def ping(self) -> bool:
-        try:
-            await self._client.admin.command("ping")
-            return True
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("mongodb ping failed (%s)", exc)
-            return False
-
-    async def insert(self, collection: str, doc: dict[str, Any]) -> dict[str, Any]:
-        payload = dict(doc)
-        payload["_id"] = str(payload.get("id") or payload.get("_id"))
-        await self._collection(collection).replace_one({"_id": payload["_id"]}, payload, upsert=True)
-        return doc
-
-    async def get(self, collection: str, doc_id: str) -> dict[str, Any] | None:
-        doc = await self._collection(collection).find_one({"_id": doc_id})
-        if not doc:
-            return None
-        doc.pop("_id", None)
-        return doc
-
-    async def all(self, collection: str, limit: int = 500) -> list[dict[str, Any]]:
-        cursor = self._collection(collection).find({}).sort("_id", -1).limit(limit)
-        docs = await cursor.to_list(length=limit)
-        for doc in docs:
-            doc.pop("_id", None)
-        return list(reversed(docs))
-
-    async def update(
-        self, collection: str, doc_id: str, patch: dict[str, Any]
-    ) -> dict[str, Any] | None:
-        result = await self._collection(collection).find_one_and_update(
-            {"_id": doc_id}, {"$set": patch}, return_document=True
-        )
-        if not result:
-            return None
-        result.pop("_id", None)
-        return result
-
-    async def update_many(self, collection: str, patches: dict[str, dict[str, Any]]) -> int:
-        if not patches:
-            return 0
-        from pymongo import UpdateOne  # type: ignore
-
-        operations = [
-            UpdateOne({"_id": doc_id}, {"$set": patch}) for doc_id, patch in patches.items()
-        ]
-        result = await self._collection(collection).bulk_write(operations, ordered=False)
-        return int(result.modified_count)
-
-    async def delete(self, collection: str, doc_id: str) -> bool:
-        result = await self._collection(collection).delete_one({"_id": doc_id})
-        return bool(result.deleted_count)
-
-    async def delete_many(
-        self, collection: str, predicate: Callable[[dict[str, Any]], bool]
-    ) -> int:
-        docs = await self.all(collection, limit=10_000)
-        doomed = [str(doc.get("id")) for doc in docs if _matches(doc, predicate) and doc.get("id")]
-        if not doomed:
-            return 0
-        result = await self._collection(collection).delete_many({"_id": {"$in": doomed}})
-        return int(result.deleted_count)
-
-    async def count(self, collection: str) -> int:
-        return int(await self._collection(collection).count_documents({}))
-
-    async def close(self) -> None:
-        self._client.close()
-
-
-class FallbackRecordStore:
-    """Prefers MongoDB, transparently rotates to the local store if it is unavailable."""
-
-    def __init__(self, primary: RecordStore, fallback: RecordStore) -> None:
-        self._primary = primary
-        self._fallback = fallback
-        self.name = primary.name
-        self._degraded = False
-
-    async def _run(self, method: str, *args: Any, **kwargs: Any) -> Any:
-        if not self._degraded:
-            try:
-                return await getattr(self._primary, method)(*args, **kwargs)
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("record store %s failed (%s); using local store", self._primary.name, exc)
-                self._degraded = True
-                self.name = f"{self._primary.name}->{self._fallback.name}"
-        return await getattr(self._fallback, method)(*args, **kwargs)
-
-    async def insert(self, collection: str, doc: dict[str, Any]) -> dict[str, Any]:
-        return dict(await self._run("insert", collection, doc))
-
-    async def get(self, collection: str, doc_id: str) -> dict[str, Any] | None:
-        return await self._run("get", collection, doc_id)
-
-    async def all(self, collection: str, limit: int = 500) -> list[dict[str, Any]]:
-        return list(await self._run("all", collection, limit))
-
-    async def update(
-        self, collection: str, doc_id: str, patch: dict[str, Any]
-    ) -> dict[str, Any] | None:
-        return await self._run("update", collection, doc_id, patch)
-
-    async def update_many(self, collection: str, patches: dict[str, dict[str, Any]]) -> int:
-        return int(await self._run("update_many", collection, patches))
-
-    async def delete(self, collection: str, doc_id: str) -> bool:
-        return bool(await self._run("delete", collection, doc_id))
-
-    async def delete_many(
-        self, collection: str, predicate: Callable[[dict[str, Any]], bool]
-    ) -> int:
-        return int(await self._run("delete_many", collection, predicate))
-
-    async def count(self, collection: str) -> int:
-        return int(await self._run("count", collection))
-
-    async def close(self) -> None:
-        await self._primary.close()
-        await self._fallback.close()
-
-    @property
-    def degraded(self) -> bool:
-        return self._degraded
-
-
-def _doc_timestamp(doc: dict[str, Any]) -> float | None:
-    """updated_at/created_at as a comparable instant; None when absent or unparseable."""
-    for key in ("updated_at", "created_at"):
-        raw = doc.get(key)
-        if not raw:
-            continue
-        try:
-            return datetime.fromisoformat(str(raw).replace("Z", "+00:00")).timestamp()
-        except ValueError:
-            continue
-    return None
-
-
-async def migrate_local_into(primary: RecordStore, local: RecordStore) -> int:
-    """Merge documents from the local store into the primary — without ever clobbering it.
-
-    This runs on *every* startup while a primary is available, so it must be merge-safe in
-    both directions: a local doc the primary has never seen is copied (records created
-    during an outage reach the database), and a local doc only overwrites the primary when
-    its own timestamp is strictly newer (records *updated* during an outage catch up).
-    A stale local snapshot — the normal state of affairs, since the files are never deleted
-    after migration — can therefore never roll live database state backwards.
-    """
-    merged = 0
-    for collection in COLLECTIONS:
-        for doc in await local.all(collection, limit=10_000):
-            doc_id = str(doc.get("id") or "")
-            if not doc_id:
-                continue
-            existing = await primary.get(collection, doc_id)
-            if existing is None:
-                await primary.insert(collection, doc)
-                merged += 1
-                continue
-            local_at = _doc_timestamp(doc)
-            primary_at = _doc_timestamp(existing)
-            if local_at is not None and primary_at is not None and local_at > primary_at:
-                await primary.update(collection, doc_id, {k: v for k, v in doc.items() if k != "_id"})
-                merged += 1
-    return merged
-
-
 async def build_record_store(settings: Settings | None = None) -> RecordStore:
     settings = settings or get_settings()
     from app.memory.sqlite_store import SQLiteRecordStore
@@ -378,20 +182,7 @@ async def build_record_store(settings: Settings | None = None) -> RecordStore:
     )
     if migration.get("migrated") or migration.get("backup"):
         logger.info("local JSON store migration: %s", migration)
-    if settings.has_mongo:
-        try:
-            mongo = MongoRecordStore(settings.mongodb_uri, settings.mongodb_db)
-            if await mongo.ping():
-                merged = await migrate_local_into(mongo, local)
-                logger.info(
-                    "record store: mongodb (db=%s; %d local document(s) merged)",
-                    settings.mongodb_db,
-                    merged,
-                )
-                return FallbackRecordStore(mongo, local)
-            await mongo.close()
-        except Exception as exc:  # noqa: BLE001 - missing motor, bad URI, auth failure
-            logger.warning("mongodb unavailable (%s); using local file store", exc)
+    logger.info("record store: local SQLite (%s)", settings.data_dir / "dobot.sqlite3")
     return local
 
 

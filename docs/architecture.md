@@ -39,8 +39,9 @@ region select         ──────►   POST /screen/analyze  ──► Co
    WebSocket events ◄────────────────────────────┘
 ```
 
-The desktop side is one React bundle rendering five Tauri windows — `chat` (the default surface),
-`dot` (the opt-in always-on companion), `panel`, `dashboard`, and a temporary `overlay` for region
+The desktop side is one React bundle rendering six Tauri windows — `chat` (the default surface),
+`dot` (the opt-in always-on companion), `panel` (its quick-ask dialog), `menu` (the radial fan-out
+from a single click: Chat / Snip / Voice), `dashboard`, and a temporary `overlay` for region
 selection. See [`development.md`](development.md) for how the windows and the always-on toggle are
 wired.
 
@@ -69,6 +70,8 @@ thread, the activity timeline, and progress bars in the dashboard.
 | `app/agents/hermes.py` | Execution runtime adapter (local tools / CLI / remote) |
 | `app/agents/sandbox.py` | Execution boundary adapter: NemoClaw/OpenShell, Nebius Sandboxes (ConTree), or the in-process action firewall — one interface, honest degradation |
 | `app/agents/research_agent.py` | Tavily research pipeline with parallel sub-queries |
+| `app/agents/transcriber.py` | Local Whisper behind `/voice/transcribe` — the talk chord, the composer's mic, every call |
+| `app/agents/call/*` + `app/api/voice_call.py` | Speech-to-speech calls over one gated WebSocket: Silero VAD → Whisper → streaming Nemotron → Sarvam TTS |
 | `app/tools/*` | Tool implementations with declared risk levels |
 | `app/memory/*` | Structured store, vector store, embeddings, retriever |
 | `app/security/*` | Risk classifier, policies, JEV (AutoTrust JEV-27B-VL-backed), approvals |
@@ -87,6 +90,8 @@ Each external dependency has a local implementation behind the same interface:
 | Hermes | CLI / remote endpoint | Dobot's guarded local tool implementations |
 | NemoClaw | NemoClaw CLI / OpenShell gateway | Dobot action firewall + path/network allowlists |
 | OCR | `pytesseract` | Vision model transcription, then empty-text fallback |
+| Speech-to-text | Local Whisper checkpoint (`faster-whisper`) | An honest error on the mic and the talk chord; typing always works |
+| Sarvam TTS | bulbul voices over REST | The call listens and answers in text only, with the reason in its status hints |
 
 `GET /health` reports which of these are actually live, and the UI surfaces it, so a demo never
 silently depends on something that is down.

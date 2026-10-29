@@ -77,7 +77,6 @@ class _Env:
             "NEBIUS_API_KEY": "",
             "NEBIUS_PROJECT_ID": "",
             "TAVILY_API_KEY": "",
-            "MONGODB_URI": "",
             "SANDBOX_PROVIDER": "local",
             "AGENT_RUNTIME": "local",
             "SHADOW_MODE": "false",

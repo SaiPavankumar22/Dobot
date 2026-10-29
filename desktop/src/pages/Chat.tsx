@@ -36,7 +36,7 @@ import { Skills } from "../pages/Skills";
 import { Tasks } from "../pages/Tasks";
 import { Switch } from "../components/Switch";
 import { statusLabel } from "../components/DobotDot";
-import { api, getBaseUrl } from "../services/api";
+import { api } from "../services/api";
 import {
   DEFAULT_LIMITS,
   acceptAttribute,
@@ -547,23 +547,7 @@ export function Chat() {
 
           {!connected && (
             <div className="notice notice--warn">
-              {/^https?:\/\/(127\.0\.0\.1|localhost):8756\/?$/.test(getBaseUrl()) ? (
-                <>Dobot is starting the local backend. Please wait a moment…</>
-              ) : getBaseUrl().includes("hf.space") ? (
-                <>
-                  {" "}
-                  The Space may be asleep, still building (first wake takes ~30 s), or missing its
-                  token — check its logs on huggingface.co, then re-paste your HF read token in
-                  Settings.
-                </>
-              ) : (
-                <>
-                  {" "}
-                  Start it with{" "}
-                  <span className="mono">cd backend &amp;&amp; uv run uvicorn app.main:app --port 8756</span>
-                  , or change the address in Settings.
-                </>
-              )}
+              <>Dobot is starting the local backend. Please wait a moment…</>
             </div>
           )}
 

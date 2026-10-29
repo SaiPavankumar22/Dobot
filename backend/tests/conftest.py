@@ -26,7 +26,6 @@ def settings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Settings:
     # assertion injects a stub client, and without this pin a live .env key would put a real model
     # call (and a real bill) inside the suite.
     monkeypatch.setenv("NOVITA_API_KEY", "")
-    monkeypatch.setenv("MONGODB_URI", "")
     monkeypatch.setenv("SANDBOX_PROVIDER", "local")
     monkeypatch.setenv("AGENT_RUNTIME", "local")
     monkeypatch.setenv("SHADOW_MODE", "false")
