@@ -15,6 +15,8 @@ venv/
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
+.coverage
+.coverage.*
 *.egg-info/
 dist/
 build/
@@ -49,9 +51,13 @@ desktop.ini
 /final/
 site/
 
-# local agent skills (graphify, karpathy-guidelines, ponytail) — read every session,
-# never committed and never pushed
+# local agent skills (graphify, karpathy-guidelines, ponytail, security-audit) — read every
+# session, never committed and never pushed
 *.mdc
+/.security-audit-skill/
+
+# scratch clone of NousResearch/hermes-agent used to import skills/ and cron research
+/.hermes-import/
 
 # graphify knowledge graph — local, regenerated with `graphify update .` after code changes
 /graphify-out/

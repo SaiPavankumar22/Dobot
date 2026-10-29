@@ -147,3 +147,150 @@ pub fn capture_region(region: &Region) -> Result<String, String> {
     let cropped = image::imageops::crop_imm(&shot, local_x, local_y, width, height).to_image();
     Ok(to_base64(&encode_png(&cropped)?))
 }
+
+/// The snip overlay measures its marquee in CSS pixels counted from the overlay's own top-left
+/// corner, while everything below this line works in physical virtual-desktop pixels (what xcap
+/// reports). Above 100% display scaling those are different numbers, so a region coming from the
+/// frontend is converted here, once, with the overlay's real origin and scale factor.
+pub fn to_physical(region: &Region, origin: (i32, i32), scale: f64) -> Region {
+    let scale = if scale.is_finite() && scale > 0.0 { scale } else { 1.0 };
+    let convert = |value: f64| (value * scale).round();
+    Region {
+        x: origin.0 + convert(region.x as f64) as i32,
+        y: origin.1 + convert(region.y as f64) as i32,
+        width: convert(region.width as f64).max(1.0) as u32,
+        height: convert(region.height as f64).max(1.0) as u32,
+        monitor: region.monitor,
+    }
+}
+
+#[cfg(test)]
+mod smoke {
+    use super::*;
+
+    /// Needs a real desktop to paint on — run with `cargo test -- --ignored` on a machine with a
+    /// display; CI only ever runs `cargo check`.
+    #[ignore = "captures a real screen"]
+    #[test]
+    fn capture_a_region_end_to_end() {
+        let list = monitors().expect("enumerate monitors");
+        for (index, monitor) in list.iter().enumerate() {
+            println!(
+                "monitor[{index}] name={:?} at {},{} {}x{} scale={:?}",
+                name_of(monitor),
+                x_of(monitor),
+                y_of(monitor),
+                w_of(monitor),
+                h_of(monitor),
+                monitor.scale_factor()
+            );
+        }
+        let bounds = virtual_bounds().expect("virtual bounds");
+        println!("virtual bounds: {bounds:?}");
+
+        let region = Region {
+            x: 0,
+            y: 0,
+            width: 200,
+            height: 120,
+            monitor: 0,
+        };
+        let encoded = capture_region(&region).expect("capture_region");
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(&encoded)
+            .expect("base64");
+        let decoded = image::load_from_memory(&bytes).expect("decode png").to_rgba8();
+        println!("captured png: {}x{} ({} bytes)", decoded.width(), decoded.height(), bytes.len());
+        assert_eq!((decoded.width(), decoded.height()), (200, 120));
+        // A genuinely blank capture would be every pixel identical.
+        let first = decoded.get_pixel(0, 0).0;
+        let varied = decoded
+            .pixels()
+            .any(|pixel| pixel.0 != first);
+        assert!(varied, "capture came back as a single flat colour");
+    }
+
+    #[ignore = "captures a real screen"]
+    #[test]
+    fn capture_a_window_end_to_end() {
+        let windows = xcap::Window::all().expect("list windows");
+        let mut attempted = 0usize;
+        let mut captured = 0usize;
+        for window in &windows {
+            let title = window.title().unwrap_or_default();
+            if title.trim().is_empty() || window.is_minimized().unwrap_or(true) {
+                continue;
+            }
+            let width = window.width().unwrap_or(0);
+            let height = window.height().unwrap_or(0);
+            if width < 64 || height < 64 {
+                continue;
+            }
+            attempted += 1;
+            match window.capture_image() {
+                Ok(shot) => {
+                    captured += 1;
+                    if captured == 1 {
+                        let png = encode_png(&shot).expect("encode");
+                        println!("window {title:?} {width}x{height} -> png {} bytes", png.len());
+                    }
+                }
+                Err(error) => println!("window {title:?} {width}x{height} FAILED: {error}"),
+            }
+            if attempted >= 8 {
+                break;
+            }
+        }
+        println!("windows attempted={attempted} captured={captured}");
+        assert!(attempted > 0, "no capturable window found");
+        println!("windows captured={captured}/{attempted} (failures are printed above)");
+    }
+}
+
+#[cfg(test)]
+mod coordinate_tests {
+    use super::*;
+
+    fn region(x: i32, y: i32, width: u32, height: u32) -> Region {
+        Region { x, y, width, height, monitor: 0 }
+    }
+
+    #[test]
+    fn a_100_percent_display_needs_no_conversion() {
+        let converted = to_physical(&region(120, 60, 400, 300), (0, 0), 1.0);
+        assert_eq!((converted.x, converted.y), (120, 60));
+        assert_eq!((converted.width, converted.height), (400, 300));
+    }
+
+    #[test]
+    fn a_full_screen_selection_at_125_percent_fills_the_physical_screen() {
+        // This machine: 1920x1080 physical at scale 1.25 → the overlay's CSS viewport is
+        // 1536x864. Dragging across all of it must come back as the whole physical screen.
+        let converted = to_physical(&region(0, 0, 1536, 864), (0, 0), 1.25);
+        assert_eq!((converted.x, converted.y), (0, 0));
+        assert_eq!((converted.width, converted.height), (1920, 1080));
+    }
+
+    #[test]
+    fn a_selection_in_the_lower_right_lands_where_it_was_drawn() {
+        let converted = to_physical(&region(1136, 664, 400, 200), (0, 0), 1.25);
+        assert_eq!((converted.x, converted.y), (1420, 830));
+        assert_eq!((converted.width, converted.height), (500, 250));
+    }
+
+    #[test]
+    fn a_second_monitor_left_of_the_origin_keeps_its_offset() {
+        let converted = to_physical(&region(10, 20, 100, 100), (-1920, 0), 1.5);
+        assert_eq!((converted.x, converted.y), (-1905, 30));
+        assert_eq!((converted.width, converted.height), (150, 150));
+    }
+
+    #[test]
+    fn a_nonsense_scale_falls_back_to_identity() {
+        for scale in [0.0, -1.0, f64::NAN] {
+            let converted = to_physical(&region(7, 9, 11, 13), (0, 0), scale);
+            assert_eq!((converted.x, converted.y), (7, 9));
+            assert_eq!((converted.width, converted.height), (11, 13));
+        }
+    }
+}

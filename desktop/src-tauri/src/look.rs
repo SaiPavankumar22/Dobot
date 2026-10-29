@@ -108,9 +108,14 @@ fn screen_picture(app: &AppHandle) -> Result<SelectionPayload, String> {
         height,
         monitor: 0,
     };
-    let hidden = windows::hide_for_capture(app);
+    // The guard puts the dot and the dialog back even if the capture itself unwinds — a restore
+    // that only ran on the happy path could leave the icon hidden for the rest of the session.
+    let guard = crate::RestoreWindows {
+        app,
+        hidden: windows::hide_for_capture(app),
+    };
     let result = capture::capture_region(&region);
-    windows::restore_after_capture(app, hidden);
+    drop(guard);
     Ok(SelectionPayload {
         image: result?,
         region,

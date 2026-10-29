@@ -13,7 +13,9 @@
 
 use crate::capture;
 use crate::state;
-use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri::{
+    AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewUrl, WebviewWindowBuilder,
+};
 
 pub const CHAT: &str = "chat";
 pub const DOT: &str = "dot";
@@ -62,12 +64,30 @@ fn anchor_bottom_right(app: &AppHandle, label: &str) {
 /// to the corner, never over the header's buttons) and +14 down lines the 44px circle up with the
 /// 44px header. From here the pair is kept together by `Pair` (lib.rs): whichever of the two the
 /// user drags, the other keeps this exact relationship, so they can never drift apart.
+/// Is this dot position entirely outside the virtual desktop? The dot is 72px square, so anything
+/// past these edges is invisible and ungrabbable — the state that reads as "the icon disappeared".
+fn off_desktop(position: tauri::PhysicalPosition<i32>) -> bool {
+    let bounds = capture::virtual_bounds().unwrap_or((0, 0, 1920, 1080));
+    position.x + 72 <= bounds.0
+        || position.y + 72 <= bounds.1
+        || position.x >= bounds.0 + bounds.2 as i32
+        || position.y >= bounds.1 + bounds.3 as i32
+}
+
 pub fn open_panel(app: &AppHandle) {
     // The menu and the dialog are never up at the same time — the menu is the hub, the dialog
     // what you pick from it (or the double click's shortcut to it).
     hide(app, MENU);
     if let Some(panel) = app.get_webview_window(PANEL) {
         let dot_enabled = state::is_dot_enabled(app);
+        if let Some(dot) = app.get_webview_window(DOT) {
+            // Self-heal: if the icon is somewhere it cannot be seen — a parked-window move from an
+            // earlier build, a monitor that has since been unplugged, a drag past the edge — raise
+            // it back onto the desktop instead of anchoring a new window to an invisible dot.
+            if dot.is_visible().unwrap_or(false) && dot.outer_position().map(|p| off_desktop(p)).unwrap_or(false) {
+                restore_dot_position(app);
+            }
+        }
         if let Some(dot) = app.get_webview_window(DOT) {
             if let (Ok(dot_pos), Ok(size)) = (dot.outer_position(), panel.outer_size()) {
                 let bounds = capture::virtual_bounds().unwrap_or((0, 0, 1920, 1080));
@@ -240,10 +260,8 @@ pub fn open_overlay(app: &AppHandle) -> Result<(), String> {
         return Ok(());
     }
     let (x, y, width, height) = capture::virtual_bounds()?;
-    WebviewWindowBuilder::new(app, OVERLAY, WebviewUrl::App("index.html#/overlay".into()))
+    let window = WebviewWindowBuilder::new(app, OVERLAY, WebviewUrl::App("index.html#/overlay".into()))
         .title("Select a region")
-        .position(x as f64, y as f64)
-        .inner_size(width as f64, height as f64)
         .transparent(true)
         .decorations(false)
         .always_on_top(true)
@@ -252,6 +270,14 @@ pub fn open_overlay(app: &AppHandle) -> Result<(), String> {
         .focused(true)
         .build()
         .map_err(|error| format!("could not open the selection overlay: {error}"))?;
+    // `virtual_bounds` is in physical pixels (it comes from xcap), but the builder's position and
+    // size take *logical* pixels. On a display scaled above 100% handing them over directly makes
+    // the overlay larger than the screen — its Cancel button and hint end up off the display, and
+    // every drag coordinate is measured against the wrong box. Place and size it physically
+    // instead, so the overlay covers the virtual desktop exactly once, CSS pixel for physical
+    // pixel after it.
+    let _ = window.set_position(PhysicalPosition::new(x, y));
+    let _ = window.set_size(PhysicalSize::new(width, height));
     Ok(())
 }
 

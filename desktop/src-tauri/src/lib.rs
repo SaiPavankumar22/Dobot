@@ -113,6 +113,43 @@ pub fn anchor_pair(app: &AppHandle) {
     }
 }
 
+/// Windows parks a window it has just minimised at (-32000, -32000) and reports that as a move.
+/// It is never a real position — no monitor can be that far out — so both listeners below treat it
+/// as "no drag happened at all". Without this, minimising the dialog (the chat surface and the voice
+/// call are the same window) carried the always-on icon off the desktop with it: the panel's Moved
+/// handler subtracted the pair offset from -32000 and put the dot there, and the icon vanished.
+fn is_parked(position: &tauri::PhysicalPosition<i32>) -> bool {
+    position.x <= -10_000 || position.y <= -10_000
+}
+
+/// Keep a computed position inside the virtual desktop (the dot is 72px square).
+fn clamp_to_desktop(position: (i32, i32)) -> (i32, i32) {
+    let bounds = capture::virtual_bounds().unwrap_or((0, 0, 1920, 1080));
+    let max_x = bounds.0 + bounds.2 as i32 - 72;
+    let max_y = bounds.1 + bounds.3 as i32 - 72;
+    (
+        position.0.clamp(bounds.0, max_x.max(bounds.0)),
+        position.1.clamp(bounds.1, max_y.max(bounds.1)),
+    )
+}
+
+/// Lift our own floating windows out of a screen shot for the duration of one capture — and put
+/// them back **whatever happens**. `Drop` is the point: the restore used to be a plain call after
+/// the capture, so a panic inside the capture thread skipped it and the dot stayed hidden for the
+/// rest of the session, which reads as "the icon disappeared".
+pub(crate) struct RestoreWindows<'a> {
+    app: &'a AppHandle,
+    hidden: Vec<&'static str>,
+}
+
+impl Drop for RestoreWindows<'_> {
+    fn drop(&mut self) {
+        if !self.hidden.is_empty() {
+            windows::restore_after_capture(self.app, std::mem::take(&mut self.hidden));
+        }
+    }
+}
+
 #[tauri::command]
 fn list_monitors() -> Result<Vec<MonitorInfo>, String> {
     capture::monitor_list()
@@ -120,6 +157,20 @@ fn list_monitors() -> Result<Vec<MonitorInfo>, String> {
 
 #[tauri::command]
 async fn capture_region(app: AppHandle, region: Region) -> Result<CaptureResult, String> {
+    // The marquee arrives as CSS pixels measured from the overlay's own corner. Read the overlay's
+    // real physical origin and scale factor *before* it is lifted out of the shot, then hand the
+    // capture layer physical virtual-desktop coordinates — at 125% scaling a selection drawn on
+    // the right-hand side of the screen is 25% away from where it lands otherwise.
+    let region = {
+        let (origin, scale) = app
+            .get_webview_window(windows::OVERLAY)
+            .and_then(|window| {
+                let position = window.outer_position().ok()?;
+                Some(((position.x, position.y), window.scale_factor().unwrap_or(1.0)))
+            })
+            .unwrap_or(((0, 0), 1.0));
+        capture::to_physical(&region, origin, scale)
+    };
     let width = region.width;
     let height = region.height;
     // Our own windows are on top of everything — the dot floats over the desktop, and the snip
@@ -128,9 +179,12 @@ async fn capture_region(app: AppHandle, region: Region) -> Result<CaptureResult,
     // treats them. Capturing, hiding and restoring stay on one blocking thread so the restore can
     // never be skipped, on success or on failure.
     let image = tauri::async_runtime::spawn_blocking(move || {
-        let hidden = windows::hide_for_capture(&app);
+        let guard = RestoreWindows {
+            app: &app,
+            hidden: windows::hide_for_capture(&app),
+        };
         let result = capture::capture_region(&region);
-        windows::restore_after_capture(&app, hidden);
+        drop(guard);
         result
     })
     .await
@@ -430,6 +484,11 @@ pub fn run() {
                 let dot_handle = handle.clone();
                 dot.on_window_event(move |event| {
                     if let WindowEvent::Moved(position) = event {
+                        // A minimised window's "move" to the parked coordinates is not a drag: the
+                        // icon must neither follow it nor persist it as where the user left it.
+                        if is_parked(position) {
+                            return;
+                        }
                         let pos = (position.x, position.y);
                         state::remember_dot_position(
                             &dot_handle,
@@ -470,6 +529,11 @@ pub fn run() {
                         windows::hide(&panel_handle, windows::PANEL);
                     }
                     WindowEvent::Moved(position) => {
+                        // Minimising the dialog reports a move to (-32000, -32000). Following that
+                        // with the pair is what threw the always-on icon off the desktop.
+                        if is_parked(position) {
+                            return;
+                        }
                         let pos = (position.x, position.y);
                         let pair = panel_handle.state::<Pair>();
                         if pair.is_echo(false, pos) {
@@ -480,7 +544,9 @@ pub fn run() {
                             (pair.offset(), panel_handle.get_webview_window(windows::DOT))
                         {
                             if dot.is_visible().unwrap_or(false) {
-                                let target = (pos.0 - offset.0, pos.1 - offset.1);
+                                // Clamped, so dragging the dialog past an edge can never strand the
+                                // icon somewhere it cannot be seen or grabbed again.
+                                let target = clamp_to_desktop((pos.0 - offset.0, pos.1 - offset.1));
                                 pair.remember(true, target);
                                 let _ =
                                     dot.set_position(tauri::PhysicalPosition::new(target.0, target.1));
@@ -526,4 +592,31 @@ pub fn run() {
             // Stop the bundled backend on every exit path (window close, tray quit, app.exit).
             backend::handle_exit_event(app, &event);
         });
+}
+
+#[cfg(test)]
+mod dot_geometry_tests {
+    use super::*;
+
+    #[test]
+    fn a_minimized_windows_move_is_not_a_position() {
+        // What Windows reports when the dialog or the voice-call surface is minimised.
+        assert!(is_parked(&tauri::PhysicalPosition::new(-32000, -32000)));
+        assert!(is_parked(&tauri::PhysicalPosition::new(-32000, 400)));
+        // A monitor to the left of the primary is genuinely negative — never mistaken for parked.
+        assert!(!is_parked(&tauri::PhysicalPosition::new(-1920, 0)));
+        assert!(!is_parked(&tauri::PhysicalPosition::new(100, 200)));
+    }
+
+    #[test]
+    fn clamping_puts_a_lost_icon_back_on_the_desktop() {
+        let bounds = capture::virtual_bounds().expect("a display is attached");
+        for lost in [(-32000, -32000), (-100_000, 500), (100_000, 100_000)] {
+            let (x, y) = clamp_to_desktop(lost);
+            assert!(x >= bounds.0, "x {x} left of desktop");
+            assert!(y >= bounds.1, "y {y} above desktop");
+            assert!(x <= bounds.0 + bounds.2 as i32 - 72, "x {x} past the right edge");
+            assert!(y <= bounds.1 + bounds.3 as i32 - 72, "y {y} past the bottom");
+        }
+    }
 }
