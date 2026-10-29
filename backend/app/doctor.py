@@ -110,7 +110,6 @@ class Doctor:
             self._kill_switch,
             self._autotrust,
             self._harness,
-            self._langsmith,
             self._deep_research,
             self._transcriber,
         ):
@@ -793,48 +792,6 @@ class Doctor:
                 fix=fix,
                 env="LANGGRAPH_ENABLED",
                 meta={"engine": engine, "lifecycle": lifecycle},
-            )
-        ]
-
-    async def _langsmith(self) -> list[Capability]:
-        """Optional hosted tracing. Off is a supported state, not a fault."""
-        from app.observability.langsmith import langsmith_available
-
-        if not self.settings.langsmith_api_key.strip():
-            return [
-                Capability(
-                    id="langsmith",
-                    label="Usage tracing (LangSmith)",
-                    state="declined",
-                    detail=(
-                        "Off. Model calls and harness stages are still recorded in the local run "
-                        "journal and cost ledger."
-                    ),
-                    fix=(
-                        "Set LANGSMITH_API_KEY (smith.langchain.com) to make every call searchable "
-                        "with token counts and latency."
-                    ),
-                    env="LANGSMITH_API_KEY",
-                )
-            ]
-        if not langsmith_available():
-            return [
-                Capability(
-                    id="langsmith",
-                    label="Usage tracing (LangSmith)",
-                    state="broken",
-                    detail="LANGSMITH_API_KEY is set but the langsmith package is not installed.",
-                    fix="cd backend && uv pip install langsmith",
-                    env="LANGSMITH_API_KEY",
-                )
-            ]
-        return [
-            Capability(
-                id="langsmith",
-                label="Usage tracing (LangSmith)",
-                state="live",
-                detail=f"Tracing to project '{self.settings.langsmith_project}'.",
-                env="LANGSMITH_API_KEY",
             )
         ]
 

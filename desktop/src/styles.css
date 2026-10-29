@@ -2365,6 +2365,64 @@ select:focus {
   box-shadow: none;
 }
 
+.composer__plus-wrap {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.composer__plus--open {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  transform: rotate(45deg);
+}
+
+.composer__plus-menu {
+  position: absolute;
+  z-index: 20;
+  left: 0;
+  bottom: calc(100% + 10px);
+  width: 230px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 7px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--bg-elevated) 94%, #000);
+  box-shadow: var(--elev-2);
+  animation: rise 160ms ease-out;
+}
+
+.composer__plus-menu button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+}
+
+.composer__plus-menu button:hover,
+.composer__plus-menu-item--active {
+  background: var(--surface-soft) !important;
+  color: var(--accent) !important;
+}
+
+.composer__plus-menu span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.composer__plus-menu small {
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
 .icon-btn--recording {
   background: color-mix(in srgb, var(--danger) 18%, transparent);
   border-color: color-mix(in srgb, var(--danger) 55%, transparent);

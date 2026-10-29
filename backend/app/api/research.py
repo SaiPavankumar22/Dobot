@@ -17,6 +17,21 @@ async def research(request: ResearchRequest, services: ServicesDep) -> ResearchR
             status_code=422,
             detail={"code": "EMPTY_QUERY", "message": "query must not be empty", "recoverable": True},
         )
+    if request.depth == "deep":
+        from app.agents.deep_agent import deepagents_ready, run_deep_research
+
+        ready, _why = deepagents_ready(services.settings)
+        if ready:
+            report = await run_deep_research(services, request.query)
+            if report.get("ok"):
+                return ResearchResponse(
+                    status="completed",
+                    summary=str(report.get("answer") or ""),
+                    sources=[],
+                    sub_queries=[],
+                    degraded=False,
+                )
+
     result = await services.research.research(
         request.query,
         max_sources=request.max_sources,

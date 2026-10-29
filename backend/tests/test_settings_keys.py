@@ -28,7 +28,7 @@ def test_keys_are_listed_masked(client) -> None:
     ids = {key["id"] for key in body["keys"]}
     # Exactly the keys a person brings for themselves — nothing infrastructure-shaped. Semantic
     # memory runs on the local index, so there is no hosted vector database to configure.
-    assert ids == {"nebius", "tavily", "novita"}
+    assert ids == {"nebius", "tavily", "novita", "sarvam"}
     for key in body["keys"]:
         assert "value" not in key  # raw secrets never cross the boundary
         assert isinstance(key["set"], bool)
@@ -37,11 +37,11 @@ def test_keys_are_listed_masked(client) -> None:
 def test_operator_managed_values_are_reported_but_not_writable(client) -> None:
     test_client, _env = client
     reasons = {item["id"]: item["why"] for item in test_client.get("/settings/keys").json()["operator"]}
-    assert "langsmith_api_key" in reasons
+    assert "dobot_api_token" in reasons
     # The judgement key belongs to the person, not the operator — Laya's old operator entries are gone.
     assert "laya_api_key" not in reasons and "laya_server_url" not in reasons
     assert all("value" not in item for item in test_client.get("/settings/keys").json()["operator"])
-    for name in ("langsmith", "dobot_api_token"):
+    for name in ("dobot_api_token",):
         response = test_client.put(f"/settings/keys/{name}", json={"value": "x"})
         assert response.status_code == 403, name
         assert response.json()["error"]["code"] == "OPERATOR_MANAGED"

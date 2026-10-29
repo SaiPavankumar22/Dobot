@@ -134,7 +134,7 @@ Full details: [`docs/security.md`](docs/security.md).
 | Voice calls | **Silero VAD** for turn detection · local **Whisper** for speech · **Sarvam** bulbul TTS |
 | Browser control | **Playwright** (built in) |
 | Desktop control | **Hermes** agent runtime (optional) |
-| Isolation | **NVIDIA NemoClaw / OpenShell** or **Nebius Sandboxes** (optional) |
+| Isolation | **NVIDIA NemoClaw / OpenShell** (optional) or the local action firewall |
 | Risk signals | **AutoTrust JEV-27B-VL** decision model on Novita (optional, bring your own key) |
 | Backend | Python · FastAPI · LangGraph |
 | Desktop app | Tauri 2 · React · TypeScript |

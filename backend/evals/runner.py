@@ -75,7 +75,6 @@ class _Env:
             "DOBOT_STATE_DIR": str(self.root / "state"),
             "DOBOT_ENV": "test",
             "NEBIUS_API_KEY": "",
-            "NEBIUS_PROJECT_ID": "",
             "TAVILY_API_KEY": "",
             "SANDBOX_PROVIDER": "local",
             "AGENT_RUNTIME": "local",

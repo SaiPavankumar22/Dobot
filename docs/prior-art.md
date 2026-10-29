@@ -17,14 +17,10 @@ by a single `SANDBOX_PROVIDER` variable.
 **Borrowed:**
 
 - **A sandbox is a provider, not a feature.** Rakazo swaps the whole computer behind one env var.
-  Dobot already had that shape for NemoClaw (`build_sandbox()` in `app/agents/sandbox.py`); rakazo
-  is what justified adding a *third* backend — `nebius` — instead of a one-off code path.
-- **Persistent computers.** A bot's computer keeps its own filesystem state between commands.
-  Dobot's Nebius provider does the same: every `terminal_run` chains onto the previous ConTree
-  checkpoint, so files written in one command survive into the next.
+  Dobot keeps that boundary behind `build_sandbox()` with a local action firewall and an optional
+  NemoClaw/OpenShell provider.
 - **The UI must state which provider is live.** Rakazo's docs never hide which computer a bot is
-  on; Dobot's Security page already carried that contract, and the nebius status reuses it
-  (`provider · isolation · degraded`, and `isolation: none` plus a reason when unreachable).
+  on; Dobot's Security page carries that contract (`provider · isolation · degraded`).
 - **Local-first degradation.** Rakazo's whole install story is "works locally, upgrades optional".
   That mirrors Dobot's design rule #1 (one interface per dependency, each with a working local
   fallback) — useful confirmation, not new code.

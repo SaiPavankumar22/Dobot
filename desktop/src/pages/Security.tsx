@@ -73,10 +73,7 @@ export function Security() {
           {
             label: "Provider",
             value: status?.sandbox.provider ?? "—",
-            hint:
-              status?.sandbox.provider === "nebius" && status.sandbox.isolation === "vm"
-                ? "isolation: vm · shell runs in the Nebius VM, file tools use the local firewall"
-                : `isolation: ${status?.sandbox.isolation ?? "—"}`,
+            hint: `isolation: ${status?.sandbox.isolation ?? "—"}`,
             tone: status && status.sandbox.isolation === "none" ? "warn" : undefined,
           },
           {
@@ -113,12 +110,9 @@ export function Security() {
       {status && status.sandbox.isolation === "none" && (
         <div className="notice notice--warn" style={{ marginTop: 12 }}>
           Kernel-level isolation is <strong>not</strong> active: Dobot's action firewall enforces paths,
-          hosts and timeouts in-process, but a real sandbox is not running. Two ways to fix that:
-          run the NemoClaw / OpenShell stack (<span className="mono">SANDBOX_PROVIDER=nemoclaw</span>{" "}
-          plus <span className="mono">OPENSHIELD_GATEWAY_URL</span>), or set{" "}
-          <span className="mono">SANDBOX_PROVIDER=nebius</span> with{" "}
-          <span className="mono">NEBIUS_API_KEY</span> + <span className="mono">NEBIUS_PROJECT_ID</span>{" "}
-          to execute inside a Nebius Sandboxes VM — no local daemon needed.
+          hosts and timeouts in-process, but a real sandbox is not running. You can use the
+          NemoClaw / OpenShell stack with <span className="mono">SANDBOX_PROVIDER=nemoclaw</span>{" "}
+          and <span className="mono">OPENSHIELD_GATEWAY_URL</span> for stronger isolation.
         </div>
       )}
 

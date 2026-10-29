@@ -16,10 +16,6 @@ dependencies = [
     "numpy>=1.26",
     "python-multipart>=0.0.9",
     "langgraph>=0.2",
-    "langsmith>=0.1",
-    # Nebius Sandboxes (ConTree): remote VM execution for SANDBOX_PROVIDER=nebius.
-    "contree-sdk>=0.3",
-    "playwright>=1.63.0",
 ]
 
 [project.optional-dependencies]
@@ -37,6 +33,7 @@ voice-gpu = [
     "nvidia-cudnn-cu12; sys_platform == 'win32'",
 ]
 deepresearch = ["deepagents>=0.7", "langchain-openai>=0.2"]
+browser = ["playwright>=1.63.0"]
 dev = ["pytest>=8.2", "pytest-asyncio>=0.23", "ruff>=0.6"]
 
 [build-system]

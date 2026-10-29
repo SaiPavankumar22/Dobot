@@ -205,8 +205,8 @@ interface DobotStore {
     text: string,
     options?: { shadow?: boolean; useSelection?: boolean; attachments?: ChatAttachment[] },
   ) => Promise<void>;
-  /** Web research outside the chat loop: Tavily search + synthesis, answered with sources. */
-  research: (text: string) => Promise<void>;
+  /** Web research outside the chat loop: quick Tavily or optional deepagents synthesis. */
+  research: (text: string, depth?: "quick" | "deep") => Promise<void>;
   captureScreen: () => Promise<void>;
   /** One chord, one picture: the window the user is in, as ready-to-send selection. */
   captureActiveWindow: () => Promise<void>;
@@ -458,7 +458,7 @@ export const useDobot = create<DobotStore>((set, get) => ({
     }
   },
 
-  research: async (text) => {
+  research: async (text, depth = "quick") => {
     const trimmed = text.trim();
     if (!trimmed) return;
     const userMessage: ChatMessage = {
@@ -470,14 +470,14 @@ export const useDobot = create<DobotStore>((set, get) => ({
     const placeholder: ChatMessage = {
       id: makeId(),
       role: "dobot",
-      text: "Researching the web…",
+      text: depth === "deep" ? "Running deep research…": "Researching the web…",
       status: "PLANNING",
       createdAt: Date.now(),
     };
     set((state) => ({ messages: [...state.messages, userMessage, placeholder], busy: true, lastError: null }));
 
     try {
-      const result = await api.research(trimmed, "quick");
+      const result = await api.research(trimmed, depth);
       useProgress.getState().award("researchRun");
       set((state) => ({
         busy: false,

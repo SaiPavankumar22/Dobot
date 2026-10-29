@@ -18,7 +18,7 @@ import {
   IconImage,
   IconMic,
   IconMoon,
-  IconPaperclip,
+  IconPlus,
   IconScreen,
   IconSearch,
   IconSend,
@@ -39,9 +39,9 @@ import { statusLabel } from "../components/DobotDot";
 import { api } from "../services/api";
 import {
   DEFAULT_LIMITS,
-  acceptAttribute,
   formatBytes,
   readAttachments,
+  textExtensions,
   type Rejection,
 } from "../services/attachments";
 import { native } from "../services/native";
@@ -191,6 +191,7 @@ export function Chat() {
   const send = useDobot((state) => state.send);
   const research = useDobot((state) => state.research);
   const [researchMode, setResearchMode] = useState(false);
+  const [researchDepth, setResearchDepth] = useState<"quick" | "deep">("quick");
   const captureScreen = useDobot((state) => state.captureScreen);
   const captureActiveWindow = useDobot((state) => state.captureActiveWindow);
   const clearSelection = useDobot((state) => state.clearSelection);
@@ -211,9 +212,22 @@ export function Chat() {
   const [rejections, setRejections] = useState<Rejection[]>([]);
   const [limits, setLimits] = useState<AttachmentLimits>(DEFAULT_LIMITS);
   const [dragging, setDragging] = useState(false);
+  const [composerMenuOpen, setComposerMenuOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const imageRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!composerMenuOpen) return;
+    const close = (event: PointerEvent) => {
+      if (!(event.target instanceof Element) || !event.target.closest(".composer__plus-wrap")) {
+        setComposerMenuOpen(false);
+      }
+    };
+    document.addEventListener("pointerdown", close);
+    return () => document.removeEventListener("pointerdown", close);
+  }, [composerMenuOpen]);
 
   const voice = useVoiceInput((text) => {
     setDraft((current) => (current ? `${current} ${text}` : text));
@@ -269,7 +283,7 @@ export function Chat() {
     setAttachments([]);
     setRejections([]);
     if (researchMode && sending.length === 0) {
-      await research(text);
+      await research(text, researchDepth);
       return;
     }
     await send(text, {
@@ -489,7 +503,18 @@ export function Chat() {
             className="hidden-file"
             type="file"
             multiple
-            accept={acceptAttribute(limits)}
+            accept={textExtensions(limits).join(",")}
+            onChange={(event) => {
+              void addFiles(Array.from(event.target.files ?? []));
+              event.target.value = "";
+            }}
+          />
+          <input
+            ref={imageRef}
+            className="hidden-file"
+            type="file"
+            multiple
+            accept="image/*"
             onChange={(event) => {
               void addFiles(Array.from(event.target.files ?? []));
               event.target.value = "";
@@ -589,8 +614,11 @@ export function Chat() {
             </button>
             <button
               className={`tool-chip ${researchMode ? "tool-chip--on" : ""}`}
-              onClick={() => setResearchMode(!researchMode)}
-              title="Skip the agent loop: search the web, collect sources, answer with citations"
+              onClick={() => {
+                setResearchMode(!researchMode);
+                setResearchDepth("quick");
+              }}
+              title="Use the fast Tavily research pipeline and answer with citations"
             >
               <IconSearch size={14} />
               Research {researchMode ? "on" : "off"}
@@ -636,14 +664,58 @@ export function Chat() {
           )}
 
           <div className="composer">
-            <button
-              className="icon-btn"
-              onClick={() => fileRef.current?.click()}
-              title="Attach images or text files — or drag them onto the chat, or paste an image"
-              aria-label="Attach files"
-            >
-              <IconPaperclip />
-            </button>
+            <div className="composer__plus-wrap">
+              <button
+                className={`icon-btn composer__plus ${composerMenuOpen ? "composer__plus--open" : ""}`}
+                onClick={() => setComposerMenuOpen((open) => !open)}
+                title="Add files or start deep research"
+                aria-label="Add files or start deep research"
+                aria-expanded={composerMenuOpen}
+                aria-haspopup="menu"
+              >
+                <IconPlus />
+              </button>
+              {composerMenuOpen && (
+                <div className="composer__plus-menu" role="menu">
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setComposerMenuOpen(false);
+                      fileRef.current?.click();
+                    }}
+                  >
+                    <IconFile size={16} />
+                    <span><strong>Add files</strong><small>Text and code documents</small></span>
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setComposerMenuOpen(false);
+                      imageRef.current?.click();
+                    }}
+                  >
+                    <IconImage size={16} />
+                    <span><strong>Add photos</strong><small>PNG, JPEG, WebP, or GIF</small></span>
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className={researchMode ? "composer__plus-menu-item--active" : ""}
+                    onClick={() => {
+                      setComposerMenuOpen(false);
+                      setResearchMode(true);
+                      setResearchDepth("deep");
+                      composerRef.current?.focus();
+                    }}
+                  >
+                    <IconSearch size={16} />
+                    <span><strong>Deep research</strong><small>Multi-search cited report</small></span>
+                  </button>
+                </div>
+              )}
+            </div>
             {voice.phase !== "idle" ? (
               <>
                 <button

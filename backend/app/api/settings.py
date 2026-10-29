@@ -34,6 +34,7 @@ KEY_FIELDS = {
     "nebius": "nebius_api_key",
     "tavily": "tavily_api_key",
     "novita": "novita_api_key",
+    "sarvam": "sarvam_api_key",
 }
 
 # Connection strings rather than secrets (masked differently, still writable by the user).
@@ -46,20 +47,13 @@ URI_FIELDS: dict[str, str] = {}
 # *where* that environment is: `.env` for a backend you run yourself, a Space secret when the
 # backend is hosted for you. Either way the app does not ask an end user for these.
 OPERATOR_FIELDS = {
-    "langsmith_api_key": "usage tracing — belongs to whoever runs the backend (its .env, or a Space secret)",
-    "langsmith_api_url": "usage tracing host — backend environment only",
-    "langsmith_project": "usage tracing project — backend environment only",
     "dobot_api_token": "backend access gate — backend environment only",
 }
-
-#: Ids that used to be manageable in the app and now belong to the operator, so an older client (or a
-#: curious curl) gets an explanation instead of a bare "unknown key".
-_OPERATOR_ALIASES = {"langsmith": "langsmith_api_key"}
 
 
 def _operator_reason(name: str) -> str | None:
     """Why this name is not writable from the app, or None when it is not operator-managed."""
-    return OPERATOR_FIELDS.get(_OPERATOR_ALIASES.get(name, name))
+    return OPERATOR_FIELDS.get(name)
 
 _KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 

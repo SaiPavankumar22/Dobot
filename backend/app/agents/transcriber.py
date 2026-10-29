@@ -96,6 +96,13 @@ def ensure_cuda_on_path() -> list[str]:
     return added
 
 
+def cuda_runtime_available() -> bool:
+    """Return whether the CUDA DLLs needed by CTranslate2 are discoverable."""
+    if os.name != "nt":
+        return True
+    return bool(_cuda_dll_dirs() or shutil.which("cublas64_12.dll"))
+
+
 def _uses_boundary_dots(model_name: str) -> bool:
     """Whether this checkpoint needs the boundary-dot pass: only Nyra's converted CrisperWhisper
     builds mark word boundaries with `.` — a stock Whisper model emits real spaces."""
@@ -159,6 +166,10 @@ class Transcriber:
         compute = (self.settings.transcriber_compute_type or "auto").strip().lower()
         explicit = compute not in ("", "auto", "default")
         if device == "auto":
+            # Do not spend several seconds attempting CUDA when the packaged installation has no
+            # CUDA runtime. The voice extra is intentionally CPU-only; voice-gpu adds these DLLs.
+            if not cuda_runtime_available():
+                return [("cpu", compute if explicit else "int8")]
             if explicit:
                 return [("cuda", compute), ("cpu", compute)]
             # lean types on purpose: the GPU attempt must not need the whole card, and int8 is the

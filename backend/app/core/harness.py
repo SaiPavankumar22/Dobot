@@ -21,8 +21,6 @@ whole run is one inspectable state machine; when it is not, the same three stage
 result is identical in both modes — deliberately. A structure layer that can change outcomes is a
 liability, not a feature. Set ``LANGGRAPH_ENABLED=false`` to force the direct path.
 
-Usage monitoring rides along: when LangSmith is configured (see :mod:`app.observability.langsmith`)
-each stage is traced, so a run can be replayed stage by stage in the LangSmith UI.
 """
 
 from __future__ import annotations
@@ -30,7 +28,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, TypedDict
 
 from app.logging_setup import get_logger
-from app.observability.langsmith import get_tracer
 from app.schemas import ExecutionResult
 
 if TYPE_CHECKING:
@@ -75,10 +72,9 @@ async def run_harness(step: Any, tool: Tool, ctx: ToolContext) -> ExecutionResul
     Raises whatever the underlying executor raises (TaskCancelled propagates, as the orchestrator
     expects). Never changes the *outcome* of a call — only the route it took.
     """
-    tracer = get_tracer()
     if harness_engine(ctx.settings) == "langgraph":
-        return await _run_via_langgraph(step, tool, ctx, tracer)
-    return await _run_direct(step, tool, ctx, tracer)
+        return await _run_via_langgraph(step, tool, ctx)
+    return await _run_direct(step, tool, ctx)
 
 
 def _validate(step: Any, tool: Tool | None, ctx: ToolContext) -> str:
@@ -93,16 +89,15 @@ def _refused(step: Any, reason: str) -> ExecutionResult:
     return ExecutionResult(ok=False, tool=step.action.tool, error=reason)
 
 
-async def _run_direct(step: Any, tool: Tool, ctx: ToolContext, tracer: Any) -> ExecutionResult:
-    """Single-pass execution with a trace span — the graph's semantics, without the graph."""
+async def _run_direct(step: Any, tool: Tool, ctx: ToolContext) -> ExecutionResult:
+    """Single-pass execution with the graph's semantics, without the graph."""
     refusal = _validate(step, tool, ctx)
     if refusal:
         return _refused(step, refusal)
-    with tracer.span("harness.step", tool=step.action.tool, engine="direct"):
-        return await tool.run(step.action.params, ctx)
+    return await tool.run(step.action.params, ctx)
 
 
-async def _run_via_langgraph(step: Any, tool: Tool, ctx: ToolContext, tracer: Any) -> ExecutionResult:
+async def _run_via_langgraph(step: Any, tool: Tool, ctx: ToolContext) -> ExecutionResult:
     """Drive validate→execute→finalise through a LangGraph StateGraph."""
     from langgraph.graph import END, START, StateGraph
 
@@ -138,11 +133,10 @@ async def _run_via_langgraph(step: Any, tool: Tool, ctx: ToolContext, tracer: An
     builder.add_edge("finalise", END)
     graph = builder.compile()
 
-    with tracer.span("harness.step", tool=step.action.tool, engine="langgraph"):
-        final: HarnessState = await graph.ainvoke(
-            {"tool": step.action.tool},
-            config={"configurable": {"thread_id": ctx.task_id}},
-        )
+    final: HarnessState = await graph.ainvoke(
+        {"tool": step.action.tool},
+        config={"configurable": {"thread_id": ctx.task_id}},
+    )
 
     if final.get("refused"):
         return _refused(step, final["refused"])

@@ -12,7 +12,6 @@ The short version:
 | …that can also research the web | + `TAVILY_API_KEY` | optional |
 | Memory that survives restarts and is shared | + `MONGODB_URI` | optional (local memory already persists) |
 | Model-backed risk judgement (AutoTrust JEV-27B-VL) | + `NOVITA_API_KEY` (below) | optional |
-| Usage monitoring in LangSmith | + `LANGSMITH_API_KEY` | optional |
 
 **With only `NEBIUS_API_KEY` set, Dobot is fully usable.** Every other subsystem degrades to a
 local, offline-capable fallback by design — and the in-app **Doctor page** (or `GET /doctor`) always
@@ -113,24 +112,7 @@ are the same in both modes.
 
 ---
 
-## 6. Optional — LangSmith usage monitoring
-
-`LANGSMITH_API_KEY`, `LANGSMITH_API_URL`, `LANGSMITH_PROJECT`
-
-Wire Dobot to [LangSmith](https://smith.langchain.com) and every model call and every harness stage
-becomes a searchable run with inputs, outputs, token counts, latency and errors — the answer to
-"what did Dobot actually do all day and what did it cost?".
-
-- **Completely off unless the key is set.** No key → no network calls, no data leaves your machine,
-  and the local journal still records everything.
-- Get a key at <https://smith.langchain.com> (free developer tier), create a project, and set
-  `LANGSMITH_PROJECT` if you rename it from the default `dobot`.
-- Tracing is failure-tolerant by design: if LangSmith is unreachable, your task runs anyway and the
-  failure is a debug log line.
-
----
-
-## 7. Optional — safety and access controls (worth reading once)
+## 6. Optional — safety and access controls (worth reading once)
 
 | Variable | Default | What it does when you set it |
 | --- | --- | --- |

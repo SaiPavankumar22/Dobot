@@ -53,13 +53,16 @@ const KEY_COPY: Record<string, { label: string; hint: string; placeholder: strin
     placeholder: "sk_…",
     href: "https://novita.ai/settings/key-management",
   },
+  sarvam: {
+    label: "Sarvam API key",
+    hint: "Enables spoken replies for the live voice agent.",
+    placeholder: "paste key",
+    href: "https://dashboard.sarvam.ai/",
+  },
 };
 
 /** Friendly names for the environment-only values shown as read-only. */
 const OPERATOR_COPY: Record<string, string> = {
-  langsmith_api_key: "LangSmith tracing key",
-  langsmith_api_url: "LangSmith host",
-  langsmith_project: "LangSmith project",
   dobot_api_token: "Backend access token",
 };
 
@@ -384,7 +387,7 @@ export function Settings() {
 
       <h2>Your API keys</h2>
       <p className="subtle">
-        Four credentials, all yours. They are stored on the backend you are connected to (its{" "}
+        Provider credentials are stored locally by the backend you are connected to (its{" "}
         <span className="mono">.env</span>), applied live without a restart, and never sent back to this
         window — a saved field shows only a mask. Everything else the backend needs is supplied by
         whoever operates it; those appear below as read-only.

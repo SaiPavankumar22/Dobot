@@ -17,7 +17,6 @@ import httpx
 from app.config import Settings, get_settings
 from app.core.cost import record_usage
 from app.logging_setup import get_logger
-from app.observability.langsmith import get_tracer
 from app.schemas import ModelTier
 
 logger = get_logger(__name__)
@@ -135,50 +134,39 @@ class NemotronClient:
         from app.core.tenancy import override_key
 
         auth_key = override_key("nebius_api_key", self.settings.nebius_api_key)
-        # Traced when LangSmith is configured; a null span otherwise. The call's behaviour is
-        # identical either way — observability never becomes load-bearing.
-        with get_tracer().span("nemotron.chat", model=target, tier=tier.value) as span:
-            response = await self._http().post(
-                "/chat/completions", json=payload,
-                headers={"Authorization": f"Bearer {auth_key}"},
+        response = await self._http().post(
+            "/chat/completions", json=payload,
+            headers={"Authorization": f"Bearer {auth_key}"},
+        )
+        response.raise_for_status()
+        data = response.json()
+        message = (data.get("choices") or [{}])[0].get("message", {})
+        content = message.get("content")
+        if isinstance(content, list):  # some providers return content parts
+            content = "".join(
+                part.get("text", "") for part in content if isinstance(part, dict)
             )
-            response.raise_for_status()
-            data = response.json()
-            message = (data.get("choices") or [{}])[0].get("message", {})
-            content = message.get("content")
-            if isinstance(content, list):  # some providers return content parts
-                content = "".join(
-                    part.get("text", "") for part in content if isinstance(part, dict)
-                )
-            if not content:
-                # Reasoning models sometimes emit only a reasoning field; keep whatever we got.
-                content = message.get("reasoning_content") or ""
-            usage = data.get("usage") or {}
-            choice = (data.get("choices") or [{}])[0]
-            finish_reason = str(choice.get("finish_reason") or "")
-            if finish_reason == "length":
-                # Nemotron's thinking trace shares the max_tokens budget with the answer, so a plan
-                # can be cut off well before the caller's own idea of "enough". Log it: a silently
-                # truncated plan parses into garbage or falls back to the offline rules.
-                logger.warning(
-                    "%s hit max_tokens=%d after %s output tokens; response truncated",
-                    target,
-                    payload["max_tokens"],
-                    usage.get("completion_tokens", "?"),
-                )
-            span.record(
-                input_tokens=usage.get("prompt_tokens"),
-                output_tokens=usage.get("completion_tokens"),
-                latency_ms=int((time.perf_counter() - started) * 1000),
+        if not content:
+            # Reasoning models sometimes emit only a reasoning field; keep whatever we got.
+            content = message.get("reasoning_content") or ""
+        usage = data.get("usage") or {}
+        choice = (data.get("choices") or [{}])[0]
+        finish_reason = str(choice.get("finish_reason") or "")
+        if finish_reason == "length":
+            logger.warning(
+                "%s hit max_tokens=%d after %s output tokens; response truncated",
+                target,
+                payload["max_tokens"],
+                usage.get("completion_tokens", "?"),
             )
-            return ModelResponse(
-                content=str(content or ""),
-                model=data.get("model", target),
-                tier=tier,
-                latency_ms=int((time.perf_counter() - started) * 1000),
-                usage=usage,
-                finish_reason=finish_reason,
-            )
+        return ModelResponse(
+            content=str(content or ""),
+            model=data.get("model", target),
+            tier=tier,
+            latency_ms=int((time.perf_counter() - started) * 1000),
+            usage=usage,
+            finish_reason=finish_reason,
+        )
 
     async def health(self) -> bool:
         if not self.available:

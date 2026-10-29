@@ -197,6 +197,7 @@ async def test_gpu_that_cannot_run_demotes_to_cpu(
     """A CUDA inference failure must cost one retry, not the whole feature."""
     _FakeWhisperModel.calls = []
     monkeypatch.setattr(Transcriber, "package_available", property(lambda self: True))
+    monkeypatch.setattr("app.agents.transcriber.cuda_runtime_available", lambda: True)
     _patch_whisper_model(monkeypatch, _GpuLoadsButCannotRun)
     audio = tmp_path / "clip.wav"
     audio.write_bytes(b"RIFF....")

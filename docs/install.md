@@ -371,7 +371,6 @@ asks for it. Those values are read-only on the page, listed with where they come
 | Value | Who sets it |
 | --- | --- |
 | `mongodb_uri` | whoever runs the backend — its `.env`, or a Space secret when it is hosted for you |
-| `langsmith_api_key`, `langsmith_api_url`, `langsmith_project` | same, for usage tracing |
 | `dobot_api_token` | same — the backend's own access gate |
 
 
@@ -394,9 +393,10 @@ the machine; the checkpoint is downloaded once, on first use). To enable it:
 cd backend && uv sync --all-extras
 ```
 
-`voice` is the extra you need (`faster-whisper`); `--all-extras` is the safe form because **a plain
+`voice` is the extra you need (`faster-whisper`); the packaged sidecar also includes the `ocr`
+extra for local Tesseract integration. `--all-extras` is the safe form because **a plain
 `uv sync` removes anything not asked for**, including the `dev` extra's pytest and ruff. If you would
-rather be surgical: `uv sync --extra voice --extra dev`.
+rather be surgical: `uv sync --extra voice --extra ocr --extra dev`.
 
 **On a laptop with an NVIDIA card, add the GPU runtime too** — it is the difference between
 faster-than-realtime and unusable:
@@ -428,9 +428,9 @@ recordings arrive as webm/ogg, which the model needs ffmpeg to decode. Check the
 it reports exactly what is missing, which device the model loaded on, and why it moved off the
 preferred one. Without it, the mic button explains why instead of silently failing.
 
-`TRANSCRIBER_DEVICE=auto` prefers the GPU and demotes itself to the CPU if the card cannot load the
-checkpoint (the GPU attempt just fails to load or run and the CPU carries on) or cannot run it (the
-missing-DLL case above). An explicit `TRANSCRIBER_DEVICE=cuda` is honoured literally instead, so a
+`TRANSCRIBER_DEVICE=auto` prefers the GPU when the CUDA runtime is discoverable and otherwise starts
+directly on the CPU. It also demotes itself if the card cannot load or run the checkpoint. An explicit
+`TRANSCRIBER_DEVICE=cuda` is honoured literally instead, so a
 setting that says cuda never quietly means something else.
 
 **The first transcription after each backend start loads the model** — the checkpoint itself is
