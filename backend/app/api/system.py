@@ -408,10 +408,11 @@ async def voice_speak(services: ServicesDep, request: SpeakRequest) -> dict:
 
 @router.post("/voice/transcribe")
 async def voice_transcribe(services: ServicesDep, file: Annotated[UploadFile, File()]) -> dict:
-    """Transcribe a microphone recording locally with Whisper (faster-whisper, CPU/GPU).
+    """Transcribe a microphone recording with the selected ASR provider.
 
-    The audio is written to a temp file, transcribed in-process, and deleted. It never leaves the
-    machine. Accepts webm/ogg/mp3/m4a/wav; non-native formats need ffmpeg on PATH.
+    ``auto`` uses Sarvam Saaras when ``SARVAM_API_KEY`` is configured and otherwise uses local
+    Whisper. ``local`` keeps audio on the machine; ``sarvam`` sends the recording to Sarvam.
+    Accepts webm/ogg/mp3/m4a/wav; non-native local formats need ffmpeg on PATH.
     """
     del services  # the transcriber is self-contained; settings come from get_settings()
     suffix = Path(file.filename or "audio.webm").suffix or ".webm"
@@ -441,7 +442,7 @@ async def voice_transcribe(services: ServicesDep, file: Annotated[UploadFile, Fi
 
 @router.get("/voice/transcribe/status")
 async def voice_transcribe_status(services: ServicesDep) -> dict:
-    """Whether speech-to-text will work right now, and what is missing when it will not."""
+    """Whether speech-to-text will work right now, and which provider will handle it."""
     del services
     info = get_transcriber().probe()
     return {

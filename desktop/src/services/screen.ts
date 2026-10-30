@@ -28,16 +28,29 @@ export function resolvePendingSelection(payload: SelectionPayload | null): void 
 /** Ask the user to select a screen region; resolves with the captured PNG. */
 export async function captureSelection(timeoutMs = 90_000): Promise<Selection> {
   if (native.isNative) {
+    let unlistenCancelled: (() => void) | undefined;
     const result = await new Promise<SelectionPayload | null>((resolve) => {
       pendingResolver = resolve;
-      window.setTimeout(() => {
+      const timer = window.setTimeout(() => {
         if (pendingResolver) {
           pendingResolver(null);
           pendingResolver = null;
         }
       }, timeoutMs);
-      void native.openOverlay();
+      // Turning off the always-on surface can close the overlay from another window. Subscribe
+      // before opening it so that action cancels the pending capture immediately instead of
+      // leaving the composer in a 90-second "capturing" state.
+      void native.onSelectionCancelled(() => {
+        if (!pendingResolver) return;
+        pendingResolver(null);
+        pendingResolver = null;
+        window.clearTimeout(timer);
+      }).then((unlisten) => {
+        unlistenCancelled = unlisten ?? undefined;
+        void native.openOverlay();
+      });
     });
+    unlistenCancelled?.();
     await native.closeOverlay();
     if (!result) {
       return { application: "", windowTitle: "", source: "none", note: "selection cancelled" };

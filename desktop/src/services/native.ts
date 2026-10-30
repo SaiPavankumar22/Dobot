@@ -251,6 +251,16 @@ export const native = {
     }
   },
 
+  async onSelectionCancelled(callback: () => void): Promise<UnlistenFn | null> {
+    if (!isNative) return null;
+    try {
+      return await listen("dobot://selection-cancelled", callback);
+    } catch (error) {
+      console.warn("could not subscribe to selection cancellation events", error);
+      return null;
+    }
+  },
+
   /**
    * The Look chord: a picture of the window the user is in, taken by the shell (which knows what
    * is in front) and broadcast to every window — each keeps its own store, and the user may be in

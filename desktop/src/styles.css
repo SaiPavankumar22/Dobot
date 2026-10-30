@@ -408,6 +408,32 @@ a {
   flex-direction: column;
   gap: 2px;
 }
+.md-table-wrap {
+  max-width: 100%;
+  overflow-x: auto;
+  margin: 8px 0;
+}
+.md-table {
+  width: 100%;
+  min-width: 560px;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.md-table th,
+.md-table td {
+  padding: 7px 8px;
+  border: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+}
+.md-table th {
+  color: var(--accent);
+  background: color-mix(in oklab, var(--accent) 8%, transparent);
+  font-weight: 700;
+}
+.md-table tr:nth-child(even) td {
+  background: color-mix(in oklab, var(--text) 3%, transparent);
+}
 .research-meta {
   display: flex;
   flex-wrap: wrap;

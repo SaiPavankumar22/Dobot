@@ -169,6 +169,14 @@ pub fn open_dashboard(app: &AppHandle, route: Option<String>) {
 pub fn set_dot_enabled(app: &AppHandle, enabled: bool) -> bool {
     // No dot on screen means no hub for the menu either.
     hide(app, MENU);
+    if !enabled {
+        // The selection overlay is an always-on-top, focused window. Leaving it alive while the
+        // dot is disabled makes the whole desktop appear frozen and can swallow Escape/clicks.
+        // Cancel the pending capture as well as closing the window; the chat composer must return
+        // from its "capturing" state immediately.
+        close_overlay(app);
+        let _ = app.emit("dobot://selection-cancelled", ());
+    }
     state::set_dot_enabled(app, enabled);
     if let Some(dot) = app.get_webview_window(DOT) {
         if enabled {

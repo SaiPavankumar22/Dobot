@@ -40,6 +40,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+import httpx
+
 from app.agents.sandbox import _safe_env
 from app.config import get_settings
 from app.logging_setup import get_logger
@@ -152,6 +154,14 @@ class Transcriber:
         """The checkpoint to load: ``TRANSCRIBER_MODEL`` when set, the CT2 default otherwise."""
         return (getattr(self.settings, "transcriber_model", "") or _DEFAULT_MODEL).strip()
 
+    @property
+    def provider(self) -> str:
+        """The selected provider, with ``auto`` preferring Sarvam when its key is available."""
+        selected = (getattr(self.settings, "transcriber_provider", "auto") or "auto").strip().lower()
+        if selected == "auto":
+            return "sarvam" if getattr(self.settings, "sarvam_api_key", "").strip() else "local"
+        return selected
+
     def _attempts(self) -> list[tuple[str, str]]:
         """``(device, compute_type)`` pairs to try, in order.
 
@@ -197,6 +207,7 @@ class Transcriber:
         settings = self.settings
         info: dict[str, Any] = {
             "model": self.model_name,
+            "provider": self.provider,
             "device": self._device or settings.transcriber_device or "auto",
             "ffmpeg": self.ffmpeg_available,
             "loaded": self._model is not None,
@@ -204,6 +215,14 @@ class Transcriber:
         if self._note:
             info["note"] = self._note
         if settings.transcriber_enabled:
+            if self.provider == "sarvam":
+                if settings.sarvam_api_key.strip():
+                    info["state"] = "live"
+                    info["detail"] = "Sarvam Saaras speech-to-text ready"
+                else:
+                    info["state"] = "not_configured"
+                    info["detail"] = "SARVAM_API_KEY is not set"
+                return info
             if not self.package_available:
                 info["state"] = "not_configured"
                 info["detail"] = "the whisper package is not installed"
@@ -219,13 +238,20 @@ class Transcriber:
 
     def fail_status(self) -> dict[str, Any]:
         """The /health-shaped status for this capability."""
-        if not self.settings.transcriber_enabled or not self.package_available:
+        if not self.settings.transcriber_enabled:
+            return "not_configured"
+        if self.provider == "sarvam":
+            return "ok" if self.settings.sarvam_api_key.strip() else "not_configured"
+        if not self.package_available:
             return "not_configured"
         return "degraded" if self._failed else "ok"
 
     def warm(self) -> dict[str, Any]:
         """Load the local model before a call starts so the first spoken turn is not a surprise."""
         if not self.settings.transcriber_enabled:
+            return self.probe()
+        if self.provider == "sarvam":
+            # Sarvam is a request-time provider; there is no local model to warm.
             return self.probe()
         self._load()
         return self.probe()
@@ -337,6 +363,8 @@ class Transcriber:
         audio = Path(path)
         if not audio.exists():
             return {"ok": False, "text": "", "language": "", "duration_ms": 0, "error": "audio file not found"}
+        if self.provider == "sarvam":
+            return await self._transcribe_sarvam(audio, language=language, started=started)
         model = await asyncio.to_thread(self._load)
         if model is None:
             return {
@@ -421,6 +449,81 @@ class Transcriber:
         finally:
             if temp_wav is not None:
                 temp_wav.unlink(missing_ok=True)
+
+    async def _transcribe_sarvam(
+        self, audio: Path, *, language: str | None, started: float
+    ) -> dict[str, Any]:
+        """Use Sarvam Saaras for ASR without loading Whisper or sending the key to the UI."""
+        key = self.settings.sarvam_api_key.strip()
+        if not key:
+            return {
+                "ok": False,
+                "text": "",
+                "language": "",
+                "duration_ms": int((time.perf_counter() - started) * 1000),
+                "error": "SARVAM_API_KEY is not set",
+            }
+        try:
+            data = await asyncio.to_thread(audio.read_bytes)
+            language_code = (
+                language
+                or getattr(self.settings, "sarvam_stt_language", "")
+                or ""
+            ).strip()
+            fields: dict[str, str] = {
+                "model": getattr(self.settings, "sarvam_stt_model", "saaras:v4"),
+                "mode": getattr(self.settings, "sarvam_stt_mode", "transcribe"),
+            }
+            if language_code and language_code.lower() not in {"auto", "unknown"}:
+                fields["language_code"] = language_code
+            async with httpx.AsyncClient(
+                base_url=self.settings.sarvam_stt_base_url.rstrip("/"),
+                headers={"api-subscription-key": key},
+                timeout=httpx.Timeout(60.0, connect=10.0),
+            ) as client:
+                response = await client.post(
+                    "/speech-to-text",
+                    files={"file": (audio.name, data, _audio_content_type(audio))},
+                    data=fields,
+                )
+            if response.status_code >= 400:
+                detail = response.text[:300].replace("\n", " ")
+                return {
+                    "ok": False,
+                    "text": "",
+                    "language": "",
+                    "duration_ms": int((time.perf_counter() - started) * 1000),
+                    "error": f"Sarvam speech-to-text refused (HTTP {response.status_code}): {detail}",
+                }
+            body = response.json()
+            text = normalise_transcript(str(body.get("transcript") or ""))
+            return {
+                "ok": bool(text),
+                "text": text,
+                "language": str(body.get("language_code") or ""),
+                "duration_ms": int((time.perf_counter() - started) * 1000),
+                "error": "" if text else "no speech detected",
+            }
+        except (httpx.HTTPError, OSError, ValueError) as exc:
+            logger.warning("Sarvam transcription failed: %s", exc)
+            return {
+                "ok": False,
+                "text": "",
+                "language": "",
+                "duration_ms": int((time.perf_counter() - started) * 1000),
+                "error": f"Sarvam speech-to-text failed: {str(exc)[:250]}",
+            }
+
+
+def _audio_content_type(audio: Path) -> str:
+    return {
+        ".wav": "audio/wav",
+        ".webm": "audio/webm",
+        ".ogg": "audio/ogg",
+        ".mp3": "audio/mpeg",
+        ".m4a": "audio/mp4",
+        ".flac": "audio/flac",
+    }.get(audio.suffix.lower(), "application/octet-stream")
 
 
 async def _run_inference(model: Any, path: str, language: str | None) -> dict[str, Any]:

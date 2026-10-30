@@ -55,7 +55,7 @@ const KEY_COPY: Record<string, { label: string; hint: string; placeholder: strin
   },
   sarvam: {
     label: "Sarvam API key",
-    hint: "Enables spoken replies for the live voice agent.",
+    hint: "Enables fast Sarvam speech recognition and spoken replies for the live voice agent.",
     placeholder: "paste key",
     href: "https://dashboard.sarvam.ai/",
   },
@@ -546,6 +546,33 @@ export function Settings() {
             voice?.available ? " — uses the engine already on this machine, offline" : ""
           }`}
         />
+      </div>
+      <div className="row" style={{ marginTop: 10, alignItems: "center" }}>
+        <label htmlFor="transcriber-provider">Voice input</label>
+        <select
+          id="transcriber-provider"
+          value={String(settings?.transcriber_provider ?? "auto")}
+          onChange={async (event) => {
+            const provider = event.target.value;
+            try {
+              await api.updateSettings({ transcriber_provider: provider });
+              setSettings((current) => (current ? { ...current, transcriber_provider: provider } : current));
+              setVoiceNote(
+                provider === "sarvam"
+                  ? "Sarvam Saaras will transcribe voice input. Add SARVAM_API_KEY if it is not set."
+                  : provider === "local"
+                    ? "Local Whisper will transcribe voice input on this computer."
+                    : "Voice input will use Sarvam when configured, otherwise local Whisper.",
+              );
+            } catch (caught) {
+              setVoiceNote(caught instanceof Error ? caught.message : String(caught));
+            }
+          }}
+        >
+          <option value="auto">Automatic (Sarvam, then local Whisper)</option>
+          <option value="sarvam">Sarvam Saaras (fast, requires API key)</option>
+          <option value="local">Local Whisper (private, no API key)</option>
+        </select>
       </div>
       <div className="row" style={{ marginTop: 8 }}>
         <button

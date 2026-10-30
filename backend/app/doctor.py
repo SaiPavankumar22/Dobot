@@ -428,7 +428,10 @@ class Doctor:
         endpoint = resolve_llm(self.settings)
         missing: list[str] = []
         if transcriber.get("state") != "live":
-            missing.append(f"local Whisper: {transcriber.get('detail', transcriber.get('state', 'unavailable'))}")
+            missing.append(
+                f"{transcriber.get('provider', 'speech-to-text')}: "
+                f"{transcriber.get('detail', transcriber.get('state', 'unavailable'))}"
+            )
         if not endpoint["api_key"]:
             missing.append("voice LLM key")
         if not self.settings.sarvam_api_key.strip():
@@ -452,7 +455,10 @@ class Doctor:
                 id="voice_call",
                 label="Live voice call",
                 state="live",
-                detail=f"VAD, local Whisper, {endpoint['model']}, and Sarvam are configured.",
+                detail=(
+                    f"VAD, {transcriber.get('provider', 'speech-to-text')} speech-to-text, "
+                    f"{endpoint['model']}, and Sarvam are configured."
+                ),
                 env="VOICE_CALL_ENABLED",
                 meta={"stt": transcriber, "llm_model": endpoint["model"], "tts": "sarvam"},
             )

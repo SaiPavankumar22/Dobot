@@ -242,6 +242,7 @@ async def test_crisper_checkpoint_gets_the_boundary_dot_pass(
 ) -> None:
     """Pointing TRANSCRIBER_MODEL at a CrisperWhisper build re-enables the dot normalisation."""
     monkeypatch.setenv("TRANSCRIBER_MODEL", "nyralabs/faster_CrisperWhisper")
+    monkeypatch.setenv("TRANSCRIBER_PROVIDER", "local")
     from app.config import reset_settings_cache
 
     reset_settings_cache()

@@ -294,6 +294,8 @@ class Settings(BaseSettings):
     # (`nyralabs/faster_CrisperWhisper`, or convert `CrisperWhisper2.0_*` yourself with
     # `pip install "crisperwhisper[convert]"`); the transformers safetensors will not load.
     transcriber_enabled: bool = True
+    #: auto = Sarvam when configured, otherwise local Whisper; local and sarvam are explicit.
+    transcriber_provider: str = "auto"
     #: CTranslate2 model repo id (or a local directory) loadable by faster-whisper.
     transcriber_model: str = "Systran/faster-whisper-small"
     #: "auto" prefers CUDA, then falls back to CPU if the card cannot load *or* run the checkpoint.
@@ -327,6 +329,12 @@ class Settings(BaseSettings):
     # The key lives in `.env` (or Sites/Settings secrets) and is only ever read by this process —
     # no window, log line or asset sees it. New Sarvam accounts carry ₹100 of credits.
     sarvam_api_key: str = ""
+    #: Speech recognition uses Saaras when TRANSCRIBER_PROVIDER is auto/sarvam and this key exists.
+    sarvam_stt_base_url: str = "https://api.sarvam.ai"
+    sarvam_stt_model: str = "saaras:v4"
+    #: Empty lets Saaras detect the language; use a BCP-47 code to force one.
+    sarvam_stt_language: str = ""
+    sarvam_stt_mode: str = "transcribe"
     sarvam_tts_base_url: str = "https://api.sarvam.ai"
     sarvam_tts_model: str = "bulbul:v4-flash"
     #: Empty = the model's documented default persona; set an id from the Sarvam voices page.
@@ -510,6 +518,12 @@ class Settings(BaseSettings):
         allowed = {"local", "cli", "remote", "api", "hermes", "auto"}
         value = value.lower()
         return value if value in allowed else "local"
+
+    @field_validator("transcriber_provider")
+    @classmethod
+    def _known_transcriber_provider(cls, value: str) -> str:
+        value = value.strip().lower()
+        return value if value in {"auto", "local", "sarvam"} else "auto"
 
     @field_validator("reasoning_provider")
     @classmethod

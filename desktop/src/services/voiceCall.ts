@@ -136,14 +136,12 @@ export class VoiceCall {
   }
 
   private onCapture(samples: Float32Array): void {
-    const context = this.context;
-    // Do not feed speaker output back into VAD. Audio is scheduled ahead of real time, so the
-    // queue tail is a more reliable guard than the server's state transition.
+    // Keep feeding the microphone while Dobot speaks. The call requests echo cancellation from
+    // the OS, and the backend VAD needs to hear a new user utterance to cancel the LLM/TTS
+    // stream. Suppressing frames during playback made the Interrupt/barge-in path impossible.
     if (
       this.stopped ||
       this.muted ||
-      this.phase === "speaking" ||
-      (context && this.nextStart > context.currentTime + 0.03) ||
       !this.ws ||
       this.ws.readyState !== WebSocket.OPEN
     ) return;

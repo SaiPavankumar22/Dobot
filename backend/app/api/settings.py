@@ -18,7 +18,14 @@ from app.api.deps import ServicesDep
 
 router = APIRouter(prefix="/settings", tags=["settings"])
 
-MUTABLE = {"shadow_mode", "screen_capture", "jev_enabled", "ocr_enabled", "voice_enabled"}
+MUTABLE = {
+    "shadow_mode",
+    "screen_capture",
+    "jev_enabled",
+    "ocr_enabled",
+    "voice_enabled",
+    "transcriber_provider",
+}
 
 # ------------------------------------------------------------------ who sets what
 #
@@ -75,6 +82,7 @@ async def get_settings(services: ServicesDep) -> dict:
         "always_on_top": True,
         "screen_capture": settings.screen_capture,
         "voice_enabled": settings.voice_enabled,
+        "transcriber_provider": settings.transcriber_provider,
         "shadow_mode": settings.shadow_mode,
         "jev_enabled": settings.jev_enabled,
         "kill_switch_hotkey": settings.kill_switch_hotkey,

@@ -19,6 +19,7 @@ def settings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Settings:
     monkeypatch.setenv("DOBOT_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setenv("DOBOT_ENV", "test")
     monkeypatch.setenv("NEBIUS_API_KEY", "")
+    monkeypatch.setenv("SARVAM_API_KEY", "")
     # The developer's .env carries a real project id; never let it reach the sandbox backend in tests.
     monkeypatch.setenv("TAVILY_API_KEY", "")
     # The developer's real Novita key must never reach the judgement layer in tests: every JEV

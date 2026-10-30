@@ -857,7 +857,17 @@ function renderInline(text: string, keyBase: string): React.ReactNode[] {
   });
 }
 
-/** Block markdown: fenced code, headings, ordered/unordered lists, rules, paragraphs. */
+function markdownTableCells(line: string): string[] {
+  const trimmed = line.trim().replace(/^\|/, "").replace(/\|$/, "");
+  return trimmed.split("|").map((cell) => cell.trim());
+}
+
+function isMarkdownTableSeparator(line: string): boolean {
+  const cells = markdownTableCells(line);
+  return cells.length > 0 && cells.every((cell) => /^:?-{3,}:?$/.test(cell));
+}
+
+/** Block markdown: fenced code, headings, lists, tables, rules, and paragraphs. */
 function renderMarkdown(body: string): React.ReactNode[] {
   const lines = body.replace(/\r\n/g, "\n").split("\n");
   const blocks: React.ReactNode[] = [];
@@ -899,6 +909,37 @@ function renderMarkdown(body: string): React.ReactNode[] {
     if (/^\s*(-{3,}|\*{3,})\s*$/.test(line)) {
       blocks.push(<hr key={nextKey()} />);
       i += 1;
+      continue;
+    }
+
+    if (line.trim().startsWith("|") && i + 1 < lines.length && isMarkdownTableSeparator(lines[i + 1])) {
+      const headers = markdownTableCells(line);
+      i += 2;
+      const rows: string[][] = [];
+      while (i < lines.length && lines[i].trim().startsWith("|") && lines[i].trim()) {
+        rows.push(markdownTableCells(lines[i]));
+        i += 1;
+      }
+      blocks.push(
+        <div key={nextKey()} className="md-table-wrap">
+          <table className="md-table">
+            <thead>
+              <tr>{headers.map((cell, index) => <th key={`th-${index}`}>{renderInline(cell, `th-${index}`)}</th>)}</tr>
+            </thead>
+            <tbody>
+              {rows.map((row, rowIndex) => (
+                <tr key={`tr-${rowIndex}`}>
+                  {headers.map((_, columnIndex) => (
+                    <td key={`td-${rowIndex}-${columnIndex}`}>
+                      {renderInline(row[columnIndex] ?? "", `td-${rowIndex}-${columnIndex}`)}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>,
+      );
       continue;
     }
 
