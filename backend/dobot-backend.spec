@@ -21,12 +21,31 @@ block_cipher = None
 skills_src = os.path.abspath(os.path.join(SPECPATH, "..", "skills"))
 voice_datas, voice_binaries, voice_hidden = collect_all("faster_whisper")
 ct2_datas, ct2_binaries, ct2_hidden = collect_all("ctranslate2")
+onnx_datas, onnx_binaries, onnx_hidden = collect_all("onnxruntime")
+playwright_datas, playwright_binaries, playwright_hidden = collect_all("playwright")
+deepagent_datas, deepagent_binaries, deepagent_hidden = collect_all("deepagents")
+langchain_openai_datas, langchain_openai_binaries, langchain_openai_hidden = collect_all("langchain_openai")
 
 a = Analysis(
     ["runner.py"],
     pathex=[os.path.join(os.getcwd(), "app")],
-    datas=[(skills_src, "skills"), *voice_datas, *ct2_datas],
-    binaries=[*voice_binaries, *ct2_binaries],
+    datas=[
+        (skills_src, "skills"),
+        *voice_datas,
+        *ct2_datas,
+        *onnx_datas,
+        *playwright_datas,
+        *deepagent_datas,
+        *langchain_openai_datas,
+    ],
+    binaries=[
+        *voice_binaries,
+        *ct2_binaries,
+        *onnx_binaries,
+        *playwright_binaries,
+        *deepagent_binaries,
+        *langchain_openai_binaries,
+    ],
     # These packages use dynamic imports for the selected event loop, protocol and graph
     # implementations. Collect the installed package layout instead of pinning module names that
     # change between compatible releases.
@@ -35,6 +54,10 @@ a = Analysis(
         *collect_submodules("langgraph"),
         *voice_hidden,
         *ct2_hidden,
+        *onnx_hidden,
+        *playwright_hidden,
+        *deepagent_hidden,
+        *langchain_openai_hidden,
         "app.api.chat",
         "app.api.screen",
         "app.api.research",

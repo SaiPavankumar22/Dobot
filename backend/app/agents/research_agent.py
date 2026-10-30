@@ -28,6 +28,15 @@ SYNTHESIS_SYSTEM = (
     "question, say so explicitly instead of guessing. Be concise: 3-6 sentences for a quick answer, "
     "up to 12 lines for a deep briefing."
 )
+DEEP_SYNTHESIS_SYSTEM = (
+    "You are Dobot's deep research analyst. Answer using ONLY the provided sources. "
+    "Identify every entity explicitly named in the question and give each one its own row or "
+    "clearly labelled section. Separate reported results, estimates, and forward-looking claims. "
+    "If an entity has no reliable source, mark it unavailable rather than omitting it. For "
+    "investment questions, compare evidence, risks, valuation context, and uncertainty; never "
+    "promise returns or present a buy recommendation as certainty. Cite claims inline as [1], "
+    "[2] matching the numbered sources. Finish with a concise limitations note."
+)
 
 _STOPWORDS = {
     "the", "and", "for", "with", "that", "this", "from", "into", "about", "what", "when", "where",
@@ -170,7 +179,7 @@ class ResearchAgent:
         return "\n".join(lines)
 
     async def _synthesize(
-        self, topic: str, sources: list[ResearchSource], queries: list[str]
+        self, topic: str, sources: list[ResearchSource], queries: list[str], *, depth: str
     ) -> tuple[str, bool]:
         if not self.reasoner.available:
             return self._offline_summary(topic, sources), True
@@ -187,7 +196,10 @@ class ResearchAgent:
             "Write the answer. Cite sources inline as [n]."
         )
         response = await self.reasoner.text(
-            prompt, system=SYNTHESIS_SYSTEM, tier=ModelTier.ULTRA, max_tokens=1200
+            prompt,
+            system=DEEP_SYNTHESIS_SYSTEM if depth == "deep" else SYNTHESIS_SYSTEM,
+            tier=ModelTier.ULTRA,
+            max_tokens=2200 if depth == "deep" else 1200,
         )
         if response.degraded or not response.content.strip():
             return self._offline_summary(topic, sources), True
@@ -262,7 +274,7 @@ class ResearchAgent:
         if depth != "deep" and tavily_answer:
             summary, degraded = tavily_answer, False
         else:
-            summary, degraded = await self._synthesize(topic, sources, planned)
+            summary, degraded = await self._synthesize(topic, sources, planned, depth=depth)
         await self.bus.emit(
             EventType.RESEARCH_PROGRESS,
             message="Synthesised findings",
@@ -286,7 +298,7 @@ class ResearchAgent:
         return await self.research(
             topic,
             depth="deep",
-            max_sources=10,
+            max_sources=20,
             context_text=context_text,
             task_id=task_id,
         )

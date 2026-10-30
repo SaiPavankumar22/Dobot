@@ -166,6 +166,12 @@ def test_research_endpoint_degrades_without_tavily(client: TestClient) -> None:
     assert body["degraded"] is True
     assert body["sub_queries"]
 
+def test_deep_research_identifies_fallback_engine(client: TestClient) -> None:
+    body = client.post("/research", json={"query": "multimodal agents", "depth": "deep"}).json()
+    assert body["engine"] == "tavily_fallback"
+    assert body["degraded"] is True
+    assert "DeepAgents" in body["notice"]
+
 
 def test_dashboard_summary(client: TestClient) -> None:
     body = client.get("/dashboard").json()

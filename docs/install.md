@@ -488,10 +488,17 @@ A message with only an attachment is valid — drop an image in and press send t
 
 ### Optional: deep research and the LangGraph harness
 
-Both ride on `langgraph`, which is already in the backend's dependencies — nothing to do. To let
-the planner run the deepagents research subagent (multi-search cited reports), set
-`DEEPAGENTS_ENABLED=1` in `.env` (or ask for it to be added to the Settings page). The Doctor page
-reports both as live/declined with their fixes.
+`langgraph` is already in the backend's base dependencies. Deep research additionally needs the
+optional `deepresearch` extra:
+
+```bash
+cd backend && uv sync --extra deepresearch --extra dev
+```
+
+Then set `DEEPAGENTS_ENABLED=1` in `.env` and restart the backend. The Deep research option reports
+which engine actually ran; if DeepAgents is unavailable, Dobot labels the result as a slower Tavily
+fallback instead of silently claiming that DeepAgents ran. The Doctor page reports the missing
+package or configuration with its fix.
 
 ---
 

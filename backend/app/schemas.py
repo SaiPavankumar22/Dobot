@@ -616,6 +616,8 @@ class ResearchResponse(BaseModel):
     sources: list[ResearchSource] = Field(default_factory=list)
     sub_queries: list[str] = Field(default_factory=list)
     degraded: bool = False
+    engine: str = "tavily"
+    notice: str = ""
 
 
 class TaskCreateRequest(BaseModel):

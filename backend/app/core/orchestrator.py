@@ -1342,12 +1342,23 @@ class Orchestrator:
             (
                 str((step.result or {}).get("output", {}).get("summary"))
                 for step in executed
-                if step.action.tool in {"tavily_research", "research"}
+                if step.action.tool in {"tavily_research", "research", "deep_research"}
                 and isinstance((step.result or {}).get("output"), dict)
                 and (step.result or {}).get("output", {}).get("summary")
             ),
             "",
         )
+        if not research_summary:
+            research_summary = next(
+                (
+                    str((step.result or {}).get("output", {}).get("report"))
+                    for step in executed
+                    if step.action.tool == "deep_research"
+                    and isinstance((step.result or {}).get("output"), dict)
+                    and (step.result or {}).get("output", {}).get("report")
+                ),
+                "",
+            )
 
         # Research already performed the expensive synthesis pass. Do not send its answer through
         # another generic narration call: that extra call adds latency and commonly turns a useful
@@ -1355,7 +1366,7 @@ class Orchestrator:
         research_steps = [
             step
             for step in executed
-            if step.action.tool in {"tavily_research", "research"}
+            if step.action.tool in {"tavily_research", "research", "deep_research"}
         ]
         if research_summary and research_steps:
             lines = [research_summary.strip()]

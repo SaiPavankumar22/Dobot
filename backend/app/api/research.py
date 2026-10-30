@@ -17,20 +17,24 @@ async def research(request: ResearchRequest, services: ServicesDep) -> ResearchR
             status_code=422,
             detail={"code": "EMPTY_QUERY", "message": "query must not be empty", "recoverable": True},
         )
+    report: dict = {}
     if request.depth == "deep":
         from app.agents.deep_agent import deepagents_ready, run_deep_research
 
-        ready, _why = deepagents_ready(services.settings)
+        ready, why = deepagents_ready(services.settings)
         if ready:
             report = await run_deep_research(services, request.query)
             if report.get("ok"):
                 return ResearchResponse(
                     status="completed",
                     summary=str(report.get("answer") or ""),
-                    sources=[],
-                    sub_queries=[],
+                    sources=[ResearchSource.model_validate(source) for source in report.get("sources", [])],
+                    sub_queries=list(report.get("sub_queries") or []),
                     degraded=False,
+                    engine="deepagents",
                 )
+        else:
+            report = {"error": why}
 
     result = await services.research.research(
         request.query,
@@ -42,7 +46,14 @@ async def research(request: ResearchRequest, services: ServicesDep) -> ResearchR
         summary=result.get("summary", ""),
         sources=[ResearchSource.model_validate(source) for source in result.get("sources", [])],
         sub_queries=result.get("sub_queries", []),
-        degraded=bool(result.get("degraded")),
+        degraded=bool(result.get("degraded")) or request.depth == "deep",
+        engine="tavily_fallback" if request.depth == "deep" else "tavily",
+        notice=(
+            f"DeepAgents was unavailable ({report.get('error', 'unknown reason')}); "
+            "the quicker Tavily pipeline was used."
+            if request.depth == "deep"
+            else ""
+        ),
     )
 
 

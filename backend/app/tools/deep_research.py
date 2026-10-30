@@ -41,9 +41,28 @@ class DeepResearchTool(Tool):
         question = self.require(params, "question")
         ok, why = deepagents_ready(ctx.settings)
         if not ok:
+            if ctx.research is not None:
+                fallback = await ctx.research.deep_research(topic=question, task_id=ctx.task_id)
+                return self.ok(
+                    self.name,
+                    {
+                        "question": question,
+                        "report": fallback.get("summary", ""),
+                        "sources": fallback.get("sources", []),
+                        "sub_queries": fallback.get("sub_queries", []),
+                        "engine": "tavily_fallback",
+                        "degraded": True,
+                        "notice": f"DeepAgents unavailable ({why}); the deep Tavily pipeline was used.",
+                    },
+                    started,
+                )
             return self.ok(
                 self.name,
-                {"degraded": True, "notice": f"Deep research unavailable: {why}."},
+                {
+                    "degraded": True,
+                    "engine": "unavailable",
+                    "notice": f"Deep research unavailable: {why}.",
+                },
                 started,
             )
         await ctx.bus.emit(
@@ -68,6 +87,8 @@ class DeepResearchTool(Tool):
                 "question": question,
                 "report": report.get("answer", ""),
                 "engine": report.get("engine", "deepagents"),
+                "sources": report.get("sources", []),
+                "sub_queries": report.get("sub_queries", []),
             },
             started,
         )

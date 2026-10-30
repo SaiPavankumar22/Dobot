@@ -310,6 +310,12 @@ export interface ChatMessage {
   status?: TaskStatus;
   plan?: Plan | null;
   sources?: { title?: string; url?: string }[];
+  research?: {
+    engine: string;
+    degraded: boolean;
+    notice?: string;
+    subQueries?: string[];
+  };
   approvals?: ApprovalRecord[];
   createdAt: number;
   /** Which model answered, and whether it degraded to the offline path. */

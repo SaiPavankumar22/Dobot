@@ -98,6 +98,7 @@ class Doctor:
             self._screen,
             self._ocr,
             self._voice,
+            self._voice_call,
             self._identity,
             self._axiom_reconciliation,
             self._skill_reconciliation,
@@ -404,6 +405,56 @@ class Doctor:
                 fix=str(info.get("fix", "Install a system speech engine.")),
                 env="VOICE_ENABLED",
                 meta=info,
+            )
+        ]
+
+    async def _voice_call(self) -> list[Capability]:
+        """End-to-end readiness for the live duplex call, separate from OS text-to-speech."""
+        from app.agents.call.session import resolve_llm
+        from app.agents.transcriber import get_transcriber
+
+        if not self.settings.voice_call_enabled:
+            return [
+                Capability(
+                    id="voice_call",
+                    label="Live voice call",
+                    state="declined",
+                    detail="The duplex voice call is disabled.",
+                    fix="Set VOICE_CALL_ENABLED=true and restart the backend.",
+                    env="VOICE_CALL_ENABLED",
+                )
+            ]
+        transcriber = get_transcriber().probe()
+        endpoint = resolve_llm(self.settings)
+        missing: list[str] = []
+        if transcriber.get("state") != "live":
+            missing.append(f"local Whisper: {transcriber.get('detail', transcriber.get('state', 'unavailable'))}")
+        if not endpoint["api_key"]:
+            missing.append("voice LLM key")
+        if not self.settings.sarvam_api_key.strip():
+            missing.append("SARVAM_API_KEY")
+        if not _has_module("onnxruntime"):
+            missing.append("onnxruntime (Silero VAD will use the energy fallback)")
+        if missing:
+            return [
+                Capability(
+                    id="voice_call",
+                    label="Live voice call",
+                    state="not_configured",
+                    detail="; ".join(missing),
+                    fix="Install the voice extra and configure the listed voice keys, then restart.",
+                    env="VOICE_CALL_ENABLED, SARVAM_API_KEY, NEBIUS_API_KEY",
+                    meta={"stt": transcriber, "llm_model": endpoint["model"]},
+                )
+            ]
+        return [
+            Capability(
+                id="voice_call",
+                label="Live voice call",
+                state="live",
+                detail=f"VAD, local Whisper, {endpoint['model']}, and Sarvam are configured.",
+                env="VOICE_CALL_ENABLED",
+                meta={"stt": transcriber, "llm_model": endpoint["model"], "tts": "sarvam"},
             )
         ]
 
@@ -807,7 +858,7 @@ class Doctor:
                     id="deep_research",
                     label="Deep research (deepagents)",
                     state="live",
-                    detail="The planner may run the deepagents research subagent for multi-search, cited reports.",
+                    detail="DeepAgents, Nebius, and Tavily are configured for multi-search cited reports.",
                     env="DEEPAGENTS_ENABLED",
                 )
             ]
@@ -819,9 +870,9 @@ class Doctor:
                 state="declined" if declined else "not_configured",
                 detail=f"Off: {why}.",
                 fix=(
-                    "Set DEEPAGENTS_ENABLED=1 to let the planner use deep research."
+                    "Install the deepresearch extra and set DEEPAGENTS_ENABLED=1 to enable DeepAgents."
                     if declined
-                    else f"{why}. Set DEEPAGENTS_ENABLED=1 once resolved."
+                    else f"{why}. Install the deepresearch extra and resolve the key/configuration."
                 ),
                 env="DEEPAGENTS_ENABLED",
             )

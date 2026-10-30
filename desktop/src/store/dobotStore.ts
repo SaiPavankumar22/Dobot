@@ -498,6 +498,12 @@ export const useDobot = create<DobotStore>((set, get) => ({
                 text: result.summary || "Research finished — no summary came back.",
                 status: "COMPLETED" as const,
                 sources: result.sources,
+                research: {
+                  engine: result.engine,
+                  degraded: result.degraded,
+                  notice: result.notice,
+                  subQueries: result.sub_queries,
+                },
               }
             : item,
         ),

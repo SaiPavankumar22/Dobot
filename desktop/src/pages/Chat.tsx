@@ -618,10 +618,14 @@ export function Chat() {
                 setResearchMode(!researchMode);
                 setResearchDepth("quick");
               }}
-              title="Use the fast Tavily research pipeline and answer with citations"
+              title={
+                researchDepth === "deep"
+                  ? "Use DeepAgents multi-search research with citations"
+                  : "Use the fast Tavily research pipeline and answer with citations"
+              }
             >
               <IconSearch size={14} />
-              Research {researchMode ? "on" : "off"}
+              {researchMode ? (researchDepth === "deep" ? "Deep research on" : "Quick research on") : "Research off"}
             </button>
             <button
               className={`tool-chip ${selection ? "tool-chip--on" : ""}`}
@@ -990,11 +994,23 @@ function Message({ message, onOpenDashboard }: { message: ChatMessage; onOpenDas
           <div className={`chat__bubble-text${isUser ? "" : " chat__bubble-text--md"}`}>
             {isUser ? message.text : renderMarkdown(message.text)}
           </div>
+          {message.research && (
+            <div className={`research-meta ${message.research.degraded ? "research-meta--degraded" : ""}`}>
+              <strong>
+                {message.research.engine === "deepagents"
+                  ? "DeepAgents report"
+                  : message.research.engine === "tavily_fallback"
+                    ? "Quick research fallback"
+                    : "Quick research"}
+              </strong>
+              {message.research.notice && <span>{message.research.notice}</span>}
+            </div>
+          )}
           {message.plan && message.plan.steps.length > 0 && <PlanView plan={message.plan} />}
           {message.sources && message.sources.length > 0 && (
             <div className="sources">
               <strong>Sources</strong>
-              {message.sources.slice(0, 6).map((source, index) => (
+              {message.sources.slice(0, message.research?.engine === "deepagents" ? 12 : 6).map((source, index) => (
                 <a key={index} href={source.url ?? "#"} target="_blank" rel="noreferrer">
                   [{index + 1}] {source.title || source.url}
                 </a>

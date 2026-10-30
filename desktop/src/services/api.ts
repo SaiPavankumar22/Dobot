@@ -268,10 +268,14 @@ export const api = {
     }),
 
   research: (query: string, depth: "quick" | "deep" = "quick") =>
-    request<{ summary: string; sources: { title: string; url: string; snippet: string }[]; degraded: boolean }>(
-      "/research",
-      { method: "POST", body: JSON.stringify({ query, depth }) },
-    ),
+    request<{
+      summary: string;
+      sources: { title: string; url: string; snippet: string }[];
+      sub_queries: string[];
+      degraded: boolean;
+      engine: string;
+      notice: string;
+    }>("/research", { method: "POST", body: JSON.stringify({ query, depth }) }),
   researchSources: () =>
     request<{
       events: { type: string; message: string; task_id: string; timestamp: string; data: Record<string, unknown> }[];
