@@ -286,7 +286,12 @@ def call_client(tmp_path, monkeypatch):
     monkeypatch.setattr("app.agents.call.vad.ensure_silero_model", lambda settings=None: None)
     monkeypatch.setattr("app.security.local_secrets._keyring", lambda: None)
     monkeypatch.setattr("app.config.REPO_ROOT", tmp_path)
-    settings = Settings(dobot_state_dir=str(tmp_path / ".dobot"), nebius_api_key="", sarvam_api_key="")
+    settings = Settings(
+        dobot_state_dir=str(tmp_path / ".dobot"),
+        transcriber_enabled=False,
+        nebius_api_key="",
+        sarvam_api_key="",
+    )
     with TestClient(create_app(settings)) as client:
         yield client, settings
 
@@ -295,6 +300,8 @@ class TestCallSocket:
     def test_open_backend_accepts_and_reports_each_stage(self, call_client) -> None:
         client, _settings_ = call_client
         with client.websocket_connect("/voice/call") as stream:
+            loading = stream.receive_json()
+            assert loading == {"type": "call_state", "state": "loading"}
             status = stream.receive_json()
             assert status["type"] == "call_status"
             assert status["vad"]["detector"] == "energy"  # silero is not fetched in tests
@@ -319,6 +326,7 @@ class TestCallSocket:
             assert refused.value.code == 4401
 
             with guarded.websocket_connect("/voice/call?access_token=sekrit") as stream:
+                assert stream.receive_json() == {"type": "call_state", "state": "loading"}
                 assert stream.receive_json()["type"] == "call_status"
                 stream.send_json({"type": "end"})
 
@@ -360,6 +368,9 @@ class _FakeTranscriber:
 
     def probe(self) -> dict:
         return {"state": "live", "model": "fake-whisper", "detail": ""}
+
+    def warm(self) -> dict:
+        return self.probe()
 
 
 class _FakeSynth:
@@ -477,6 +488,7 @@ def pipeline_client(tmp_path, monkeypatch):
     _LLM_SENT.clear()
     settings = Settings(
         dobot_state_dir=str(tmp_path / ".dobot"),
+        transcriber_enabled=False,
         nebius_api_key="",
         sarvam_api_key="",
         voice_llm_base_url="https://voice-llm.test/v1",
@@ -490,6 +502,7 @@ class TestFullPipeline:
     def test_a_spoken_turn_flows_from_the_mic_to_the_speaker(self, pipeline_client) -> None:
         client, settings = pipeline_client
         with client.websocket_connect("/voice/call") as stream:
+            assert stream.receive_json() == {"type": "call_state", "state": "loading"}
             status = stream.receive_json()
             assert status["type"] == "call_status"
             assert status["vad"]["detector"] == "energy"  # silero is not fetched in tests
@@ -545,6 +558,7 @@ class TestFullPipeline:
     def test_the_stop_button_and_a_strange_frame_are_answered_honestly(self, pipeline_client) -> None:
         client, _ = pipeline_client
         with client.websocket_connect("/voice/call") as stream:
+            assert stream.receive_json() == {"type": "call_state", "state": "loading"}
             assert stream.receive_json()["type"] == "call_status"
 
             # The panel's Stop: the floor becomes the user's, even mid-answer. The interrupted

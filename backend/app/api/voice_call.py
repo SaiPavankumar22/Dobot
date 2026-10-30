@@ -9,7 +9,7 @@ reference pipeline's realtime channel:
              {"type":"cancel"}                                  the panel's own stop button
              {"type":"end"}                                     hang up
     server → {"type":"call_status", …}                          what each stage is
-             {"type":"call_state","state":listening|thinking|speaking}
+             {"type":"call_state","state":loading|listening|thinking|speaking}
              {"type":"call_transcript","role":"user","text":…}  a finished utterance
              {"type":"call_text","role":"assistant","delta":…}   streamed caption text
              {"type":"call_audio","rate":…,"data":<b64 pcm16>}  spoken audio as it is made
@@ -98,6 +98,7 @@ async def voice_call(websocket: WebSocket) -> None:
         return
 
     await websocket.accept()
+    await websocket.send_json({"type": "call_state", "state": "loading"})
     from app.agents.call.vad import build_detector, ensure_silero_model
 
     # The model fetch is blocking and one-time; off the event loop so the first call does not

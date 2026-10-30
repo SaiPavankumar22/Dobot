@@ -223,6 +223,13 @@ class Transcriber:
             return "not_configured"
         return "degraded" if self._failed else "ok"
 
+    def warm(self) -> dict[str, Any]:
+        """Load the local model before a call starts so the first spoken turn is not a surprise."""
+        if not self.settings.transcriber_enabled:
+            return self.probe()
+        self._load()
+        return self.probe()
+
     # ------------------------------------------------------------------ model
 
     def _load(self, skip: int = 0) -> Any:

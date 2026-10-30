@@ -96,6 +96,9 @@ export const native = {
   async startVoiceCall(): Promise<void> {
     await this.invokeSafe("start_voice_call");
   },
+  async setVoiceSurface(active: boolean): Promise<void> {
+    await this.invokeSafe("set_voice_surface", { active });
+  },
   async onStartCall(callback: () => void): Promise<UnlistenFn | null> {
     if (!isNative) return null;
     try {

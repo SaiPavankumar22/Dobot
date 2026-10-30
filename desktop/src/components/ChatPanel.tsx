@@ -6,7 +6,7 @@
 // what was said is sent; the mic button in the composer is the slower, editable version of the same
 // thing.
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ApprovalCard } from "./ApprovalCard";
 import { CallView } from "./CallView";
 import { PlanView } from "./PlanView";
@@ -136,17 +136,25 @@ export function ChatPanel() {
   useEffect(() => {
     let unlisten: (() => void) | undefined;
     void native
-      .onStartCall(() => setCallMode(true))
+      .onStartCall(() => {
+        setCallMode(true);
+        void native.setVoiceSurface(true);
+      })
       .then((fn) => {
         unlisten = fn ?? undefined;
       });
     return () => unlisten?.();
   }, []);
 
+  const endCall = useCallback(() => {
+    setCallMode(false);
+    void native.setVoiceSurface(false);
+  }, []);
+
   if (callMode) {
     return (
-      <div className="panel panel--call">
-        <CallView onEnd={() => setCallMode(false)} />
+    <div className="panel panel--call">
+        <CallView onEnd={endCall} />
       </div>
     );
   }
@@ -203,6 +211,18 @@ export function ChatPanel() {
               <span>{new Date(message.createdAt).toLocaleTimeString()}</span>
             </div>
             <div>{message.text}</div>
+            {message.research && (
+              <div className={`research-meta ${message.research.degraded ? "research-meta--degraded" : ""}`}>
+                <strong>
+                  {message.research.engine === "deepagents"
+                    ? "DeepAgents report"
+                    : message.research.engine === "tavily_fallback"
+                      ? "Quick research fallback"
+                      : "Quick research"}
+                </strong>
+                {message.research.notice && <span>{message.research.notice}</span>}
+              </div>
+            )}
             {message.plan && message.plan.steps.length > 0 && <PlanView plan={message.plan} />}
             {message.sources && message.sources.length > 0 && (
               <div className="sources">

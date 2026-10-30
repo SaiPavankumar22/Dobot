@@ -305,8 +305,22 @@ fn close_menu(app: AppHandle) {
 /// opens on the dot's top-right corner like every other quick surface.
 #[tauri::command]
 fn start_voice_call(app: AppHandle) {
+    if let Some(panel) = app.get_webview_window(windows::PANEL) {
+        let _ = panel.set_size(tauri::PhysicalSize::new(340, 390));
+    }
     windows::open_panel(&app);
     let _ = app.emit("dobot://start-call", ());
+}
+
+#[tauri::command]
+fn set_voice_surface(app: AppHandle, active: bool) {
+    if let Some(panel) = app.get_webview_window(windows::PANEL) {
+        let size = if active { (340, 390) } else { (430, 620) };
+        let _ = panel.set_size(tauri::PhysicalSize::new(size.0, size.1));
+        if active {
+            windows::open_panel(&app);
+        }
+    }
 }
 
 /// Is the talk chord currently holding the panel in a listening session? The panel asks on mount,
@@ -326,7 +340,7 @@ fn voice_done() {
 /// another application needs a notification; one that finishes while they are reading us does not.
 #[tauri::command]
 fn dobot_focused(app: AppHandle) -> bool {
-    [windows::CHAT, windows::PANEL, windows::DASHBOARD]
+    [windows::CHAT, windows::DOT, windows::MENU, windows::PANEL, windows::OVERLAY, windows::DASHBOARD]
         .into_iter()
         .filter_map(|label| app.get_webview_window(label))
         .any(|window| window.is_focused().unwrap_or(false))
@@ -427,6 +441,7 @@ pub fn run() {
             toggle_menu,
             close_menu,
             start_voice_call,
+            set_voice_surface,
             hide_panel,
             open_dashboard,
             dot_enabled,

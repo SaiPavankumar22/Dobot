@@ -147,6 +147,8 @@ class VoiceCallSession:
         self._state = ""
         self._reported: set[str] = set()
         self._reply_text = ""
+        self._turn_task: asyncio.Task[None] | None = None
+        self._audio_drop_reported = False
 
     # ------------------------------------------------------------------ outbound
 
@@ -154,7 +156,13 @@ class VoiceCallSession:
         if self._closed:
             return
         if message.get("type") == "call_audio" and self.outbox.qsize() > 4096:
-            return  # a stalled panel must not become an unbounded buffer of spoken audio
+            if not self._audio_drop_reported:
+                self._audio_drop_reported = True
+                self.report_error(
+                    "audio_queue",
+                    "The call output was too slow to deliver safely. Press interrupt and try again.",
+                )
+            return
         self.outbox.put_nowait(message)
 
     def set_state(self, state: str) -> None:
@@ -203,6 +211,8 @@ class VoiceCallSession:
         """Stop generating, stop speaking, forget queued turns: the floor is the user's."""
         self._gen += 1
         self._cancel.set()
+        if self._turn_task is not None and not self._turn_task.done():
+            self._turn_task.cancel()
         self._cancel = asyncio.Event()
         while True:
             try:
@@ -223,7 +233,14 @@ class VoiceCallSession:
             turn = await self.turns.get()
             if turn is None:
                 continue
-            await self._handle_turn(turn)
+            self._turn_task = asyncio.create_task(self._handle_turn(turn))
+            try:
+                await self._turn_task
+            except asyncio.CancelledError:
+                if self._closed:
+                    raise
+            finally:
+                self._turn_task = None
 
     async def _handle_turn(self, turn: bytes) -> None:
         gen = self._gen
@@ -416,6 +433,10 @@ class VoiceCallSession:
         self._closed = True
         self._gen += 1
         self._cancel.set()
+        if self._turn_task is not None and not self._turn_task.done():
+            self._turn_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._turn_task
         while True:
             try:
                 queued = self.turns.get_nowait()

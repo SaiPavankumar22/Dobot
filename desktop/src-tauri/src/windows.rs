@@ -56,6 +56,9 @@ fn anchor_bottom_right(app: &AppHandle, label: &str) {
     let bounds = capture::virtual_bounds().unwrap_or((0, 0, 1920, 1080));
     let x = bounds.0 + bounds.2 as i32 - size.width as i32 - 24;
     let y = bounds.1 + bounds.3 as i32 - size.height as i32 - 64;
+    if label == PANEL {
+        app.state::<crate::Pair>().remember(false, (x, y));
+    }
     let _ = window.set_position(tauri::PhysicalPosition::new(x, y));
 }
 
@@ -97,6 +100,8 @@ pub fn open_panel(app: &AppHandle) {
                 let max_y = bounds.1 + bounds.3 as i32 - size.height as i32 - 8;
                 x = x.clamp(bounds.0 + 8, max_x.max(bounds.0 + 8));
                 y = y.clamp(bounds.1 + 8, max_y.max(bounds.1 + 8));
+                app.state::<crate::Pair>()
+                    .remember(false, (x, y));
                 let _ = panel.set_position(tauri::PhysicalPosition::new(x, y));
             }
         }
@@ -129,6 +134,7 @@ pub fn open_menu(app: &AppHandle) {
     }
     hide(app, PANEL);
     let _ = menu.show();
+    let _ = menu.set_focus();
 }
 
 pub fn close_menu(app: &AppHandle) {
@@ -216,6 +222,7 @@ pub fn restore_dot_position(app: &AppHandle) {
             bounds.1 + bounds.3 as i32 - 168,
         ),
     };
+    app.state::<crate::Pair>().remember(true, (x, y));
     let _ = dot.set_position(tauri::PhysicalPosition::new(x, y));
 }
 

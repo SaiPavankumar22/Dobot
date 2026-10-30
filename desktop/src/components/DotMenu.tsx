@@ -3,7 +3,7 @@
 //
 //   chat     the compact dialog a double click on the dot also opens
 //   snip     grab a region of the screen; the shell sends it back and raises the dialog to ask about
-//   voice    the voice agent — the option ships now, the engine is still being researched
+//   voice    the live voice agent, shown as a compact music-bar orb
 //
 // It dismisses itself on a pick, a click anywhere on it (including on the icon at its centre),
 // Esc, losing focus, or a few idle seconds.

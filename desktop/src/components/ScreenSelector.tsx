@@ -22,6 +22,7 @@ export function ScreenSelector({ onDone, onCancel }: Props) {
   const [busy, setBusy] = useState(false);
   const [hint, setHint] = useState("Drag to select a region · Esc to cancel");
   const start = useRef<{ x: number; y: number } | null>(null);
+  const boxRef = useRef<Box | null>(null);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -55,6 +56,9 @@ export function ScreenSelector({ onDone, onCancel }: Props) {
         } catch (error) {
           setHint(error instanceof Error ? error.message : "Capture failed");
           setBusy(false);
+          boxRef.current = null;
+          setBox(null);
+          onCancel();
         }
         return;
       }
@@ -67,31 +71,41 @@ export function ScreenSelector({ onDone, onCancel }: Props) {
       } catch (error) {
         setHint(error instanceof Error ? error.message : "Capture failed");
         setBusy(false);
+        boxRef.current = null;
+        setBox(null);
+        onCancel();
       }
     },
-    [onDone],
+    [onCancel, onDone],
   );
 
   return (
     <div
       className="select-overlay"
       onMouseDown={(event) => {
+        if (busy) return;
         start.current = { x: event.clientX, y: event.clientY };
-        setBox({ x: event.clientX, y: event.clientY, width: 0, height: 0 });
+        const next = { x: event.clientX, y: event.clientY, width: 0, height: 0 };
+        boxRef.current = next;
+        setBox(next);
       }}
       onMouseMove={(event) => {
-        if (!start.current) return;
+        if (!start.current || busy) return;
         const origin = start.current;
-        setBox({
+        const next = {
           x: Math.min(origin.x, event.clientX),
           y: Math.min(origin.y, event.clientY),
           width: Math.abs(event.clientX - origin.x),
           height: Math.abs(event.clientY - origin.y),
-        });
+        };
+        boxRef.current = next;
+        setBox(next);
       }}
       onMouseUp={() => {
-        if (box) void finish(box);
+        const selected = boxRef.current;
+        if (selected && !busy) void finish(selected);
         start.current = null;
+        boxRef.current = null;
       }}
     >
       <div className="select-overlay__hint">{hint}</div>

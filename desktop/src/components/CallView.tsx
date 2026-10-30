@@ -1,8 +1,6 @@
-// The call surface: what the panel becomes when the dot menu's Voice option picks up.
-//
-// Deliberately shaped like a phone call rather than a chat window — one status ring, one live
-// caption, one row of call buttons — because that is the contract the whole pipeline is built to:
-// Dobot is listening, thinking, or speaking, and hanging up is always one red button away.
+// The compact voice surface: the panel temporarily becomes an always-on voice orb rather than a
+// second phone application. The state is deliberately glanceable; captions remain available for
+// accessibility without turning the call into another rectangular chat window.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { VoiceCall, type CallPhase, type CallStatus } from "../services/voiceCall";
@@ -14,6 +12,7 @@ interface Turn {
 
 const PHASE_LABEL: Record<CallPhase, string> = {
   connecting: "Connecting…",
+  loading: "Preparing voice…",
   listening: "Listening…",
   thinking: "Dobot is thinking…",
   speaking: "Dobot is speaking…",
@@ -93,7 +92,7 @@ export function CallView({ onEnd }: { onEnd: () => void }) {
 
   if (ended) {
     return (
-      <div className="call call--ended">
+      <div className="call call--ended call--orb">
         <div className="call__ended-mark" aria-hidden="true">
           ✕
         </div>
@@ -109,59 +108,37 @@ export function CallView({ onEnd }: { onEnd: () => void }) {
   }
 
   return (
-    <div className="call">
-      <header className="call__head">
-        <span className={`call__ring call__ring--${phase}`} aria-hidden="true">
-          <span />
-        </span>
-        <div className="call__ident">
-          <div className="call__phase">{PHASE_LABEL[phase]}</div>
-          <div className="call__meta">
-            {elapsedLabel(seconds)}
-            {status ? ` · ${status.llm.model}` : ""}
-            {status ? ` · ${status.vad.detector} vad` : ""}
-          </div>
-        </div>
-        <span className={`chip ${status ? "chip--ok" : ""}`}>{status ? "on air" : "…"}</span>
-      </header>
-
-      {hints.length > 0 && (
-        <ul className="call__hints">
-          {hints.map((hint) => (
-            <li key={hint}>{hint}</li>
+    <div className={`call call--orb call--${phase}`}>
+      <div className="voice-orb" role="status" aria-live="polite" aria-label={PHASE_LABEL[phase]}>
+        <div className="voice-orb__bars" aria-hidden="true">
+          {Array.from({ length: 7 }, (_, index) => (
+            <span key={index} style={{ "--bar": index } as React.CSSProperties} />
           ))}
-        </ul>
-      )}
+        </div>
+        <div className="voice-orb__core">D</div>
+      </div>
+      <div className="voice-orb__phase">{PHASE_LABEL[phase]}</div>
+      <div className="voice-orb__meta">
+        {elapsedLabel(seconds)}
+        {status ? ` · ${status.vad.detector} · ${turns.length} exchanges` : ""}
+      </div>
       {error && (
         <div className="call__error" role="alert">
           {error}
         </div>
       )}
-
-      <div className="call__feed" ref={feedRef}>
-        {turns.length === 0 && !live && (
-          <div className="call__empty">
-            Dobot is on the line. Say something like “what are you working on for me today?” — talk
-            over an answer any time and it stops.
-          </div>
-        )}
-        {turns.map((turn, index) => (
-          <div key={`${turn.role}-${index}`} className={`call__line call__line--${turn.role}`}>
-            <span className="call__speaker">{turn.role === "you" ? "You" : "Dobot"}</span>
-            <span>{turn.text}</span>
-          </div>
-        ))}
-        {live && (
-          <div className="call__line call__line--dobot call__line--live">
-            <span className="call__speaker">Dobot</span>
-            <span>{live}</span>
-          </div>
-        )}
+      <div className="voice-orb__caption" ref={feedRef} aria-live="polite">
+        {live || turns[turns.length - 1]?.text || "Say something to Dobot"}
       </div>
-
-      <footer className="call__bar">
+      {hints.length > 0 && (
+        <details className="voice-orb__details">
+          <summary>Voice setup</summary>
+          {hints.map((hint) => <div key={hint}>{hint}</div>)}
+        </details>
+      )}
+      <footer className="call__bar call__bar--orb">
         <button
-          className={`call__btn ${muted ? "call__btn--active" : ""}`}
+          className={`call__btn call__btn--round ${muted ? "call__btn--active" : ""}`}
           onClick={() => {
             const next = !muted;
             setMuted(next);
@@ -172,14 +149,14 @@ export function CallView({ onEnd }: { onEnd: () => void }) {
           {muted ? "Unmute" : "Mute"}
         </button>
         <button
-          className="call__btn"
+          className="call__btn call__btn--round"
           onClick={() => callRef.current?.interrupt()}
           title="Cut Dobot off and listen instead"
         >
-          Stop
+          Interrupt
         </button>
-        <button className="call__btn call__btn--danger" onClick={() => callRef.current?.end("You ended the call")}>
-          End call
+        <button className="call__btn call__btn--round call__btn--danger" onClick={() => callRef.current?.end("You ended the call")}>
+          End
         </button>
       </footer>
     </div>

@@ -138,6 +138,10 @@ export default function App() {
     });
     let unlistenHotkey: (() => void) | undefined;
     void native.onHotkey((action) => {
+      // Global shortcuts are emitted to every WebView. The chat surface is the single UI
+      // coordinator for actions that mutate shared state; without this guard a capture or kill
+      // request is sent once per mounted WebView.
+      if (windowKind !== "chat") return;
       if (action === "panel") void native.openPanel();
       if (action === "capture") void captureScreen();
       if (action === "kill") void kill();
@@ -150,7 +154,7 @@ export default function App() {
       unlistenLook?.();
       unlistenHotkey?.();
     };
-  }, [captureScreen, kill]);
+  }, [captureScreen, kill, windowKind]);
 
   return (
     <>

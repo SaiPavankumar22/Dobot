@@ -16,7 +16,7 @@
 
 import { getBaseUrl, getBearerToken } from "./api";
 
-export type CallPhase = "connecting" | "listening" | "thinking" | "speaking" | "ended";
+export type CallPhase = "connecting" | "loading" | "listening" | "thinking" | "speaking" | "ended";
 
 export interface CallStatus {
   vad: { detector: string; sample_rate: number };
@@ -68,6 +68,7 @@ export class VoiceCall {
   private started = false;
   private stopped = false;
   private muted = false;
+  private phase: CallPhase = "connecting";
 
   constructor(private callbacks: CallCallbacks) {}
 
@@ -101,6 +102,8 @@ export class VoiceCall {
 
     try {
       this.context = new AudioContext();
+      // WebView2 may create a suspended context until the originating click is acknowledged.
+      await this.context.resume();
       this.stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           channelCount: 1,
@@ -128,11 +131,22 @@ export class VoiceCall {
           ? "Microphone permission was denied — allow it in your system settings to take the call."
           : `The microphone is unavailable: ${message}`,
       );
+      this.finish("Microphone unavailable");
     }
   }
 
   private onCapture(samples: Float32Array): void {
-    if (this.stopped || this.muted || !this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+    const context = this.context;
+    // Do not feed speaker output back into VAD. Audio is scheduled ahead of real time, so the
+    // queue tail is a more reliable guard than the server's state transition.
+    if (
+      this.stopped ||
+      this.muted ||
+      this.phase === "speaking" ||
+      (context && this.nextStart > context.currentTime + 0.03) ||
+      !this.ws ||
+      this.ws.readyState !== WebSocket.OPEN
+    ) return;
     const pcm = new Int16Array(samples.length);
     for (let index = 0; index < samples.length; index += 1) {
       const value = Math.max(-1, Math.min(1, samples[index]));
@@ -156,11 +170,10 @@ export class VoiceCall {
         break;
       case "call_state": {
         const state = String(message.state);
-        if (state !== "speaking") {
-          // Left "speaking": whatever was still queued belongs to a retracted answer.
-          this.stopPlayback();
-        }
-        this.callbacks.onPhase(state as CallPhase);
+        this.phase = state as CallPhase;
+        // A normal listening transition does not retract already scheduled audio. Only the
+        // explicit interruption event is allowed to flush the playback queue.
+        this.callbacks.onPhase(this.phase);
         break;
       }
       case "call_interrupted":
@@ -187,7 +200,7 @@ export class VoiceCall {
   /** Append one PCM16 stretch to the gapless playback queue. */
   private play(rate: number, view: DataView): void {
     const context = this.context;
-    if (!context || this.stopped || view.byteLength < 2) return;
+    if (!context || this.stopped || this.phase === "ended" || view.byteLength < 2) return;
     const frames = Math.floor(view.byteLength / 2);
     const buffer = context.createBuffer(1, frames, rate);
     const channel = buffer.getChannelData(0);
@@ -226,6 +239,7 @@ export class VoiceCall {
     if (this.stopped || this.ws?.readyState !== WebSocket.OPEN) return;
     this.stopPlayback();
     this.ws.send(JSON.stringify({ type: "cancel" }));
+    this.phase = "listening";
     this.callbacks.onPhase("listening");
   }
 
