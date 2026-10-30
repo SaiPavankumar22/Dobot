@@ -109,6 +109,11 @@ Rules:
     click fails because the element was not found, the page was probably still loading —
     snapshot again (with wait_seconds) and retry the same click; do not end the task after the
     first failed click.
+    For Gemini image requests, navigate the visible browser to https://gemini.google.com/app,
+    snapshot it, type the user's image prompt into the current indexed composer, submit it,
+    wait for the generated image, then use the page's actual Download control and verify the
+    download path. Do not claim Gemini lacks image generation and do not invent a successful
+    download; only the browser evidence decides.
     Whole forms can use browser_submit (needs approval). Only desktop GUI apps (computer_*)
     need the Hermes runtime; browser interaction does not. Never invent claims about what a
     website can or cannot do.

@@ -351,7 +351,10 @@ class DriveSession:
         try:
             from playwright.async_api import async_playwright
         except ImportError as exc:  # pragma: no cover - dependency declared in pyproject
-            return f"playwright is not installed ({exc})"
+            return (
+                f"playwright is not installed ({exc}); install the browser extra with "
+                "`cd backend && uv sync --extra browser --extra dev`, then rebuild the sidecar"
+            )
         try:
             if self._pw is None:
                 self._pw = await async_playwright().start()
